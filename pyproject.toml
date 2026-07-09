@@ -1,0 +1,16 @@
+[project]
+name = "pcb_board"
+version = "0.1.0"
+description = "Musterfirma Team-Board: Posteingang, Umsatz-Prognose und Abrechnung, nativ in ERPNext."
+authors = [{ name = "Musterfirma GmbH" }]
+requires-python = ">=3.10"
+dependencies = [
+    "msal>=1.28",
+    "anthropic>=0.40",
+    "requests>=2.31",
+    "pydantic>=2.7",
+]
+
+[build-system]
+requires = ["flit_core>=3.4,<4"]
+build-backend = "flit_core.buildapi"

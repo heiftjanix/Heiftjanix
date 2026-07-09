@@ -1,0 +1,11 @@
+{
+  "doctype": "Page",
+  "name": "pcb-board",
+  "page_name": "pcb-board",
+  "title": "PCB Board",
+  "module": "PCB Board",
+  "standard": "Yes",
+  "system_page": 0,
+  "icon": "octicon octicon-mail",
+  "roles": []
+}

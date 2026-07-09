@@ -1,0 +1,115 @@
+{
+  "doctype": "DocType",
+  "name": "PCB Board Settings",
+  "module": "PCB Board",
+  "custom": 0,
+  "istable": 0,
+  "issingle": 1,
+  "editable_grid": 1,
+  "engine": "InnoDB",
+  "track_changes": 1,
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "actions": [],
+  "links": [],
+  "fields": [
+    {
+      "fieldname": "revenue_target",
+      "fieldtype": "Currency",
+      "label": "Umsatzziel (Netto/Monat)",
+      "default": "100000",
+      "reqd": 1
+    },
+    {
+      "fieldname": "section_break_mail",
+      "fieldtype": "Section Break",
+      "label": "Postfächer"
+    },
+    {
+      "fieldname": "extra_mailboxes",
+      "fieldtype": "Small Text",
+      "label": "Geteilte Postfächer (eine Adresse pro Zeile)",
+      "description": "Zusätzlich zum eigenen Postfach für jeden Nutzer sichtbar, z. B. bestellung@example.com"
+    },
+    {
+      "fieldname": "section_break_forecast",
+      "fieldtype": "Section Break",
+      "label": "Prognose-Parameter"
+    },
+    {
+      "fieldname": "baseline_months",
+      "fieldtype": "Int",
+      "label": "Baseline-Monate",
+      "default": "3"
+    },
+    {
+      "fieldname": "confidence_days_k",
+      "fieldtype": "Int",
+      "label": "Vertrauens-Werktage (K)",
+      "default": "5"
+    },
+    {
+      "fieldname": "column_break_forecast_1",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "uncertainty_pct",
+      "fieldtype": "Float",
+      "label": "Unsicherheit (Anteil, z. B. 0.15)",
+      "default": "0.15"
+    },
+    {
+      "fieldname": "amber_threshold",
+      "fieldtype": "Float",
+      "label": "Gelb-Schwelle (Anteil, z. B. 0.85)",
+      "default": "0.85"
+    },
+    {
+      "fieldname": "section_break_billing",
+      "fieldtype": "Section Break",
+      "label": "Abrechnung"
+    },
+    {
+      "fieldname": "ups_transit_days",
+      "fieldtype": "Int",
+      "label": "UPS-Transittage (Fallback ohne Live-Tracking)",
+      "default": "2"
+    },
+    {
+      "fieldname": "stale_delivery_note_days",
+      "fieldtype": "Int",
+      "label": "Alt-Schwelle offene Lieferscheine (Tage)",
+      "default": "60"
+    },
+    {
+      "fieldname": "column_break_billing_1",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "holidays_region",
+      "fieldtype": "Data",
+      "label": "Feiertags-Region",
+      "default": "BY"
+    },
+    {
+      "fieldname": "anthropic_model",
+      "fieldtype": "Data",
+      "label": "Claude-Modell (Mail-Triage)",
+      "default": "claude-opus-4-8"
+    }
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 0,
+      "print": 1,
+      "email": 1,
+      "export": 1,
+      "share": 1,
+      "report": 1
+    }
+  ]
+}

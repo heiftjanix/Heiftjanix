@@ -1,0 +1,15 @@
+# Runtime scratch (rebuilt from connectors every run)
+state/*
+!state/.gitkeep
+
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated output
+dashboard.html
+briefing_*.md

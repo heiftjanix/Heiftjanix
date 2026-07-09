@@ -1,0 +1,283 @@
+"""Rechnet aus rohen ERPNext-Daten die Kennzahlen fürs Dashboard/Briefing.
+
+Alle Geldbeträge werden HIER (Python) summiert — nie im Sprachmodell.
+
+Eingabe (state/raw.json), erzeugt von der Routine über die ERPNext-MCP-Tools:
+{
+  "as_of": "YYYY-MM-DD",
+  "invoices": [ {name, customer, base_net_total, posting_date, status}, ... ],   # docstatus=1, laufender + Vormonate
+  "to_bill_delivery_notes": [ {name, customer_name, base_net_total, per_billed,
+                               posting_date, tracking_number, arrival_status,
+                               delivered_date, arrival_method}, ... ],
+  "open_sales_orders": [ {name, customer, net_open}, ... ]   # optional
+}
+Ausgabe: state/metrics.json
+"""
+from __future__ import annotations
+
+import sys
+from collections import defaultdict
+from datetime import date
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib import calendar_utils as cal          # noqa: E402
+from lib import io_utils as io                  # noqa: E402
+from forecast import forecast_month_end         # noqa: E402
+
+
+def _net(row: dict) -> float:
+    for key in ("base_net_total", "net_total", "base_total", "total"):
+        v = row.get(key)
+        if v not in (None, ""):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                continue
+    return 0.0
+
+
+def _pdate(row: dict):
+    raw = row.get("posting_date") or row.get("date")
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(str(raw)[:10])
+    except ValueError:
+        return None
+
+
+def _prev_month(y: int, m: int) -> tuple[int, int]:
+    return (y - 1, 12) if m == 1 else (y, m - 1)
+
+
+def _mail_summary(mail: dict | None) -> dict:
+    """Normalisiert die von der Mail-Triage gelieferten Daten für das Dashboard.
+
+    Erwartetes Eingabeschema (aus raw.json['mail'], von Claude befüllt):
+      {window_hours, items:[{mailbox, sender_name, sender, subject,
+                             category('relevant'|'info'), priority('high'|'normal'),
+                             reason, received}]}
+    Zählwerte werden aus den items abgeleitet (robust gegen fehlende Summen).
+    """
+    mail = mail or {}
+    items = mail.get("items", []) or []
+
+    def is_rel(i):
+        return i.get("category") == "relevant"
+
+    boxes: dict[str, dict] = {}
+    for i in items:
+        mb = i.get("mailbox") or "Posteingang"
+        d = boxes.setdefault(mb, {"name": mb, "total": 0, "relevant": 0,
+                                  "info": 0, "high_priority": 0})
+        d["total"] += 1
+        d["relevant" if is_rel(i) else "info"] += 1
+        if i.get("priority") == "high":
+            d["high_priority"] += 1
+
+    # relevante zuerst, dringende oben
+    order = {"high": 0, "normal": 1}
+    items_sorted = sorted(
+        items,
+        key=lambda i: (0 if is_rel(i) else 1, order.get(i.get("priority"), 1)),
+    )
+    return {
+        "window_hours": mail.get("window_hours"),
+        "total": len(items),
+        "relevant": sum(1 for i in items if is_rel(i)),
+        "info": sum(1 for i in items if not is_rel(i)),
+        "high_priority": sum(1 for i in items if i.get("priority") == "high"),
+        "mailboxes": list(boxes.values()),
+        "items": items_sorted,
+    }
+
+
+def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
+    today = today or date.fromisoformat(data["as_of"])
+    region = config["holidays"]["region"]
+    extra = config["holidays"].get("extra", [])
+    target = float(config["revenue_target"])
+    fc_cfg = config["forecast"]
+
+    invoices = data.get("invoices", [])
+    month_start = date(today.year, today.month, 1)
+
+    # --- Ist-Umsatz (MTD) + Tagesreihe ---
+    daily = defaultdict(float)
+    mtd = 0.0
+    for inv in invoices:
+        d = _pdate(inv)
+        if d and month_start <= d <= today:
+            amt = _net(inv)
+            mtd += amt
+            daily[d.isoformat()] += amt
+
+    daily_series = [
+        {"date": k, "net": round(v, 2)} for k, v in sorted(daily.items())
+    ]
+
+    # --- Baseline aus den letzten N Vollmonaten ---
+    n_months = int(fc_cfg.get("baseline_months", 3))
+    months = []
+    y, m = today.year, today.month
+    for _ in range(n_months):
+        y, m = _prev_month(y, m)
+        months.append((y, m))
+    month_totals = {(yy, mm): 0.0 for yy, mm in months}
+    for inv in invoices:
+        d = _pdate(inv)
+        if d and (d.year, d.month) in month_totals:
+            month_totals[(d.year, d.month)] += _net(inv)
+    trailing_net = sum(month_totals.values())
+    trailing_bd = sum(
+        cal.business_days_in_month(yy, mm, region, extra) for yy, mm in months
+    ) or 1
+    baseline_daily = trailing_net / trailing_bd
+
+    # --- Werktage ---
+    bd_total = cal.business_days_in_month(today.year, today.month, region, extra)
+    bd_elapsed = cal.business_days_elapsed(today, region, extra)
+
+    fc = forecast_month_end(
+        mtd=mtd,
+        bd_elapsed=bd_elapsed,
+        bd_total=bd_total,
+        baseline_daily=baseline_daily,
+        target=target,
+        K=int(fc_cfg.get("confidence_days_K", 5)),
+        uncertainty_pct=float(fc_cfg.get("uncertainty_pct", 0.15)),
+        amber_threshold=float(fc_cfg.get("amber_threshold", 0.85)),
+    )
+
+    # --- Pipeline: To-Bill-Lieferscheine ---
+    stale_days = int(config["billing"]["stale_delivery_note_days"])
+    ready, in_transit, unknown, stale = [], [], [], []
+    pipeline_ready_net = pipeline_transit_net = 0.0
+    for dn in data.get("to_bill_delivery_notes", []):
+        d = _pdate(dn)
+        open_net = _net(dn) * (1.0 - float(dn.get("per_billed", 0) or 0) / 100.0)
+        age = (today - d).days if d else None
+        item = {
+            "name": dn.get("name"),
+            "customer": dn.get("customer_name") or dn.get("customer"),
+            "net_open": round(open_net, 2),
+            "posting_date": d.isoformat() if d else None,
+            "age_days": age,
+            "tracking_number": dn.get("tracking_number"),
+            "arrival_status": dn.get("arrival_status", "unknown"),
+            "delivered_date": dn.get("delivered_date"),
+            "arrival_method": dn.get("arrival_method"),
+        }
+        is_stale = age is not None and age > stale_days
+        status = item["arrival_status"]
+        if is_stale:
+            stale.append(item)
+        if status == "delivered":
+            ready.append(item)
+            pipeline_ready_net += open_net
+        elif status == "in_transit":
+            in_transit.append(item)
+            pipeline_transit_net += open_net
+        else:
+            unknown.append(item)
+
+    ready.sort(key=lambda x: x["net_open"], reverse=True)
+    stale.sort(key=lambda x: (x["age_days"] or 0), reverse=True)
+
+    open_so_net = round(
+        sum(float(so.get("net_open", 0) or 0) for so in data.get("open_sales_orders", [])),
+        2,
+    )
+
+    # --- Datengetriebene Tipps (nach €-Wirkung sortiert) ---
+    tips = []
+    if pipeline_ready_net > 0:
+        tips.append({
+            "title": "Sofort abrechnen",
+            "impact_eur": round(pipeline_ready_net, 2),
+            "detail": f"{len(ready)} zugestellte, noch nicht berechnete Lieferschein(e) "
+                      f"– direkt in Umsatz umwandelbar.",
+        })
+    if fc.gap > 0:
+        # Ø-Rechnungswert im laufenden Monat als grobe Orientierung
+        inv_count = len(daily_series) and sum(1 for i in invoices
+                                              if (_pdate(i) and month_start <= _pdate(i) <= today))
+        avg_inv = (mtd / inv_count) if inv_count else baseline_daily
+        n_needed = int(fc.gap / avg_inv) + 1 if avg_inv > 0 else 0
+        tips.append({
+            "title": "Lücke zum Monatsziel",
+            "impact_eur": round(fc.gap, 2),
+            "detail": f"Prognose {fc.attainment_pct*100:.0f} % vom Ziel. "
+                      f"Rest ≈ {n_needed} Aufträge à Ø {avg_inv:,.0f} € "
+                      f"oder {fc.required_daily:,.0f} €/Werktag.".replace(",", "."),
+        })
+    if pipeline_transit_net > 0:
+        tips.append({
+            "title": "Bald abrechenbar",
+            "impact_eur": round(pipeline_transit_net, 2),
+            "detail": f"{len(in_transit)} Lieferschein(e) unterwegs – nach Zustellung abrechnen.",
+        })
+    if open_so_net > 0:
+        tips.append({
+            "title": "Offene Aufträge beschleunigen",
+            "impact_eur": open_so_net,
+            "detail": "Noch nicht ausgelieferte/berechnete Auftragswerte – "
+                      "Lieferung → Rechnung vorziehen.",
+        })
+    if stale:
+        tips.append({
+            "title": "Alte Lieferscheine aufräumen",
+            "impact_eur": round(sum(s["net_open"] for s in stale), 2),
+            "detail": f"{len(stale)} offene Lieferschein(e) älter als "
+                      f"{stale_days} Tage – liegen gebliebener Umsatz.",
+        })
+    tips.sort(key=lambda t: t["impact_eur"], reverse=True)
+
+    return {
+        "as_of": today.isoformat(),
+        "company": config["company"],
+        "currency": config["currency"],
+        "target": target,
+        "mail": _mail_summary(data.get("mail")),
+        "forecast": fc.to_dict(),
+        "daily_series": daily_series,
+        "baseline": {
+            "trailing_months": [f"{yy}-{mm:02d}" for yy, mm in months],
+            "trailing_net": round(trailing_net, 2),
+            "baseline_daily": round(baseline_daily, 2),
+        },
+        "pipeline": {
+            "ready_net": round(pipeline_ready_net, 2),
+            "in_transit_net": round(pipeline_transit_net, 2),
+            "open_so_net": open_so_net,
+            "coverage_after_forecast": round(
+                fc.forecast + pipeline_ready_net + pipeline_transit_net, 2
+            ),
+        },
+        "billing": {
+            "ready": ready,          # Paket zugestellt -> jetzt abrechnen
+            "in_transit": in_transit,  # noch unterwegs
+            "unknown": unknown,      # kein Trackingstatus (Abholung/älter)
+            "stale": stale,          # sehr alte offene Lieferscheine (Warnung)
+            "ready_count": len(ready),
+            "total_open_count": len(ready) + len(in_transit) + len(unknown),
+        },
+        "tips": tips,
+    }
+
+
+def main() -> None:
+    config = io.load_config()
+    raw = io.read_state("raw.json")
+    metrics = build_metrics(raw, config)
+    out = io.write_state("metrics.json", metrics)
+    fc = metrics["forecast"]
+    print(f"[revenue_aggregate] MTD={fc['mtd']:.0f} € | "
+          f"Prognose={fc['forecast']:.0f} € ({fc['attainment_pct']*100:.0f} % vom Ziel) | "
+          f"Status={fc['status']} | abrechnungsbereit={metrics['billing']['ready_count']}")
+    print(f"[revenue_aggregate] -> {out}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,99 @@
+# PCB Board — native ERPNext-Custom-App
+
+Posteingang (mit Antwortvorschlägen), Umsatz-Prognose und Abrechnung als eigene
+ERPNext-Seite (`/app/pcb-board`). Login = euer normales ERPNext-Login; „Postfach
+verbinden" ist ein einmaliger Microsoft-Consent-Schritt pro Nutzer (unabhängig vom
+ERPNext-Login, da Outlook-Zugriff eine eigene Freigabe braucht).
+
+> **Grundregel:** Die Seite **schlägt nur vor**. Sie versendet keine Mails und
+> erstellt/bucht keine Rechnungen automatisch.
+
+## Installation
+
+Voraussetzung: Ein bestehendes Frappe/ERPNext-Bench mit Zugriff auf die Konsole
+(SSH), z. B. `bench --site erp.example.com ...`.
+
+> **Frappe Cloud:** Auf Frappe Cloud gibt es keine direkte SSH/Bench-Konsole für
+> Custom Apps — die Installation läuft dort über "Bench" → "Apps" → "Install App
+> from GitHub" (Push-Zugriff auf ein Repo mit diesem `frappe_app/pcb_board`-Inhalt
+> als App-Root nötig) bzw. ggf. den Support/„Frappe Cloud CLI"-Weg. Das ist nicht
+> 1:1 das `bench get-app`-Kommando unten und noch nicht durchgetestet — bitte vorab
+> in einer Test-/Staging-Site ausprobieren, bevor produktiv installiert wird.
+
+```bash
+# 1) App ins Bench holen (lokaler Pfad oder Git-URL zu diesem Repo)
+bench get-app /pfad/zu/diesem/repo/frappe_app/pcb_board
+# oder, falls das Hauptrepo per Git verfügbar ist:
+# bench get-app https://github.com/<org>/Heiftjanix.git --branch claude/work-automation-dashboard-d5pz9j
+
+# 2) Auf der Site installieren
+bench --site erp.example.com install-app pcb_board
+bench --site erp.example.com migrate
+bench build
+bench restart   # bzw. Supervisor/systemd neu laden, je nach Setup
+```
+
+## Secrets hinterlegen (site_config.json, NICHT im Repo)
+
+```bash
+bench --site erp.example.com set-config anthropic_api_key "sk-ant-..."
+bench --site erp.example.com set-config azure_client_id "..."
+bench --site erp.example.com set-config azure_client_secret "..."
+bench --site erp.example.com set-config azure_tenant_id "..."
+# optional, für Live-UPS-Tracking (sonst Fallback über Versanddatum + Transittage):
+bench --site erp.example.com set-config ups_client_id "..."
+bench --site erp.example.com set-config ups_client_secret "..."
+```
+
+### Azure-App-Registrierung (für „Postfach verbinden")
+
+1. Azure Portal → App registrations → New registration.
+2. Redirect-URI (Web): `https://erp.example.com/api/method/pcb_board.api.outlook_callback`
+   (Domain durch eure echte ERPNext-URL ersetzen).
+3. API-Berechtigungen (Microsoft Graph, **delegiert**): `User.Read`, `Mail.Read`,
+   `Mail.Read.Shared`, `offline_access`.
+4. Client-Secret erzeugen → als `azure_client_secret` hinterlegen (siehe oben).
+
+Ohne diese drei `azure_*`-Werte funktioniert die Seite weiterhin für Umsatz/Abrechnung
+(rein ERPNext-intern) — nur „Postfach verbinden" zeigt dann einen Hinweis, dass die
+Azure-Registrierung noch fehlt.
+
+## Einstellungen
+
+Unter **PCB Board Settings** (normale ERPNext-Formularmaske, Suche im Awesomplete)
+lassen sich Umsatzziel, geteilte Postfächer, Prognose-Parameter und das
+Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
+
+## Ablauf nach der Installation (Checkliste)
+
+- [ ] `/app/pcb-board` öffnen — Seite lädt (zunächst „Noch kein Datenstand").
+- [ ] **PCB Board Settings** ausfüllen (mind. Umsatzziel + geteilte Postfächer).
+- [ ] „Live aktualisieren" klicken → PCB-Logo pulsiert; nach Abschluss erscheinen
+      Umsatz/Abrechnung (auch ohne verbundenes Postfach, da rein ERPNext-Daten).
+- [ ] „Postfach verbinden" klicken (falls Azure hinterlegt) → Microsoft-Login →
+      zurück zur Seite → Posteingang zeigt Mails aus eigenem + geteilten Postfächern.
+- [ ] Scheduler-Log prüfen (`bench --site <site> doctor` bzw. Error Log in ERPNext),
+      dass `pcb_board.refresh.scheduled_refresh` alle 30 Min werktags läuft.
+
+## Wie es funktioniert (kurz)
+
+- **Daten:** `refresh.py` liest ERPNext direkt über `frappe.get_all` (kein REST/MCP
+  nötig), holt bei verbundenen Postfächern Microsoft-Graph-Mails, klassifiziert sie
+  per Anthropic-API (Fallback: Keyword-Heuristik ohne Key) und berechnet Prognose/
+  Pipeline/Tipps in `metrics.py` (reine Python-Funktionen, 1:1-Port aus
+  `scripts/forecast.py` + `scripts/revenue_aggregate.py` im Hauptrepo).
+- **Status/Refresh:** Ergebnis + Status liegen in `frappe.cache()` (Redis) — daher
+  sehen **alle** angemeldeten Nutzer denselben "läuft gerade"-Zustand, nicht nur der,
+  der den Button gedrückt hat.
+- **Takt:** `hooks.py` registriert einen Frappe-Scheduler-Cronjob (alle 30 Min
+  werktags) — kein externer Trigger nötig.
+- **Postfach-Zugriff:** `PCB Board Mail Token` speichert den MSAL-Token-Cache pro
+  Nutzer (Frappe-Password-Feld, verschlüsselt); jeder Nutzer sieht nur sein eigenes
+  + die in den Settings konfigurierten geteilten Postfächer.
+
+## Grenzen
+
+- Ohne Azure-Registrierung: kein Posteingang, Umsatz/Abrechnung funktionieren trotzdem.
+- Ohne UPS-Zugangsdaten: Zustellstatus wird geschätzt (Versanddatum + Transittage).
+- Token-Cache ist an den einzelnen Nutzer gebunden — läuft die Microsoft-Freigabe ab,
+  zeigt die Seite einen Hinweis, erneut „Postfach verbinden" zu klicken.

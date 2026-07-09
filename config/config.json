@@ -1,0 +1,48 @@
+{
+  "company": "Musterfirma GmbH",
+  "currency": "EUR",
+  "timezone": "Europe/Berlin",
+
+  "revenue_target": 100000,
+
+  "forecast": {
+    "baseline_months": 3,
+    "confidence_days_K": 5,
+    "uncertainty_pct": 0.15,
+    "amber_threshold": 0.85
+  },
+
+  "holidays": {
+    "region": "BY",
+    "extra": []
+  },
+
+  "billing": {
+    "ups_transit_days": 2,
+    "stale_delivery_note_days": 60
+  },
+
+  "email": {
+    "lookback_hours": 24,
+    "monday_lookback_hours": 72,
+    "extra_mailboxes": [
+      "bestellung@example.com",
+      "anfrage@example.com",
+      "webshop@example.com"
+    ]
+  },
+
+  "ups": {
+    "oauth_url": "https://onlinetools.ups.com/security/v1/oauth/token",
+    "track_url": "https://onlinetools.ups.com/api/track/v1/details/"
+  },
+
+  "dashboard": {
+    "title": "Musterfirma Team-Board"
+  },
+
+  "board": {
+    "auto_refresh_minutes": 30,
+    "business_hours_utc": "4-16"
+  }
+}

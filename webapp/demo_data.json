@@ -1,0 +1,37 @@
+{
+  "erp": {
+    "invoices": [
+      {"name": "RE-DEMO-1", "customer": "Musterkunde AG", "base_net_total": 4200, "posting_date": "2026-07-02", "status": "Paid"},
+      {"name": "RE-DEMO-2", "customer": "Beispiel GmbH", "base_net_total": 6100, "posting_date": "2026-07-03", "status": "Unpaid"},
+      {"name": "RE-DEMO-3", "customer": "Demo Elektronik KG", "base_net_total": 3800, "posting_date": "2026-06-10", "status": "Paid"},
+      {"name": "RE-DEMO-4", "customer": "Musterkunde AG", "base_net_total": 9200, "posting_date": "2026-05-14", "status": "Paid"},
+      {"name": "RE-DEMO-5", "customer": "Beispiel GmbH", "base_net_total": 5100, "posting_date": "2026-04-22", "status": "Paid"}
+    ],
+    "to_bill_delivery_notes": [
+      {"name": "LS-DEMO-1", "customer_name": "Musterkunde AG", "base_net_total": 890, "per_billed": 0,
+       "posting_date": "2026-07-01", "tracking_number": "1ZDEMO0000000001", "shipment_date": "2026-07-01"},
+      {"name": "LS-DEMO-2", "customer_name": "Beispiel GmbH", "base_net_total": 410, "per_billed": 0,
+       "posting_date": "2026-07-05", "tracking_number": "1ZDEMO0000000002", "shipment_date": "2026-07-05"},
+      {"name": "LS-DEMO-3", "customer_name": "Demo Elektronik KG", "base_net_total": 2200, "per_billed": 0,
+       "posting_date": "2026-04-20", "tracking_number": null, "shipment_date": null}
+    ],
+    "open_sales_orders": [
+      {"name": "AB-DEMO-1", "customer": "Musterkunde AG", "net_open": 15000},
+      {"name": "AB-DEMO-2", "customer": "Neuer Interessent Ltd.", "net_open": 8200}
+    ]
+  },
+  "mail_messages": [
+    {"mailbox": "m.mustermann@example.com", "sender_name": "Musterkunde AG", "sender": "einkauf@musterkunde.example",
+     "subject": "Dringend: Liefertermin Bestellung 55012", "body_preview": "Können Sie uns dringend den Liefertermin für Bestellung 55012 bestätigen?",
+     "internet_message_id": "demo-1"},
+    {"mailbox": "anfrage@example.com", "sender_name": "Neuer Interessent Ltd.", "sender": "info@interessent.example",
+     "subject": "Angebotsanfrage Leiterplatten", "body_preview": "Wir hätten gerne ein Angebot für 500 Leiterplatten.",
+     "internet_message_id": "demo-2"},
+    {"mailbox": "bestellung@example.com", "sender_name": "Beispiel GmbH", "sender": "einkauf@beispiel.example",
+     "subject": "Auftragsbestätigung 4471 offen", "body_preview": "Bitte um Rückmeldung zur Auftragsbestätigung 4471.",
+     "internet_message_id": "demo-3"},
+    {"mailbox": "webshop@example.com", "sender_name": "Newsletter", "sender": "no-reply@newsletter.example",
+     "subject": "Unser Angebot der Woche", "body_preview": "Diese Woche 10% Rabatt auf alles.",
+     "internet_message_id": "demo-4"}
+  ]
+}

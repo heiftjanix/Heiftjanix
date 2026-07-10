@@ -191,7 +191,7 @@ PCBBoard.prototype.handleUrlParams = function () {
 PCBBoard.prototype.bindStatic = function () {
 	var self = this;
 	this.$root.find('#pcb-theme').on('click', function () {
-		self.$root.toggleClass('pcb-dark');
+		self.$root.find('.pcb-root').toggleClass('pcb-dark');
 	});
 	this.$root.find('.tabs button').on('click', function () {
 		self.$root.find('.tabs button').removeClass('active');

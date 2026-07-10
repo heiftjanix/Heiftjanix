@@ -83,6 +83,34 @@ class TestTriageAllBatching(unittest.TestCase):
         self.assertEqual(out[0]["category"], "relevant")
         self.assertEqual(out[0]["priority"], "high")
 
+    def test_rate_limit_retries_once_then_succeeds(self):
+        class _RateLimitError(Exception):
+            status_code = 429
+
+        msgs = [_msg("Mail A", "id-a")]
+        good_result = triage.MailTriageBatch(
+            results=[triage.MailTriage(category="relevant", priority="normal", reason="ok")]
+        )
+        mock_module = MagicMock()
+        mock_module.Anthropic.return_value.messages.parse.side_effect = [
+            _RateLimitError("rate limited"),
+            MagicMock(parsed_output=good_result),
+        ]
+        with patch.dict(sys.modules, {"anthropic": mock_module}), patch("time.sleep") as mock_sleep:
+            out = triage.triage_all(msgs, api_key="sk-test")
+        mock_sleep.assert_called_once_with(triage.RATE_LIMIT_BACKOFF_SECONDS)
+        self.assertEqual(out[0]["category"], "relevant")
+        self.assertEqual(out[0]["reason"], "ok")
+
+    def test_non_rate_limit_error_does_not_retry(self):
+        msgs = [_msg("Mail A", "id-a")]
+        mock_module = MagicMock()
+        mock_module.Anthropic.return_value.messages.parse.side_effect = RuntimeError("boom")
+        with patch.dict(sys.modules, {"anthropic": mock_module}), patch("time.sleep") as mock_sleep:
+            triage.triage_all(msgs, api_key="sk-test")
+        mock_sleep.assert_not_called()
+        self.assertEqual(mock_module.Anthropic.return_value.messages.parse.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

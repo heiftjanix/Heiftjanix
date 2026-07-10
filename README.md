@@ -84,20 +84,29 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
 - [ ] „Postfach verbinden" klicken (falls Azure hinterlegt) → Microsoft-Login →
       zurück zur Seite → Posteingang zeigt Mails aus eigenem + geteilten Postfächern.
 - [ ] Scheduler-Log prüfen (`bench --site <site> doctor` bzw. Error Log in ERPNext),
-      dass `pcb_board.refresh.scheduled_refresh` alle 30 Min werktags läuft.
+      dass `pcb_board.refresh.scheduled_refresh` alle 30 Min werktags läuft (und
+      `scheduled_mail_sync` alle 5 Min, siehe unten).
 
 ## Wie es funktioniert (kurz)
 
 - **Daten:** `refresh.py` liest ERPNext direkt über `frappe.get_all` (kein REST/MCP
   nötig), holt bei verbundenen Postfächern Microsoft-Graph-Mails, klassifiziert sie
-  per Anthropic-API (Fallback: Keyword-Heuristik ohne Key) und berechnet Prognose/
-  Pipeline/Tipps in `metrics.py` (reine Python-Funktionen, 1:1-Port aus
-  `scripts/forecast.py` + `scripts/revenue_aggregate.py` im Hauptrepo).
+  gebatcht per Anthropic-API (mehrere Mails pro Call, wichtig bei knappen Requests-
+  pro-Minute-Limits; Fallback: Keyword-Heuristik ohne Key oder bei Batch-Fehlern) und
+  berechnet Prognose/Pipeline/Tipps in `metrics.py` (reine Python-Funktionen, 1:1-Port
+  aus `scripts/forecast.py` + `scripts/revenue_aggregate.py` im Hauptrepo).
 - **Status/Refresh:** Ergebnis + Status liegen in `frappe.cache()` (Redis) — daher
-  sehen **alle** angemeldeten Nutzer denselben "läuft gerade"-Zustand, nicht nur der,
-  der den Button gedrückt hat.
-- **Takt:** `hooks.py` registriert einen Frappe-Scheduler-Cronjob (alle 30 Min
-  werktags) — kein externer Trigger nötig.
+  sehen **alle** angemeldeten Nutzer denselben Stand. Der „Aktualisiere..."-Hinweis
+  ist bewusst **kein** vollflächiges, blockierendes Overlay mehr, sondern ein kleiner
+  Hinweis oben rechts — das Board bleibt für alle bedienbar (Tabs, Filter, Mail-
+  Karten), während im Hintergrund aktualisiert wird.
+- **Takt:** `hooks.py` registriert zwei Frappe-Scheduler-Cronjobs (kein externer
+  Trigger nötig): alle 30 Min werktags ein **voller** Refresh (ERPNext + Mail + UPS,
+  `scheduled_refresh`), dazwischen alle 5 Min ein **stiller Mail-only-Sync**
+  (`scheduled_mail_sync`, rührt ERPNext/UPS nicht an und setzt nie den „läuft
+  gerade"-Status — kein Ladehinweis dafür). Ein Rate-Limit (429) beim Mail-Triage
+  löst einen einmaligen ~1-Minuten-Backoff-Retry aus, bevor der betroffene Batch auf
+  die Keyword-Heuristik zurückfällt.
 - **Postfach-Zugriff:** `PCB Board Mail Token` speichert den MSAL-Token-Cache pro
   Nutzer (Frappe-Password-Feld, verschlüsselt); jeder Nutzer sieht nur sein eigenes
   + die in den Settings konfigurierten geteilten Postfächer.

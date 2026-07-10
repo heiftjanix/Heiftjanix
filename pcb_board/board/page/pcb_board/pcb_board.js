@@ -116,9 +116,9 @@ PCBBoard.prototype.shellHtml = function () {
 		'<div class="tab-panel" id="pcb-tab-billing"></div>' +
 		'<p class="foot">Nur Vorschläge — es wird nichts automatisch gesendet oder gebucht. ' +
 		'Alle Beträge netto.</p>' +
-		'<div class="overlay" id="pcb-overlay">' + this.pcbLogoSvg(96, true, '') +
-		'<div class="ov-txt">Aktualisiere Daten …</div>' +
-		'<div class="ov-sub" id="pcb-ov-sub">Outlook &amp; ERPNext werden neu ausgewertet</div></div>' +
+		'<div class="overlay" id="pcb-overlay">' + this.pcbLogoSvg(28, true, '') +
+		'<div class="ov-text-wrap"><div class="ov-txt">Aktualisiere Daten …</div>' +
+		'<div class="ov-sub" id="pcb-ov-sub">Outlook &amp; ERPNext werden neu ausgewertet</div></div></div>' +
 		'<div class="toast" id="pcb-toast"></div>' +
 		'</div>'
 	);
@@ -651,10 +651,17 @@ var PCB_BOARD_CSS =
 	'.tbl th{color:var(--text-secondary);font-weight:600}.tbl .num{text-align:right;font-variant-numeric:tabular-nums}' +
 	'.tbl tfoot td{font-weight:650;border-top:2px solid var(--baseline)}' +
 	'.pcb-root .muted{color:var(--muted)}.pcb-root .foot{color:var(--muted);font-size:.78rem;margin-top:18px}' +
-	'.pcb-root .overlay{position:fixed;inset:0;background:color-mix(in srgb,var(--plane) 82%,transparent);' +
-	'backdrop-filter:blur(3px);display:none;flex-direction:column;align-items:center;justify-content:center;gap:18px;z-index:1050}' +
-	'.pcb-root .overlay.show{display:flex}.pcb-root .overlay .ov-txt{font-weight:700;color:var(--brand-teal);font-size:1.05rem}' +
-	'.pcb-root .overlay .ov-sub{color:var(--text-secondary);font-size:.85rem;margin-top:-8px}' +
+	// Bewusst kein vollflächiges Overlay: der Refresh-Status ist global (alle Nutzer
+	// sehen denselben Stand), aber niemand soll deshalb blockiert werden — nur ein
+	// kleiner, nicht-interaktionshemmender Hinweis oben rechts, Rest der Seite bleibt
+	// normal bedienbar (Tabs wechseln, Mails filtern, ...) während im Hintergrund
+	// aktualisiert wird.
+	'.pcb-root .overlay{position:fixed;top:74px;right:20px;background:var(--surface-1);' +
+	'border:1px solid var(--border);border-radius:12px;padding:10px 16px;box-shadow:0 6px 20px rgba(0,0,0,.18);' +
+	'display:none;flex-direction:row;align-items:center;gap:10px;z-index:1050;max-width:280px;pointer-events:none}' +
+	'.pcb-root .overlay.show{display:flex}.pcb-root .overlay .ov-text-wrap{display:flex;flex-direction:column}' +
+	'.pcb-root .overlay .ov-txt{font-weight:700;color:var(--brand-teal);font-size:.88rem}' +
+	'.pcb-root .overlay .ov-sub{color:var(--text-secondary);font-size:.74rem}' +
 	'.pcb-root .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:var(--text-primary);' +
 	'color:var(--surface-1);padding:10px 18px;border-radius:10px;font-size:.86rem;font-weight:600;opacity:0;' +
 	'transition:all .2s;z-index:1060;pointer-events:none}.pcb-root .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}' +

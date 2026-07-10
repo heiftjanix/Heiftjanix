@@ -10,12 +10,14 @@ Zugriff auf das Repo hat. Ohne API-Key greift ein deterministischer Keyword-Fall
 from __future__ import annotations
 
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
 from pydantic import BaseModel
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+RATE_LIMIT_BACKOFF_SECONDS = 60
 _CACHE: dict[str, dict] = {}
 
 STANDARD_ANGEBOT_DRAFT = """Sehr geehrte Damen und Herren,
@@ -201,6 +203,23 @@ def _triage_batch(msgs: list[dict], model: str, api_key: str) -> list[dict]:
     return [r.model_dump() for r in results]
 
 
+def _triage_batch_with_retry(msgs: list[dict], model: str, api_key: str) -> list[dict]:
+    """Wie _triage_batch(), aber bei einem Rate-Limit (429) einmal ~1 Min. warten und
+    erneut versuchen, statt sofort auf den Keyword-Fallback auszuweichen — bei einem
+    knappen Requests-pro-Minute-Limit reicht das oft schon, um durchzukommen."""
+    try:
+        return _triage_batch(msgs, model, api_key)
+    except Exception as exc:
+        if getattr(exc, "status_code", None) != 429:
+            raise
+        sys.stderr.write(
+            f"[triage] Rate-Limit erreicht ({len(msgs)} Mails) — warte "
+            f"{RATE_LIMIT_BACKOFF_SECONDS}s und versuche einmal erneut...\n"
+        )
+        time.sleep(RATE_LIMIT_BACKOFF_SECONDS)
+        return _triage_batch(msgs, model, api_key)
+
+
 def triage_all(messages: list[dict], model: str = DEFAULT_MODEL, api_key: str | None = None,
                 batch_size: int = 20, max_workers: int = 2) -> list[dict]:
     """Triagiert alle Mails — gebatcht (mehrere Mails pro API-Call), da ein knappes
@@ -216,7 +235,7 @@ def triage_all(messages: list[dict], model: str = DEFAULT_MODEL, api_key: str | 
 
     def _process_chunk(chunk: list[dict]) -> None:
         try:
-            results = _triage_batch(chunk, model, api_key)
+            results = _triage_batch_with_retry(chunk, model, api_key)
         except Exception as exc:  # noqa: BLE001 — ganzer Batch fällt zurück auf Keyword-Fallback
             sys.stderr.write(f"[triage] Batch-Call fehlgeschlagen ({len(chunk)} Mails), nutze Fallback: {exc}\n")
             for m in chunk:

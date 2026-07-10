@@ -75,6 +75,31 @@ def scheduled_refresh() -> None:
     run_refresh(started_by="Scheduler")
 
 
+def scheduled_mail_sync() -> None:
+    """Alle paar Minuten (siehe hooks.py): NUR Mails neu holen/triagieren und still
+    in den gecachten Board-Stand einspeisen — rührt NIE den Running-Status an, damit
+    kein Ladehinweis erscheint und alle das Board währenddessen normal weiter nutzen
+    können. ERPNext/UPS bleiben dem regulären 30-Min-Vollrefresh vorbehalten.
+
+    Läuft ins Leere, falls noch nie ein Vollrefresh gelaufen ist (dann gibt es noch
+    nichts, worin die Mails eingespeist werden könnten) oder gerade ein Vollrefresh
+    läuft (der bringt ohnehin frische Mails mit)."""
+    if get_status().get("state") == "running":
+        return
+    computed = get_metrics()
+    if not computed:
+        return
+    try:
+        config = _settings()
+        anthropic_api_key = frappe.conf.get("anthropic_api_key")
+        mail_items = _fetch_mail(config, anthropic_api_key)
+        computed["mail"] = m.mail_summary({"window_hours": config["mail_lookback_hours"], "items": mail_items})
+        computed["generated_at"] = frappe.utils.now()
+        frappe.cache().set_value(METRICS_KEY, computed)
+    except Exception:  # noqa: BLE001 — still fehlschlagen, alter Stand bleibt einfach stehen
+        frappe.log_error(title="PCB Board Mail-Sync fehlgeschlagen", message=frappe.get_traceback())
+
+
 def _fetch_erpnext(config: dict) -> dict:
     today = date.today()
     y, mo = today.year, today.month

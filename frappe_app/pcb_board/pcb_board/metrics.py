@@ -127,7 +127,7 @@ def _prev_month(y: int, m: int) -> tuple[int, int]:
     return (y - 1, 12) if m == 1 else (y, m - 1)
 
 
-def _mail_summary(mail: dict | None) -> dict:
+def mail_summary(mail: dict | None) -> dict:
     mail = mail or {}
     items = mail.get("items", []) or []
 
@@ -303,7 +303,7 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
         "company": config["company"],
         "currency": config["currency"],
         "target": target,
-        "mail": _mail_summary(data.get("mail")),
+        "mail": mail_summary(data.get("mail")),
         "forecast": fc.to_dict(),
         "daily_series": daily_series,
         "baseline": {

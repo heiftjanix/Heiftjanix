@@ -43,7 +43,7 @@ Trigger für diesen Weg). Installation per `bench get-app` + `bench install-app`
 Details und Checkliste in [`frappe_app/pcb_board/README.md`](frappe_app/pcb_board/README.md).
 Die reine Rechenlogik ist 1:1 aus `scripts/forecast.py`/`scripts/revenue_aggregate.py`
 nach `frappe_app/pcb_board/pcb_board/metrics.py` portiert (kein frappe-Import, eigene
-Tests unter `frappe_app/pcb_board/tests/`).
+Tests unter `frappe_app/pcb_board/pcb_board/tests/`).
 
 ## Team-Webapp (Alternative ohne Bench-Zugriff)
 

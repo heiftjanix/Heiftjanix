@@ -110,6 +110,12 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
 - **Postfach-Zugriff:** `PCB Board Mail Token` speichert den MSAL-Token-Cache pro
   Nutzer (Frappe-Password-Feld, verschlüsselt); jeder Nutzer sieht nur sein eigenes
   + die in den Settings konfigurierten geteilten Postfächer.
+- **Gelesen-Status & Zuweisung:** Mail-Karten zeigen „● ungelesen" (aus Outlook via
+  Graph `isRead`). Über „+ Zuweisen" wird eine Mail einem Kollegen zugewiesen
+  (`PCB Board Mail Assignment`, ein Datensatz pro `internet_message_id` — überlebt
+  Refreshs, da Mails selbst nicht gespeichert werden, nur die Zuordnung). Tab
+  „Zuweisungen" zeigt allen Nutzern alle offenen/erledigten Zuweisungen team-weit
+  (kein Owner-Filter — bewusst für alle sichtbar/bearbeitbar).
 
 ## Grenzen
 

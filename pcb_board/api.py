@@ -36,7 +36,63 @@ def get_board_metrics():
     view = rf.view_for_user(metrics, frappe.session.user, settings["extra_mailboxes"])
     token_doc = frappe.db.exists("PCB Board Mail Token", frappe.session.user)
     view["outlook_connected"] = bool(token_doc)
+    rf.attach_assignments(view)
     return {"metrics": view, "status": rf.get_status()}
+
+
+@frappe.whitelist()
+def assign_mail(internet_message_id: str, assigned_to: str, mailbox: str | None = None,
+                 sender_name: str | None = None, sender: str | None = None,
+                 subject: str | None = None):
+    if not (internet_message_id and assigned_to):
+        frappe.throw("internet_message_id und assigned_to sind erforderlich.")
+    if frappe.db.exists("PCB Board Mail Assignment", internet_message_id):
+        doc = frappe.get_doc("PCB Board Mail Assignment", internet_message_id)
+    else:
+        doc = frappe.new_doc("PCB Board Mail Assignment")
+        doc.internet_message_id = internet_message_id
+    doc.mailbox = mailbox
+    doc.sender_name = sender_name
+    doc.sender = sender
+    doc.subject = subject
+    doc.assigned_to = assigned_to
+    doc.assigned_by = frappe.session.user
+    doc.status = "Offen"
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    return {"ok": True}
+
+
+@frappe.whitelist()
+def unassign_mail(internet_message_id: str):
+    if frappe.db.exists("PCB Board Mail Assignment", internet_message_id):
+        frappe.delete_doc("PCB Board Mail Assignment", internet_message_id, ignore_permissions=True)
+        frappe.db.commit()
+    return {"ok": True}
+
+
+@frappe.whitelist()
+def set_assignment_status(internet_message_id: str, status: str):
+    if status not in ("Offen", "Erledigt"):
+        frappe.throw("Ungültiger Status.")
+    if frappe.db.exists("PCB Board Mail Assignment", internet_message_id):
+        doc = frappe.get_doc("PCB Board Mail Assignment", internet_message_id)
+        doc.status = status
+        doc.save(ignore_permissions=True)
+        frappe.db.commit()
+    return {"ok": True}
+
+
+@frappe.whitelist()
+def list_assignments():
+    return frappe.get_all(
+        "PCB Board Mail Assignment",
+        fields=["name", "internet_message_id", "mailbox", "sender_name", "sender", "subject",
+                "assigned_to", "assigned_by", "status", "creation"],
+        order_by="creation desc",
+        limit_page_length=0,
+        ignore_permissions=True,
+    )
 
 
 @frappe.whitelist()

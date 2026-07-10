@@ -229,3 +229,33 @@ def view_for_user(metrics_dict: dict, own_email: str, extra_mailboxes: list[str]
     items = [i for i in mail.get("items", []) if i.get("mailbox") in allowed]
     view["mail"] = m.mail_summary({"window_hours": mail.get("window_hours"), "items": items})
     return view
+
+
+def attach_assignments(view: dict) -> None:
+    """Blendet Zuweisungen (persistiert im DocType, nicht Teil der Refresh-Daten)
+    in die Mail-Items der aktuellen Ansicht ein — nach internet_message_id gematcht,
+    damit Zuweisungen einen Refresh überleben, obwohl Mails jedes Mal neu geholt werden."""
+    items = ((view.get("mail") or {}).get("items")) or []
+    if not items:
+        return
+    rows = frappe.get_all(
+        "PCB Board Mail Assignment",
+        fields=["internet_message_id", "assigned_to", "status"],
+        limit_page_length=0,
+        ignore_permissions=True,
+    )
+    by_id = {r["internet_message_id"]: r for r in rows}
+    names: dict[str, str] = {}
+    for i in items:
+        row = by_id.get(i.get("internet_message_id"))
+        if not row:
+            i["assigned_to"] = None
+            i["assigned_to_name"] = None
+            i["assignment_status"] = None
+            continue
+        assigned_to = row["assigned_to"]
+        if assigned_to not in names:
+            names[assigned_to] = frappe.utils.get_fullname(assigned_to)
+        i["assigned_to"] = assigned_to
+        i["assigned_to_name"] = names[assigned_to]
+        i["assignment_status"] = row["status"]

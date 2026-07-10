@@ -110,10 +110,12 @@ PCBBoard.prototype.shellHtml = function () {
 		'<button class="active" data-tab="mail">📥 Posteingang</button>' +
 		'<button data-tab="revenue">📊 Umsatz</button>' +
 		'<button data-tab="billing">🧾 Abrechnung</button>' +
+		'<button data-tab="assign">👤 Zuweisungen</button>' +
 		'</div>' +
 		'<div class="tab-panel active" id="pcb-tab-mail"><p class="muted">Lade Daten …</p></div>' +
 		'<div class="tab-panel" id="pcb-tab-revenue"></div>' +
 		'<div class="tab-panel" id="pcb-tab-billing"></div>' +
+		'<div class="tab-panel" id="pcb-tab-assign"><p class="muted">Lade Daten …</p></div>' +
 		'<p class="foot">Nur Vorschläge — es wird nichts automatisch gesendet oder gebucht. ' +
 		'Alle Beträge netto.</p>' +
 		'<div class="overlay" id="pcb-overlay">' + this.pcbLogoSvg(28, true, '') +
@@ -143,6 +145,10 @@ PCBBoard.prototype.load = function () {
 		}
 		self.metrics = msg.metrics;
 		self.renderAll();
+	});
+	frappe.call({ method: 'pcb_board.api.list_assignments' }).then(function (r) {
+		self.assignments = r.message || [];
+		self.renderAssignTab();
 	});
 };
 
@@ -236,6 +242,80 @@ PCBBoard.prototype.showDiagnose = function () {
 	});
 };
 
+PCBBoard.prototype.openAssignDialog = function (item) {
+	var self = this;
+	frappe.prompt(
+		[{ fieldname: 'assigned_to', fieldtype: 'Link', options: 'User', label: 'Zuweisen an', reqd: 1 }],
+		function (values) {
+			frappe.call({
+				method: 'pcb_board.api.assign_mail',
+				type: 'POST',
+				args: {
+					internet_message_id: item.internet_message_id,
+					mailbox: item.mailbox,
+					sender_name: item.sender_name,
+					sender: item.sender,
+					subject: item.subject,
+					assigned_to: values.assigned_to,
+				},
+			}).then(function () {
+				self.toast('Zugewiesen ✓');
+				self.load();
+			});
+		},
+		'Mail zuweisen',
+		'Zuweisen'
+	);
+};
+
+PCBBoard.prototype.renderAssignTab = function () {
+	var self = this;
+	var rows = (self.assignments || []).map(function (a) {
+		return '<tr><td>' + self.esc(self.shortBox(a.mailbox)) + '</td>' +
+			'<td>' + self.esc(a.sender_name || a.sender || '') + '</td>' +
+			'<td>' + self.esc(a.subject || '') + '</td>' +
+			'<td>' + self.esc(a.assigned_to) + '</td>' +
+			'<td>' + self.esc(a.status) + '</td>' +
+			'<td><button class="btn ghost small" data-mid="' + self.esc(a.internet_message_id) +
+			'" data-action="done">Erledigt</button> ' +
+			'<button class="btn ghost small" data-mid="' + self.esc(a.internet_message_id) +
+			'" data-action="remove">Entfernen</button></td></tr>';
+	}).join('');
+	var body = rows
+		? '<table class="tbl"><thead><tr><th>Postfach</th><th>Von</th><th>Betreff</th>' +
+			'<th>Zugewiesen an</th><th>Status</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>'
+		: '<p class="muted">Keine Zuweisungen.</p>';
+	this.$root.find('#pcb-tab-assign').html(
+		'<section class="card"><div class="sec-h"><h2>Zuweisungen</h2>' +
+		'<span class="muted">wer bearbeitet was — für alle sichtbar</span></div>' + body + '</section>'
+	);
+	this.bindAssignTabInteractions();
+};
+
+PCBBoard.prototype.bindAssignTabInteractions = function () {
+	var self = this;
+	this.$root.find('#pcb-tab-assign [data-action="done"]').on('click', function () {
+		var mid = $(this).data('mid');
+		frappe.call({
+			method: 'pcb_board.api.set_assignment_status',
+			type: 'POST',
+			args: { internet_message_id: mid, status: 'Erledigt' },
+		}).then(function () {
+			self.load();
+		});
+	});
+	this.$root.find('#pcb-tab-assign [data-action="remove"]').on('click', function () {
+		var mid = $(this).data('mid');
+		frappe.call({
+			method: 'pcb_board.api.unassign_mail',
+			type: 'POST',
+			args: { internet_message_id: mid },
+		}).then(function () {
+			self.load();
+		});
+	});
+};
+
 PCBBoard.prototype.connectOutlook = function () {
 	frappe.call({ method: 'pcb_board.api.connect_outlook' }).then(function (r) {
 		if (r.message && r.message.url) {
@@ -305,6 +385,7 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 		'<button data-cat="info">Info</button>' +
 		'</div><input type="search" id="pcb-mail-search" placeholder="Suche: Absender, Betreff …"></div>';
 
+	this._mailByMid = {};
 	var cards = items.map(function (i) {
 		var rel = i.category === 'relevant';
 		var prio = i.priority === 'high' ? 'high' : 'normal';
@@ -317,11 +398,24 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 		var pill = rel ? '<span class="pill rel">Antwort</span>' : '<span class="pill info">Info</span>';
 		var can = !!draft;
 		var chev = can ? '<span class="mc-chev">▾</span>' : '';
+		var mid = i.internet_message_id || '';
+		if (mid) {
+			self._mailByMid[mid] = i;
+		}
+		var unread = i.is_read === false;
+		var actions = '<span class="mc-actions">' +
+			(unread ? '<span class="mc-badge unread">● ungelesen</span>' : '') +
+			(i.assigned_to_name
+				? '<span class="mc-badge assignee" title="Klicken zum Entfernen">👤 ' +
+					self.esc(i.assigned_to_name) + ' ✕</span>'
+				: '') +
+			(mid ? '<button class="mc-assign-btn" type="button">+ Zuweisen</button>' : '') +
+			'</span>';
 		var head = '<div class="mc-head' + (can ? '' : ' nodraft') + '">' + dot + pill +
 			'<span class="mc-box">' + self.esc(self.shortBox(i.mailbox)) + '</span>' +
 			'<span class="mc-sender">' + self.esc(sender) + '</span>' +
 			'<span class="mc-subj">' + self.esc(subj) + '</span>' +
-			'<span class="mc-reason">' + self.esc(reason) + '</span>' + chev + '</div>';
+			'<span class="mc-reason">' + self.esc(reason) + '</span>' + actions + chev + '</div>';
 		var draftBlock = '';
 		if (can) {
 			draftBlock = '<div class="mc-draft" hidden><div class="mc-draft-lbl">Antwortvorschlag ' +
@@ -330,7 +424,7 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 				'<button class="copybtn" type="button">📋 Kopieren</button></div>';
 		}
 		return '<div class="mailcard' + (can ? ' has-draft' : '') + '" data-mb="' + self.esc(i.mailbox) + '" ' +
-			'data-cat="' + (rel ? 'relevant' : 'info') + '" data-prio="' + prio + '" ' +
+			'data-cat="' + (rel ? 'relevant' : 'info') + '" data-prio="' + prio + '" data-mid="' + self.esc(mid) + '" ' +
 			'data-text="' + self.esc(searchTxt) + '">' + head + draftBlock + '</div>';
 	});
 	var cardsHtml = cards.length
@@ -418,6 +512,27 @@ PCBBoard.prototype.bindMailInteractions = function () {
 				}
 			);
 		}
+	});
+	root.find('.mc-assign-btn').on('click', function (e) {
+		e.stopPropagation();
+		var mid = $(this).closest('.mailcard').data('mid');
+		var item = self._mailByMid[mid];
+		if (item) {
+			self.openAssignDialog(item);
+		}
+	});
+	root.find('.mc-badge.assignee').on('click', function (e) {
+		e.stopPropagation();
+		var mid = $(this).closest('.mailcard').data('mid');
+		if (!mid) return;
+		frappe.call({
+			method: 'pcb_board.api.unassign_mail',
+			type: 'POST',
+			args: { internet_message_id: mid },
+		}).then(function () {
+			self.toast('Zuweisung entfernt');
+			self.load();
+		});
 	});
 	applyFilter();
 };
@@ -622,6 +737,14 @@ var PCB_BOARD_CSS =
 	'.mc-sender{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px}' +
 	'.mc-subj{color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;grid-column:1/-1}' +
 	'.mc-reason{grid-column:1/-1;font-size:.86rem;color:var(--text-secondary)}' +
+	'.mc-actions{grid-column:1/-1;display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px}' +
+	'.mc-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;' +
+	'font-size:.72rem;font-weight:650;white-space:nowrap}' +
+	'.mc-badge.unread{background:color-mix(in srgb,var(--series-1) 15%,transparent);color:var(--series-1)}' +
+	'.mc-badge.assignee{background:color-mix(in srgb,var(--brand-teal) 15%,transparent);color:var(--brand-teal);cursor:pointer}' +
+	'.mc-assign-btn{font-size:.72rem;padding:2px 9px;border-radius:999px;border:1px dashed var(--border);' +
+	'background:transparent;color:var(--text-secondary);cursor:pointer}' +
+	'.mc-assign-btn:hover{border-color:var(--brand-teal);color:var(--brand-teal)}' +
 	'.mc-chev{position:absolute;right:12px;color:var(--muted);transition:transform .15s}' +
 	'.mailcard.open .mc-chev{transform:rotate(180deg)}' +
 	'.mc-draft{padding:0 12px 12px}.mc-draft-lbl{font-size:.78rem;color:var(--muted);margin:2px 0 6px}' +

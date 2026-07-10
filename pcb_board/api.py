@@ -75,20 +75,35 @@ def outlook_callback(code: str | None = None, state: str | None = None, error_de
         frappe.local.response["location"] = f"{board_url}?connect_error=1"
         return
 
-    client_id, client_secret, tenant_id = _azure_conf()
-    email, name, serialized_cache = auth.exchange_code(
-        client_id, client_secret, tenant_id, _redirect_uri(), code
-    )
+    try:
+        client_id, client_secret, tenant_id = _azure_conf()
+        email, name, serialized_cache = auth.exchange_code(
+            client_id, client_secret, tenant_id, _redirect_uri(), code
+        )
 
-    if frappe.db.exists("PCB Board Mail Token", frappe.session.user):
-        doc = frappe.get_doc("PCB Board Mail Token", frappe.session.user)
-    else:
-        doc = frappe.new_doc("PCB Board Mail Token")
-        doc.user = frappe.session.user
-    doc.connected_mailbox = email
-    doc.token_cache = serialized_cache
-    doc.save(ignore_permissions=True)
-    frappe.cache().delete_value(f"pcb_board_oauth_state:{frappe.session.user}")
+        if frappe.db.exists("PCB Board Mail Token", frappe.session.user):
+            doc = frappe.get_doc("PCB Board Mail Token", frappe.session.user)
+        else:
+            doc = frappe.new_doc("PCB Board Mail Token")
+            doc.user = frappe.session.user
+        doc.connected_mailbox = email
+        doc.token_cache = serialized_cache
+        doc.save(ignore_permissions=True)
+        # Ausdrücklicher Commit: Diese Methode setzt die Antwort manuell auf
+        # "redirect" statt eine normale Antwort zurückzugeben — dabei ist nicht
+        # garantiert, dass Frappes üblicher End-of-Request-Auto-Commit greift.
+        frappe.db.commit()
+        frappe.cache().delete_value(f"pcb_board_oauth_state:{frappe.session.user}")
+        frappe.log_error(
+            title="PCB Board Connect erfolgreich",
+            message=f"user={frappe.session.user} mailbox={email} doc={doc.name}",
+        )
+    except Exception:
+        frappe.db.rollback()
+        frappe.log_error(title="PCB Board Connect fehlgeschlagen", message=frappe.get_traceback())
+        frappe.local.response["type"] = "redirect"
+        frappe.local.response["location"] = f"{board_url}?connect_error=1"
+        return
 
     frappe.local.response["type"] = "redirect"
     frappe.local.response["location"] = f"{board_url}?connected=1"

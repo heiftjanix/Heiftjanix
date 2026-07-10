@@ -123,6 +123,9 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
   Zielerreichungs-Balken (neben dem Umsatzziel) plus Klartext-Hinweis, ob der
   laufende Monat die Kosten schon deckt — und eine Prognose-Kachel
   „Gewinn/Verlust" zeigt den erwarteten Monatsabschluss nach Kostenabzug.
+- **Top-Produkte:** Tab „Umsatz" zeigt zusätzlich die 5 umsatzstärksten Produkte
+  des laufenden Monats (aus `Sales Invoice Item`, nach `base_net_amount` summiert
+  und absteigend sortiert — nur gebuchte Rechnungen).
 
 ## Grenzen
 

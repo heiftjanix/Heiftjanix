@@ -616,10 +616,27 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 		'<p class="meter-verdict" style="color:' + (profitMtd >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
 		verdictText + '</p></div></section>';
 
+	var topProducts = this.topProductsHtml(m);
 	var coverage = this.coverageBarHtml(m);
 	var tips = this.tipsHtml(m);
 
-	return tiles + meter + coverage + tips;
+	return tiles + meter + topProducts + coverage + tips;
+};
+
+PCBBoard.prototype.topProductsHtml = function (m) {
+	var self = this;
+	var items = m.top_products || [];
+	if (!items.length) {
+		return '<section class="card"><figcaption>Top 5 Produkte (Monat)</figcaption>' +
+			'<p class="muted">Noch keine Rechnungspositionen in diesem Monat.</p></section>';
+	}
+	var rows = items.map(function (p, idx) {
+		return '<tr><td>' + (idx + 1) + '</td><td>' + self.esc(p.item_name || p.item_code) + '</td>' +
+			'<td class="num">' + self.eur(p.net_total) + '</td></tr>';
+	}).join('');
+	return '<section class="card"><figcaption>Top 5 Produkte (Monat, Netto-Umsatz)</figcaption>' +
+		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th><th class="num">Umsatz</th></tr></thead>' +
+		'<tbody>' + rows + '</tbody></table></section>';
 };
 
 PCBBoard.prototype.coverageBarHtml = function (m) {

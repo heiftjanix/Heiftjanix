@@ -181,6 +181,24 @@ def cost_summary(data: dict, config: dict, today: date) -> dict:
     }
 
 
+def top_products(data: dict, limit: int = 5) -> list[dict]:
+    """Top-N Produkte nach Netto-Umsatz im laufenden Monat, aus den bereits auf
+    den laufenden Monat gefilterten Rechnungspositionen (Sales Invoice Item)."""
+    totals: dict[str, dict] = {}
+    for row in data.get("invoice_items", []) or []:
+        code = row.get("item_code") or row.get("item_name") or "?"
+        entry = totals.setdefault(code, {
+            "item_code": code,
+            "item_name": row.get("item_name") or code,
+            "net_total": 0.0,
+        })
+        entry["net_total"] += float(row.get("base_net_amount") or 0)
+    ranked = sorted(totals.values(), key=lambda r: r["net_total"], reverse=True)
+    for r in ranked:
+        r["net_total"] = round(r["net_total"], 2)
+    return ranked[:limit]
+
+
 def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
     """data: {as_of, invoices[], to_bill_delivery_notes[], open_sales_orders[], mail{}}.
 
@@ -326,6 +344,7 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
         "target": target,
         "mail": mail_summary(data.get("mail")),
         "costs": cost_summary(data, config, today),
+        "top_products": top_products(data),
         "forecast": fc.to_dict(),
         "daily_series": daily_series,
         "baseline": {

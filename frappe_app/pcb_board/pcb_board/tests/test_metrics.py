@@ -63,7 +63,25 @@ class TestBuildMetrics(unittest.TestCase):
                 {"name": "PR-2", "base_net_total": 1500, "posting_date": "2026-07-12"},
                 {"name": "PR-0", "base_net_total": 9000, "posting_date": "2026-06-20"},
             ],
+            "invoice_items": [
+                {"item_code": "PCB-A", "item_name": "Platine A", "base_net_amount": 5000},
+                {"item_code": "PCB-B", "item_name": "Platine B", "base_net_amount": 3000},
+                {"item_code": "PCB-A", "item_name": "Platine A", "base_net_amount": 2000},
+                {"item_code": "PCB-C", "item_name": "Platine C", "base_net_amount": 500},
+                {"item_code": "PCB-D", "item_name": "Platine D", "base_net_amount": 400},
+                {"item_code": "PCB-E", "item_name": "Platine E", "base_net_amount": 300},
+                {"item_code": "PCB-F", "item_name": "Platine F", "base_net_amount": 100},
+            ],
         }
+
+    def test_top_products_aggregates_and_limits_to_five(self):
+        metrics = m.build_metrics(self._data(), CONFIG, date(2026, 7, 15))
+        top = metrics["top_products"]
+        self.assertEqual(len(top), 5)
+        self.assertEqual(top[0]["item_code"], "PCB-A")
+        self.assertAlmostEqual(top[0]["net_total"], 7000, delta=0.01)
+        self.assertEqual(top[1]["item_code"], "PCB-B")
+        self.assertEqual([p["item_code"] for p in top], ["PCB-A", "PCB-B", "PCB-C", "PCB-D", "PCB-E"])
 
     def test_mtd_excludes_other_months(self):
         metrics = m.build_metrics(self._data(), CONFIG, date(2026, 7, 15))

@@ -552,7 +552,7 @@ def render(m: dict, mode: str = "artifact", user: str | None = None) -> str:
     else:
         stand = as_of.strftime("%d.%m.%Y")
     refresh_min = int(m.get("auto_refresh_minutes", 0) or 0)
-    title = html.escape(m.get("dashboard_title", "Musterfirma Board"))
+    title = html.escape(m.get("dashboard_title", "Team-Board"))
     company = html.escape(m.get("company", ""))
 
     sub_extra = (" · Auto-Aktualisierung ~" + str(refresh_min) + " Min"
@@ -564,7 +564,7 @@ def render(m: dict, mode: str = "artifact", user: str | None = None) -> str:
     header = f'''<div class="hd">
   <div class="brand">{pcb_logo_svg(46)}
     <div><h1>{title}</h1>
-      <div class="tag">Musterfirma-Sekretärin</div>
+      <div class="tag">der/die/das Sekretär/-in</div>
       <div class="sub">{company} · Stand {stand}{sub_extra}</div>
     </div></div>
   <div class="actions">

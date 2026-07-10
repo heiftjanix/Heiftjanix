@@ -21,8 +21,13 @@ METRICS_KEY = "pcb_board_metrics"
 def _settings() -> dict:
     s = frappe.get_single("PCB Board Settings")
     extra = [ln.strip() for ln in (s.extra_mailboxes or "").splitlines() if ln.strip()]
+    company = frappe.defaults.get_global_default("company") or ""
     return {
-        "company": frappe.defaults.get_global_default("company") or "",
+        "company": company,
+        # Board-Titel: explizit in PCB Board Settings gepflegter Name hat Vorrang,
+        # sonst Fallback auf ERPNexts globale Standard-Firma, sonst leer (neutraler
+        # Titel ohne Firmenname).
+        "company_name": (s.company_name or "").strip() or company,
         "currency": "EUR",
         "revenue_target": s.revenue_target or 100000,
         "forecast": {
@@ -203,7 +208,9 @@ def run_refresh(started_by: str | None = None) -> None:
         )
 
         computed = m.build_metrics(raw, config)
-        computed["dashboard_title"] = "Musterfirma Team-Board"
+        computed["dashboard_title"] = (
+            f"{config['company_name']} Team-Board" if config["company_name"] else "Team-Board"
+        )
         computed["generated_at"] = frappe.utils.now()
         frappe.cache().set_value(METRICS_KEY, computed)
         _set_status(state="idle", generated_at=computed["generated_at"])

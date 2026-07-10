@@ -1,7 +1,7 @@
-# Musterfirma Team-Board („Sekretärin")
+# Team-Board (der/die/das Sekretär/-in)
 
-Ein automatisiertes, **interaktives Team-Board** für Musterfirma, das werktags laufend
-Outlook (mehrere Postfächer) und ERPNext auswertet:
+Ein automatisiertes, **interaktives Team-Board**, das werktags laufend Outlook
+(mehrere Postfächer) und ERPNext auswertet:
 
 - 📥 **Posteingang-Board** – alle Postfächer im Überblick mit **Postfach-Auswahl**
   (Alle · m.mustermann@ · bestellung@ · anfrage@ · webshop@), Suche/Filter und

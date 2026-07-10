@@ -1,4 +1,4 @@
-// Musterfirma Team-Board — native ERPNext Desk-Page.
+// Team-Board — native ERPNext Desk-Page.
 // UI-Design 1:1 aus scripts/render_dashboard.py (Hauptrepo) nach JS portiert:
 // PCB-Logo, Tabs (Posteingang/Umsatz/Abrechnung), Postfach-Chips, aufklappbare
 // Mail-Karten mit Kopieren-Button, Meter/Chart/Coverage/Tips, Abrechnungstabellen.
@@ -8,7 +8,7 @@
 frappe.pages['pcb-board'].on_page_load = function (wrapper) {
 	var page = frappe.ui.make_app_page({
 		parent: wrapper,
-		title: 'Musterfirma Team-Board',
+		title: 'Team-Board',
 		single_column: true,
 	});
 	new PCBBoard(page);
@@ -98,7 +98,7 @@ PCBBoard.prototype.shellHtml = function () {
 		'<div class="pcb-root">' +
 		'<div class="hd">' +
 		'<div class="brand">' + this.pcbLogoSvg(46, false, '') +
-		'<div><h1>Musterfirma Team-Board</h1><div class="tag">Musterfirma-Sekretärin</div>' +
+		'<div><h1 id="pcb-h1">Team-Board</h1><div class="tag">der/die/das Sekretär/-in</div>' +
 		'<div class="sub" id="pcb-stand">Lade …</div></div></div>' +
 		'<div class="actions">' +
 		'<span class="userchip">👤 ' + this.esc(frappe.session.user_fullname || frappe.session.user) + '</span>' +
@@ -131,6 +131,9 @@ PCBBoard.prototype.load = function () {
 	frappe.call({ method: 'pcb_board.api.get_board_metrics' }).then(function (r) {
 		var msg = r.message || {};
 		self.outlookConnected = !!(msg.metrics && msg.metrics.outlook_connected);
+		if (msg.metrics && msg.metrics.dashboard_title) {
+			self.$root.find('#pcb-h1').text(msg.metrics.dashboard_title);
+		}
 		if (!msg.metrics) {
 			self.$root.find('#pcb-tab-mail').html(
 				'<p class="muted">Noch kein Datenstand vorhanden. Auf „Live aktualisieren" klicken, ' +

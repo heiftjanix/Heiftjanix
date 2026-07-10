@@ -1,4 +1,4 @@
-"""FastAPI-Team-Webapp: Musterfirma-Sekretärin mit echtem Microsoft-Login.
+"""FastAPI-Team-Webapp: Team-Board (der/die/das Sekretär/-in) mit echtem Microsoft-Login.
 
 Jeder angemeldete Nutzer sieht sein eigenes Postfach + die geteilten Postfächer
 aus config/config.json. Der „Live aktualisieren"-Button stößt einen echten
@@ -27,7 +27,7 @@ import render_dashboard as rd   # noqa: E402
 
 from . import auth, service  # noqa: E402
 
-app = FastAPI(title="Musterfirma Team-Board")
+app = FastAPI(title="Team-Board")
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.environ.get("SESSION_SECRET", "dev-insecure-secret-change-me"),

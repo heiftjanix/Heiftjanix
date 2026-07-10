@@ -37,7 +37,7 @@ def _settings() -> dict:
             "stale_delivery_note_days": s.stale_delivery_note_days or 60,
         },
         "extra_mailboxes": extra,
-        "mail_lookback_hours": (s.mail_lookback_days or 14) * 24,
+        "mail_lookback_hours": (s.mail_lookback_days or 1) * 24,
         "anthropic_model": s.anthropic_model or triage.DEFAULT_MODEL,
     }
 

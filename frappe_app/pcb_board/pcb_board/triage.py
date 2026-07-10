@@ -10,6 +10,7 @@ Zugriff auf das Repo hat. Ohne API-Key greift ein deterministischer Keyword-Fall
 from __future__ import annotations
 
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
 from pydantic import BaseModel
@@ -142,5 +143,12 @@ def triage_message(msg: dict, model: str = DEFAULT_MODEL, api_key: str | None = 
     }
 
 
-def triage_all(messages: list[dict], model: str = DEFAULT_MODEL, api_key: str | None = None) -> list[dict]:
-    return [triage_message(m, model, api_key) for m in messages]
+def triage_all(messages: list[dict], model: str = DEFAULT_MODEL, api_key: str | None = None,
+                max_workers: int = 8) -> list[dict]:
+    """Triagiert alle Mails parallel (I/O-gebunden: je ein Anthropic-API-Call) —
+    bei einem größeren Mail-Rückblick (siehe PCB Board Settings) wären sequenzielle
+    Aufrufe sonst spürbar langsam (ein Refresh kann sonst mehrere Minuten hängen)."""
+    if not messages:
+        return []
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(messages))) as pool:
+        return list(pool.map(lambda m: triage_message(m, model, api_key), messages))

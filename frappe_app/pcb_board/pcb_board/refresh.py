@@ -139,7 +139,11 @@ def _fetch_mail(config: dict, anthropic_api_key: str | None) -> list[dict]:
         cache = doc.get_password("token_cache")
         if not cache:
             continue
-        token, new_cache = auth.get_access_token(azure_client_id, azure_client_secret, azure_tenant_id, cache)
+        try:
+            token, new_cache = auth.get_access_token(azure_client_id, azure_client_secret, azure_tenant_id, cache)
+        except Exception as exc:  # noqa: BLE001 — ein kaputter Token-Cache darf den Refresh nicht abschießen
+            sys.stderr.write(f"[pcb_board] Token-Cache für {row.user} ungültig ({exc}) — bitte neu verbinden.\n")
+            continue
         if new_cache != cache:
             doc.token_cache = new_cache
             doc.save(ignore_permissions=True)

@@ -15,16 +15,26 @@ Voraussetzung: Ein bestehendes Frappe/ERPNext-Bench mit Zugriff auf die Konsole
 
 > **Frappe Cloud:** Auf Frappe Cloud gibt es keine direkte SSH/Bench-Konsole für
 > Custom Apps — die Installation läuft dort über "Bench" → "Apps" → "Install App
-> from GitHub" (Push-Zugriff auf ein Repo mit diesem `frappe_app/pcb_board`-Inhalt
-> als App-Root nötig) bzw. ggf. den Support/„Frappe Cloud CLI"-Weg. Das ist nicht
-> 1:1 das `bench get-app`-Kommando unten und noch nicht durchgetestet — bitte vorab
-> in einer Test-/Staging-Site ausprobieren, bevor produktiv installiert wird.
+> from GitHub". **Wichtig:** Der Installer erwartet `pyproject.toml` **im Root des
+> gewählten Branches** — er kann nicht mit einem Unterordner in einem Monorepo
+> umgehen ("Not a valid Frappe App! pyproject.toml does not exist in app
+> directory."). Deshalb gibt es dafür den separaten Branch **`frappe-app-pcb-board`**
+> (per `git subtree split --prefix=frappe_app/pcb_board` erzeugt): Er enthält
+> **nur** den Inhalt dieses Ordners, mit `pyproject.toml` direkt im Root. Im Dialog
+> also die GitHub-URL wie gewohnt, aber im Branch-Dropdown **`frappe-app-pcb-board`**
+> statt `claude/work-automation-dashboard-d5pz9j` auswählen. Noch nicht
+> end-to-end durchgetestet (kein Frappe-Cloud-Zugriff) — bitte vorab in einer
+> Test-/Staging-Site ausprobieren, bevor produktiv installiert wird. Bei
+> künftigen Änderungen an `frappe_app/pcb_board/` muss der Split-Branch neu
+> erzeugt und gepusht werden (`git subtree split --prefix=frappe_app/pcb_board
+> -b frappe-app-pcb-board-new` + `git push -f origin
+> frappe-app-pcb-board-new:frappe-app-pcb-board`).
 
 ```bash
 # 1) App ins Bench holen (lokaler Pfad oder Git-URL zu diesem Repo)
 bench get-app /pfad/zu/diesem/repo/frappe_app/pcb_board
-# oder, falls das Hauptrepo per Git verfügbar ist:
-# bench get-app https://github.com/<org>/Heiftjanix.git --branch claude/work-automation-dashboard-d5pz9j
+# oder per Git (root-App-Branch, siehe Hinweis oben):
+# bench get-app https://github.com/<org>/Heiftjanix.git --branch frappe-app-pcb-board
 
 # 2) Auf der Site installieren
 bench --site erp.example.com install-app pcb_board

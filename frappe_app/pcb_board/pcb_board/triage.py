@@ -79,6 +79,10 @@ class MailTriage(BaseModel):
     draft: str | None = None
 
 
+class MailTriageBatch(BaseModel):
+    results: list[MailTriage]
+
+
 def _keyword_fallback(subject: str, body_preview: str) -> MailTriage:
     text = f"{subject} {body_preview}".lower()
     if any(k in text for k in _INFO_KEYWORDS):
@@ -95,45 +99,11 @@ def _keyword_fallback(subject: str, body_preview: str) -> MailTriage:
     return MailTriage(category="info", priority="normal", reason="Keine erkennbare Handlungsnotwendigkeit.")
 
 
-def triage_message(msg: dict, model: str = DEFAULT_MODEL, api_key: str | None = None) -> dict:
-    """msg: {mailbox, sender_name, sender, subject, body_preview, internet_message_id}."""
-    key = msg.get("internet_message_id") or f"{msg.get('mailbox')}|{msg.get('subject')}"
-    if key in _CACHE:
-        result = _CACHE[key]
-    else:
-        if api_key:
-            try:
-                import anthropic
-                client = anthropic.Anthropic(api_key=api_key)
-                resp = client.messages.parse(
-                    model=model,
-                    max_tokens=1024,
-                    system=[{
-                        "type": "text",
-                        "text": RELEVANCE_GUIDANCE,
-                        "cache_control": {"type": "ephemeral"},
-                    }],
-                    messages=[{
-                        "role": "user",
-                        "content": (
-                            f"Postfach: {msg.get('mailbox')}\n"
-                            f"Absender: {msg.get('sender_name')} <{msg.get('sender')}>\n"
-                            f"Betreff: {msg.get('subject')}\n"
-                            f"Textvorschau: {msg.get('body_preview')}\n\n"
-                            "Klassifiziere diese Mail gemäß der Relevanz-Rubrik und "
-                            "formuliere bei Relevanz einen Antwortvorschlag (sonst draft=null)."
-                        ),
-                    }],
-                    output_format=MailTriage,
-                )
-                result = resp.parsed_output.model_dump()
-            except Exception as exc:  # noqa: BLE001 — jede API-Störung -> Fallback
-                sys.stderr.write(f"[triage] Anthropic-API fehlgeschlagen, nutze Fallback: {exc}\n")
-                result = _keyword_fallback(msg.get("subject", ""), msg.get("body_preview", "")).model_dump()
-        else:
-            result = _keyword_fallback(msg.get("subject", ""), msg.get("body_preview", "")).model_dump()
-        _CACHE[key] = result
+def _cache_key(msg: dict) -> str:
+    return msg.get("internet_message_id") or f"{msg.get('mailbox')}|{msg.get('subject')}"
 
+
+def _build_result(msg: dict, result: dict) -> dict:
     return {
         "mailbox": msg.get("mailbox"),
         "sender_name": msg.get("sender_name"),
@@ -143,12 +113,122 @@ def triage_message(msg: dict, model: str = DEFAULT_MODEL, api_key: str | None = 
     }
 
 
+def triage_message(msg: dict, model: str = DEFAULT_MODEL, api_key: str | None = None) -> dict:
+    """Triagiert eine einzelne Mail per eigenem API-Call. Wird nur noch für den
+    Keyword-Fallback (kein API-Key) und in Tests benutzt — der normale Pfad läuft
+    über triage_all()/_triage_batch(), da einzelne Calls pro Mail bei knappen
+    Anthropic-Rate-Limits (Requests/Minute, nicht nur Rechenzeit) schnell in 429s
+    laufen. msg: {mailbox, sender_name, sender, subject, body_preview, internet_message_id}."""
+    key = _cache_key(msg)
+    if key in _CACHE:
+        return _build_result(msg, _CACHE[key])
+
+    if api_key:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            resp = client.messages.parse(
+                model=model,
+                max_tokens=1024,
+                system=[{
+                    "type": "text",
+                    "text": RELEVANCE_GUIDANCE,
+                    "cache_control": {"type": "ephemeral"},
+                }],
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"Postfach: {msg.get('mailbox')}\n"
+                        f"Absender: {msg.get('sender_name')} <{msg.get('sender')}>\n"
+                        f"Betreff: {msg.get('subject')}\n"
+                        f"Textvorschau: {msg.get('body_preview')}\n\n"
+                        "Klassifiziere diese Mail gemäß der Relevanz-Rubrik und "
+                        "formuliere bei Relevanz einen Antwortvorschlag (sonst draft=null)."
+                    ),
+                }],
+                output_format=MailTriage,
+            )
+            result = resp.parsed_output.model_dump()
+        except Exception as exc:  # noqa: BLE001 — jede API-Störung -> Fallback
+            sys.stderr.write(f"[triage] Anthropic-API fehlgeschlagen, nutze Fallback: {exc}\n")
+            result = _keyword_fallback(msg.get("subject", ""), msg.get("body_preview", "")).model_dump()
+    else:
+        result = _keyword_fallback(msg.get("subject", ""), msg.get("body_preview", "")).model_dump()
+
+    _CACHE[key] = result
+    return _build_result(msg, result)
+
+
+def _triage_batch(msgs: list[dict], model: str, api_key: str) -> list[dict]:
+    """Ein einziger API-Call für mehrere Mails auf einmal — entscheidend, wenn das
+    Anthropic-Konto ein knappes Requests-pro-Minute-Limit hat (nicht nur ein
+    Zeit-/Compute-Limit): weniger, dafür größere Calls kommen viel weiter, bevor
+    das Limit greift. Wirft bei jeder Störung (429, Antwort passt nicht zur Anzahl
+    Mails, ...) — der Aufrufer fängt das ab und nutzt den Keyword-Fallback."""
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=api_key)
+    body = "\n\n".join(
+        f"[Mail {i + 1}]\n"
+        f"Postfach: {m.get('mailbox')}\n"
+        f"Absender: {m.get('sender_name')} <{m.get('sender')}>\n"
+        f"Betreff: {m.get('subject')}\n"
+        f"Textvorschau: {m.get('body_preview')}"
+        for i, m in enumerate(msgs)
+    )
+    resp = client.messages.parse(
+        model=model,
+        max_tokens=1024 * len(msgs),
+        system=[{
+            "type": "text",
+            "text": RELEVANCE_GUIDANCE,
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Klassifiziere ALLE {len(msgs)} folgenden Mails gemäß der Relevanz-Rubrik "
+                f"und formuliere bei Relevanz je einen Antwortvorschlag (sonst draft=null).\n"
+                f"Gib in `results` GENAU {len(msgs)} Einträge zurück, in exakt derselben "
+                f"Reihenfolge wie die Mails unten (Ergebnis 1 = Mail 1, usw.).\n\n{body}"
+            ),
+        }],
+        output_format=MailTriageBatch,
+    )
+    results = resp.parsed_output.results
+    if len(results) != len(msgs):
+        raise ValueError(f"Batch-Antwort hatte {len(results)} Ergebnisse für {len(msgs)} Mails")
+    return [r.model_dump() for r in results]
+
+
 def triage_all(messages: list[dict], model: str = DEFAULT_MODEL, api_key: str | None = None,
-                max_workers: int = 8) -> list[dict]:
-    """Triagiert alle Mails parallel (I/O-gebunden: je ein Anthropic-API-Call) —
-    bei einem größeren Mail-Rückblick (siehe PCB Board Settings) wären sequenzielle
-    Aufrufe sonst spürbar langsam (ein Refresh kann sonst mehrere Minuten hängen)."""
+                batch_size: int = 20, max_workers: int = 2) -> list[dict]:
+    """Triagiert alle Mails — gebatcht (mehrere Mails pro API-Call), da ein knappes
+    Requests-pro-Minute-Limit (statt nur Zeit-/Compute-Limit) durch mehr parallele
+    Einzel-Calls nicht schneller wird, sondern nur mehr 429-Fehler produziert."""
     if not messages:
         return []
-    with ThreadPoolExecutor(max_workers=min(max_workers, len(messages))) as pool:
-        return list(pool.map(lambda m: triage_message(m, model, api_key), messages))
+    if not api_key:
+        return [triage_message(m, model, api_key) for m in messages]
+
+    to_process = [m for m in messages if _cache_key(m) not in _CACHE]
+    chunks = [to_process[i:i + batch_size] for i in range(0, len(to_process), batch_size)]
+
+    def _process_chunk(chunk: list[dict]) -> None:
+        try:
+            results = _triage_batch(chunk, model, api_key)
+        except Exception as exc:  # noqa: BLE001 — ganzer Batch fällt zurück auf Keyword-Fallback
+            sys.stderr.write(f"[triage] Batch-Call fehlgeschlagen ({len(chunk)} Mails), nutze Fallback: {exc}\n")
+            for m in chunk:
+                _CACHE[_cache_key(m)] = _keyword_fallback(
+                    m.get("subject", ""), m.get("body_preview", "")
+                ).model_dump()
+            return
+        for m, result in zip(chunk, results):
+            _CACHE[_cache_key(m)] = result
+
+    if chunks:
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(chunks))) as pool:
+            list(pool.map(_process_chunk, chunks))
+
+    return [_build_result(m, _CACHE[_cache_key(m)]) for m in messages]

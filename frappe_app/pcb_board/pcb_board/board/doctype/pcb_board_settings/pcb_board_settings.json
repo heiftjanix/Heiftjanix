@@ -20,6 +20,12 @@
       "description": "Leer lassen für einen neutralen Titel ohne Firmenname."
     },
     {
+      "fieldname": "slogan",
+      "fieldtype": "Data",
+      "label": "Slogan (optional, erscheint in Rot unter dem Titel)",
+      "description": "Leer lassen, um keinen Slogan anzuzeigen."
+    },
+    {
       "fieldname": "revenue_target",
       "fieldtype": "Currency",
       "label": "Umsatzziel (Netto/Monat)",

@@ -118,7 +118,11 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
   (kein Owner-Filter — bewusst für alle sichtbar/bearbeitbar).
 - **Kosten:** Tab „Kosten" summiert Wareneingänge (`Purchase Receipt`, ERPNext,
   laufender Monat) plus zwei fixe, in PCB Board Settings gepflegte Kostenpunkte
-  (Personalkosten/Monat, Miete/Monat) zu einer Gesamtkostenzahl.
+  (Personalkosten/Monat, Miete/Monat) zu einer Gesamtkostenzahl. Diese
+  Gesamtkosten erscheinen zusätzlich im Tab „Umsatz" als roter Marker auf dem
+  Zielerreichungs-Balken (neben dem Umsatzziel) plus Klartext-Hinweis, ob der
+  laufende Monat die Kosten schon deckt — und eine Prognose-Kachel
+  „Gewinn/Verlust" zeigt den erwarteten Monatsabschluss nach Kostenabzug.
 
 ## Grenzen
 

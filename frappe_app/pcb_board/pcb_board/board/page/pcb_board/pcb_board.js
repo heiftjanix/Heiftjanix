@@ -220,6 +220,9 @@ PCBBoard.prototype.showDiagnose = function () {
 				return '<tr><td>' + row[0] + '</td><td>' + row[1] + '</td></tr>';
 			}).join('') +
 			'</tbody></table>' +
+			'<p class="muted" style="margin-top:10px">Installierter Code-Stand: <code>' +
+			self.esc(s.build_time || '?') + '</code> (Commit <code>' +
+			self.esc((s.build_commit || '').slice(0, 12)) + '</code>)</p>' +
 			'<p class="muted" style="margin-top:10px">Redirect-URI für die Azure-App-Registrierung:<br>' +
 			'<code>' + self.esc(s.redirect_uri) + '</code></p>';
 		frappe.msgprint({

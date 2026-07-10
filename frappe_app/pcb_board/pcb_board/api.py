@@ -12,6 +12,7 @@ import frappe
 
 from . import auth
 from . import refresh as rf
+from . import version as ver
 
 
 def _azure_conf() -> tuple[str | None, str | None, str | None]:
@@ -135,4 +136,6 @@ def get_config_status():
         "revenue_target": bool(settings.revenue_target),
         "extra_mailboxes": bool((settings.extra_mailboxes or "").strip()),
         "own_mailbox_connected": bool(own_token),
+        "build_time": ver.BUILD_TIME,
+        "build_commit": ver.BUILD_COMMIT,
     }

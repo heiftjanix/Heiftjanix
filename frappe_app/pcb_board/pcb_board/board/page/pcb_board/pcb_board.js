@@ -103,6 +103,7 @@ PCBBoard.prototype.shellHtml = function () {
 		'<div class="actions">' +
 		'<span class="userchip">👤 ' + this.esc(frappe.session.user_fullname || frappe.session.user) + '</span>' +
 		'<button class="btn primary" id="pcb-refresh" type="button">⟳ Live aktualisieren</button>' +
+		'<button class="btn ghost" id="pcb-diagnose" type="button">🩺 Diagnose</button>' +
 		'<button class="btn ghost" id="pcb-theme" type="button">◐ Theme</button>' +
 		'</div></div>' +
 		'<div class="tabs">' +
@@ -189,6 +190,43 @@ PCBBoard.prototype.bindStatic = function () {
 	this.$root.find('#pcb-refresh').on('click', function () {
 		self.$overlay.addClass('show');
 		frappe.call({ method: 'pcb_board.api.start_refresh', type: 'POST' });
+	});
+	this.$root.find('#pcb-diagnose').on('click', function () {
+		self.showDiagnose();
+	});
+};
+
+PCBBoard.prototype.showDiagnose = function () {
+	var self = this;
+	frappe.call({ method: 'pcb_board.api.get_config_status' }).then(function (r) {
+		var s = r.message || {};
+		var ok = function (v) {
+			return v ? '✅' : '❌';
+		};
+		var rows = [
+			[ok(s.azure_client_id), 'azure_client_id (Site Config)'],
+			[ok(s.azure_client_secret), 'azure_client_secret (Site Config)'],
+			[ok(s.azure_tenant_id), 'azure_tenant_id (Site Config)'],
+			[ok(s.anthropic_api_key), 'anthropic_api_key (Site Config, sonst Keyword-Fallback)'],
+			[ok(s.ups_client_id), 'ups_client_id (Site Config, sonst Fallback-Schätzung)'],
+			[ok(s.ups_client_secret), 'ups_client_secret (Site Config, sonst Fallback-Schätzung)'],
+			[ok(s.revenue_target), 'Umsatzziel gesetzt (PCB Board Settings)'],
+			[ok(s.extra_mailboxes), 'Geteilte Postfächer gesetzt (PCB Board Settings)'],
+			[ok(s.own_mailbox_connected), 'Mein Postfach verbunden (' + self.esc(frappe.session.user) + ')'],
+		];
+		var html =
+			'<table class="pcb-diag"><tbody>' +
+			rows.map(function (row) {
+				return '<tr><td>' + row[0] + '</td><td>' + row[1] + '</td></tr>';
+			}).join('') +
+			'</tbody></table>' +
+			'<p class="muted" style="margin-top:10px">Redirect-URI für die Azure-App-Registrierung:<br>' +
+			'<code>' + self.esc(s.redirect_uri) + '</code></p>';
+		frappe.msgprint({
+			title: 'Konfiguration prüfen',
+			message: html,
+			indicator: 'blue',
+		});
 	});
 };
 

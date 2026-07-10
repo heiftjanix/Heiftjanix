@@ -1,7 +1,7 @@
 {
   "doctype": "DocType",
   "name": "PCB Board Settings",
-  "module": "PCB Board",
+  "module": "Board",
   "custom": 0,
   "istable": 0,
   "issingle": 1,

@@ -227,5 +227,5 @@ def view_for_user(metrics_dict: dict, own_email: str, extra_mailboxes: list[str]
     view = copy.deepcopy(metrics_dict)
     mail = metrics_dict.get("mail", {})
     items = [i for i in mail.get("items", []) if i.get("mailbox") in allowed]
-    view["mail"] = m._mail_summary({"window_hours": mail.get("window_hours"), "items": items})
+    view["mail"] = m.mail_summary({"window_hours": mail.get("window_hours"), "items": items})
     return view

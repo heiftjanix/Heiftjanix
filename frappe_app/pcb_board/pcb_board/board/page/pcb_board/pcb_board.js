@@ -111,11 +111,13 @@ PCBBoard.prototype.shellHtml = function () {
 		'<button class="active" data-tab="mail">📥 Posteingang</button>' +
 		'<button data-tab="revenue">📊 Umsatz</button>' +
 		'<button data-tab="billing">🧾 Abrechnung</button>' +
+		'<button data-tab="costs">💸 Kosten</button>' +
 		'<button data-tab="assign">👤 Zuweisungen</button>' +
 		'</div>' +
 		'<div class="tab-panel active" id="pcb-tab-mail"><p class="muted">Lade Daten …</p></div>' +
 		'<div class="tab-panel" id="pcb-tab-revenue"></div>' +
 		'<div class="tab-panel" id="pcb-tab-billing"></div>' +
+		'<div class="tab-panel" id="pcb-tab-costs"></div>' +
 		'<div class="tab-panel" id="pcb-tab-assign"><p class="muted">Lade Daten …</p></div>' +
 		'<p class="foot">Nur Vorschläge — es wird nichts automatisch gesendet oder gebucht. ' +
 		'Alle Beträge netto.</p>' +
@@ -345,7 +347,29 @@ PCBBoard.prototype.renderAll = function () {
 	this.$root.find('#pcb-tab-mail').html(this.mailTabHtml(m));
 	this.$root.find('#pcb-tab-revenue').html(this.revenueTabHtml(m));
 	this.$root.find('#pcb-tab-billing').html(this.billingTabHtml(m));
+	this.$root.find('#pcb-tab-costs').html(this.costsTabHtml(m));
 	this.bindMailInteractions();
+};
+
+PCBBoard.prototype.costsTabHtml = function (m) {
+	var self = this;
+	var c = m.costs || {};
+	var rows = [
+		['Wareneingänge (Monat)', c.goods_receipts, 'aus Purchase Receipt, ERPNext'],
+		['Personalkosten (Monat)', c.personnel_costs, 'PCB Board Settings'],
+		['Miete (Monat)', c.rent, 'PCB Board Settings'],
+	];
+	var tiles = '<div class="tiles">' + rows.map(function (r) {
+		return '<div class="tile"><p class="k">' + self.esc(r[0]) + '</p>' +
+			'<div class="v">' + self.eur(r[1]) + '</div>' +
+			'<div class="m">' + self.esc(r[2]) + '</div></div>';
+	}).join('') +
+		'<div class="tile"><p class="k">Gesamtkosten (Monat)</p>' +
+		'<div class="v" style="color:var(--critical)">' + self.eur(c.total) + '</div>' +
+		'<div class="m">Wareneingänge + Personal + Miete</div></div>' +
+		'</div>';
+	return '<section class="card"><div class="sec-h"><h2>Kosten</h2>' +
+		'<span class="muted">laufender Monat</span></div>' + tiles + '</section>';
 };
 
 PCBBoard.prototype.mailTabHtml = function (m) {

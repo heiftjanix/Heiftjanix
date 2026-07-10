@@ -45,6 +45,8 @@ def _settings() -> dict:
         "extra_mailboxes": extra,
         "mail_lookback_hours": (s.mail_lookback_days or 1) * 24,
         "anthropic_model": s.anthropic_model or triage.DEFAULT_MODEL,
+        "personnel_costs_monthly": float(s.personnel_costs_monthly or 0),
+        "rent_monthly": float(s.rent_monthly or 0),
     }
 
 
@@ -149,11 +151,21 @@ def _fetch_erpnext(config: dict) -> dict:
         net_open = float(r.get("base_net_total") or 0) * (1.0 - float(r.get("per_billed") or 0) / 100.0)
         open_sales_orders.append({"name": r["name"], "customer": r.get("customer"), "net_open": round(net_open, 2)})
 
+    # Kosten: Wareneingänge (Purchase Receipt) — Netto-Basiswert, gebucht.
+    purchase_receipts = frappe.get_all(
+        "Purchase Receipt",
+        filters=[["posting_date", ">=", cutoff], ["docstatus", "=", 1]],
+        fields=["name", "supplier", "base_net_total", "posting_date"],
+        limit_page_length=0,
+        ignore_permissions=True,
+    )
+
     return {
         "as_of": today.isoformat(),
         "invoices": invoices,
         "to_bill_delivery_notes": dns,
         "open_sales_orders": open_sales_orders,
+        "purchase_receipts": purchase_receipts,
     }
 
 

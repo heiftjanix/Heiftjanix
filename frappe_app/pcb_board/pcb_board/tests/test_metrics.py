@@ -58,6 +58,11 @@ class TestBuildMetrics(unittest.TestCase):
                  "arrival_status": "unknown", "arrival_method": "none"},
             ],
             "open_sales_orders": [{"name": "AB-1", "net_open": 25000}],
+            "purchase_receipts": [
+                {"name": "PR-1", "base_net_total": 3000, "posting_date": "2026-07-05"},
+                {"name": "PR-2", "base_net_total": 1500, "posting_date": "2026-07-12"},
+                {"name": "PR-0", "base_net_total": 9000, "posting_date": "2026-06-20"},
+            ],
         }
 
     def test_mtd_excludes_other_months(self):
@@ -77,6 +82,22 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertAlmostEqual(metrics["pipeline"]["ready_net"], 5000, delta=0.01)
         self.assertAlmostEqual(metrics["pipeline"]["in_transit_net"], 2000, delta=0.01)
         self.assertAlmostEqual(metrics["pipeline"]["open_so_net"], 25000, delta=0.01)
+
+    def test_costs_mtd_plus_fixed_items(self):
+        config = dict(CONFIG, personnel_costs_monthly=6000, rent_monthly=1200)
+        metrics = m.build_metrics(self._data(), config, date(2026, 7, 15))
+        costs = metrics["costs"]
+        self.assertAlmostEqual(costs["goods_receipts"], 4500, delta=0.01)
+        self.assertAlmostEqual(costs["personnel_costs"], 6000, delta=0.01)
+        self.assertAlmostEqual(costs["rent"], 1200, delta=0.01)
+        self.assertAlmostEqual(costs["total"], 11700, delta=0.01)
+
+    def test_costs_default_to_zero_without_settings(self):
+        metrics = m.build_metrics(self._data(), CONFIG, date(2026, 7, 15))
+        costs = metrics["costs"]
+        self.assertAlmostEqual(costs["personnel_costs"], 0, delta=0.01)
+        self.assertAlmostEqual(costs["rent"], 0, delta=0.01)
+        self.assertAlmostEqual(costs["total"], 4500, delta=0.01)
 
     def test_mail_summary_counts_and_sort(self):
         data = self._data()

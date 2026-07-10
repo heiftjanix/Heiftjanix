@@ -115,6 +115,27 @@
       "fieldtype": "Data",
       "label": "Claude-Modell (Mail-Triage)",
       "default": "claude-haiku-4-5-20251001"
+    },
+    {
+      "fieldname": "section_break_costs",
+      "fieldtype": "Section Break",
+      "label": "Kosten"
+    },
+    {
+      "fieldname": "personnel_costs_monthly",
+      "fieldtype": "Currency",
+      "label": "Personalkosten/Monat",
+      "default": "0"
+    },
+    {
+      "fieldname": "column_break_costs_1",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "rent_monthly",
+      "fieldtype": "Currency",
+      "label": "Miete/Monat",
+      "default": "0"
     }
   ],
   "permissions": [

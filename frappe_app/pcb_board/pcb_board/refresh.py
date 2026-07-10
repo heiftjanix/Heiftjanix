@@ -37,6 +37,7 @@ def _settings() -> dict:
             "stale_delivery_note_days": s.stale_delivery_note_days or 60,
         },
         "extra_mailboxes": extra,
+        "mail_lookback_hours": (s.mail_lookback_days or 14) * 24,
         "anthropic_model": s.anthropic_model or triage.DEFAULT_MODEL,
     }
 
@@ -151,7 +152,9 @@ def _fetch_mail(config: dict, anthropic_api_key: str | None) -> list[dict]:
             sys.stderr.write(f"[pcb_board] Kein gültiges Graph-Token mehr für {row.user} — bitte neu verbinden.\n")
             continue
         try:
-            items = graph.fetch_all_mailboxes(token, doc.user, config["extra_mailboxes"], window_hours=24)
+            items = graph.fetch_all_mailboxes(
+                token, doc.user, config["extra_mailboxes"], window_hours=config["mail_lookback_hours"]
+            )
             all_items.extend(items)
         except Exception as exc:  # noqa: BLE001 — ein Postfach darf den Refresh nicht abschießen
             sys.stderr.write(f"[pcb_board] Postfach-Abruf für {row.user} fehlgeschlagen: {exc}\n")
@@ -166,7 +169,7 @@ def run_refresh(started_by: str | None = None) -> None:
 
         anthropic_api_key = frappe.conf.get("anthropic_api_key")
         mail_items = _fetch_mail(config, anthropic_api_key)
-        raw["mail"] = {"window_hours": 24, "items": mail_items}
+        raw["mail"] = {"window_hours": config["mail_lookback_hours"], "items": mail_items}
 
         ups_client_id = frappe.conf.get("ups_client_id")
         ups_client_secret = frappe.conf.get("ups_client_secret")

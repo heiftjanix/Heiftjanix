@@ -32,6 +32,13 @@
       "description": "Zusätzlich zum eigenen Postfach für jeden Nutzer sichtbar, z. B. bestellung@example.com"
     },
     {
+      "fieldname": "mail_lookback_days",
+      "fieldtype": "Int",
+      "label": "Mail-Rückblick (Tage)",
+      "default": "14",
+      "description": "Wie weit zurück Mails pro Postfach abgerufen werden."
+    },
+    {
       "fieldname": "section_break_forecast",
       "fieldtype": "Section Break",
       "label": "Prognose-Parameter"

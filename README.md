@@ -69,7 +69,7 @@ webapp/demo_data.json     Beispieldaten für DEMO_MODE (keine echten Kundendaten
 ```bash
 DEMO_MODE=1 SESSION_SECRET=dev uvicorn webapp.app:app --reload
 ```
-Dann `http://localhost:8000/login` öffnen → Demo-Login als Udo, Demo-Daten,
+Dann `http://localhost:8000/login` öffnen → Demo-Login als Max Mustermann, Demo-Daten,
 Keyword-Fallback statt Claude-Triage.
 
 **Echter Betrieb** braucht (siehe `.env.example`):
@@ -94,10 +94,14 @@ Kopieren-Buttons.
 ## Projektaufbau
 
 ```
-config/config.json            Ziel (100.000 €), Firma, Zeitzone, UPS-Transittage,
-                              Feiertage, Prognose-Parameter, Zeitfenster,
+config/config.example.json    Vorlage (Platzhalter) — nach config/config.json kopieren
+                              und mit echten Werten (Firma, Ziel, Postfächer) befüllen
+config/config.json            Lokal, NICHT im Repo (gitignored): Ziel, Firma, Zeitzone,
+                              UPS-Transittage, Feiertage, Prognose-Parameter, Zeitfenster,
                               email.extra_mailboxes (weitere/geteilte Postfächer)
-config/relevance_guidance.md  Relevanz-Rubrik + Antwortstil/Signatur
+config/relevance_guidance.example.md  Vorlage — nach relevance_guidance.md kopieren
+config/relevance_guidance.md  Lokal, NICHT im Repo: Relevanz-Rubrik + echte Antwortstil-
+                              Signatur (Name/Firma)
 workflow/routine_prompt.md    Auslöse-Prompt der Routine
 workflow/daily_briefing.md    Detaillierter Ablauf
 scripts/run_pipeline.py       Orchestriert: UPS → Kennzahlen → Dashboard
@@ -126,6 +130,15 @@ Zieldeckung ausgewiesen, nicht auf die Prognose addiert.
 ### Voraussetzungen
 - Python 3.11+, Standardbibliothek genügt (optional `requests` für die UPS-API).
 - Aktive MCP-Connectoren „Microsoft 365" und „ERPNext" in der Session.
+
+### Echte Konfiguration anlegen (nicht im Repo)
+`config/config.json` und `config/relevance_guidance.md` enthalten eure echten
+Firmen-/Kontaktdaten und sind deshalb **gitignored** (wie `.env`) — nie committen.
+Einmalig aus den Vorlagen erzeugen und mit echten Werten befüllen:
+```bash
+cp config/config.example.json config/config.json
+cp config/relevance_guidance.example.md config/relevance_guidance.md
+```
 
 ### UPS Live-Abfrage (optional, empfohlen)
 Ohne UPS-Zugang wird die Ankunft aus **Versanddatum + Transittagen** geschätzt.

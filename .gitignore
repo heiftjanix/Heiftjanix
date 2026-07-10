@@ -13,3 +13,5 @@ __pycache__/
 # Generated output
 dashboard.html
 briefing_*.md
+config/config.json
+config/relevance_guidance.md

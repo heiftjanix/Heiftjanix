@@ -20,7 +20,7 @@ Handlung oder Antwort von Max Mustermann bzw. Musterfirma erfordert, z. B.:
 ## Wann ist eine Mail UNWICHTIG (→ nur 1-Satz-Zusammenfassung)?
 
 - Newsletter, Werbung, automatische Systemmeldungen ohne Handlungsbedarf.
-- Reine FYI-/CC-Mails ohne Frage an Udo.
+- Reine FYI-/CC-Mails ohne Frage an Max Mustermann.
 - Interne Verteiler ohne konkrete Aufgabe.
 - Offensichtlicher Spam.
 
@@ -32,7 +32,7 @@ wichtige Mail übersehen).
 - Sprache: **Deutsch**, höflich-sachlicher Geschäftston (Sie-Form).
 - Kurz und konkret; auf die eigentliche Frage eingehen.
 - Keine erfundenen Fakten/Zusagen (Preise, Termine, Bestände) — wenn Daten fehlen,
-  Platzhalter in `[eckigen Klammern]` setzen, die Udo ausfüllt.
+  Platzhalter in `[eckigen Klammern]` setzen, die Max Mustermann ausfüllt.
 - Wenn passend: Bezug auf konkrete ERPNext-Daten herstellen (Auftrags-/Lieferschein-/
   Rechnungsnummer), sofern in der Mail erkennbar.
 - Grußformel:

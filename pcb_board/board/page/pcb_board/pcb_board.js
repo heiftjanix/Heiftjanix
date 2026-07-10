@@ -99,6 +99,7 @@ PCBBoard.prototype.shellHtml = function () {
 		'<div class="hd">' +
 		'<div class="brand">' + this.pcbLogoSvg(46, false, '') +
 		'<div><h1 id="pcb-h1">Team-Board</h1><div class="tag">der/die/das Sekretär/-in</div>' +
+		'<div class="slogan" id="pcb-slogan" hidden></div>' +
 		'<div class="sub" id="pcb-stand">Lade …</div></div></div>' +
 		'<div class="actions">' +
 		'<span class="userchip">👤 ' + this.esc(frappe.session.user_fullname || frappe.session.user) + '</span>' +
@@ -135,6 +136,9 @@ PCBBoard.prototype.load = function () {
 		self.outlookConnected = !!(msg.metrics && msg.metrics.outlook_connected);
 		if (msg.metrics && msg.metrics.dashboard_title) {
 			self.$root.find('#pcb-h1').text(msg.metrics.dashboard_title);
+		}
+		if (msg.metrics && msg.metrics.slogan) {
+			self.$root.find('#pcb-slogan').text(msg.metrics.slogan).prop('hidden', false);
 		}
 		if (!msg.metrics) {
 			self.$root.find('#pcb-tab-mail').html(
@@ -690,7 +694,9 @@ var PCB_BOARD_CSS =
 	'@keyframes pcbspin{to{transform:rotate(360deg)}}' +
 	'.hd{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px}' +
 	'.hd .brand{display:flex;align-items:center;gap:12px;flex:1;min-width:220px}' +
-	'.hd h1{font-size:1.3rem;line-height:1.1}.hd .tag{color:var(--brand-teal);font-weight:600;font-size:.82rem}' +
+	'.hd h1{font-size:1.3rem;line-height:1.1;color:var(--text-primary)!important;font-weight:700}' +
+	'.hd .tag{color:var(--brand-teal);font-weight:600;font-size:.82rem}' +
+	'.hd .slogan{color:var(--brand-red);font-weight:700;font-size:.82rem;margin-top:2px}' +
 	'.hd .sub{color:var(--text-secondary);font-size:.82rem;margin-top:2px}' +
 	'.hd .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}' +
 	'.pcb-root .btn{border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);' +
@@ -706,7 +712,8 @@ var PCB_BOARD_CSS =
 	'.pcb-root .tabs button.active{color:var(--brand-teal);border-bottom-color:var(--brand-teal)}' +
 	'.pcb-root .tab-panel{display:none}.pcb-root .tab-panel.active{display:block}' +
 	'.pcb-root .card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:18px;margin-top:16px}' +
-	'.sec-h{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}.sec-h h2{font-size:1.05rem}' +
+	'.sec-h{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}' +
+	'.sec-h h2{font-size:1.05rem;color:var(--text-primary)!important;font-weight:700}' +
 	'.connectbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--plane);border:1px solid var(--border);' +
 	'border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:.88rem}' +
 	'.connectbar.ok{color:var(--good)}' +

@@ -574,10 +574,15 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 		red: ['var(--critical)', 'Unter Ziel', '▼'],
 	};
 	var st = statusMap[fc.status] || statusMap.amber;
-	var scaleMax = Math.max(m.target, fc.forecast_high) || 1;
+	var costsTotal = (m.costs && m.costs.total) || 0;
+	var scaleMax = Math.max(m.target, fc.forecast_high, costsTotal) || 1;
 	var mtdW = (fc.mtd / scaleMax) * 100;
 	var projW = (Math.max(fc.forecast - fc.mtd, 0) / scaleMax) * 100;
 	var targetPos = (m.target / scaleMax) * 100;
+	var costsPos = (costsTotal / scaleMax) * 100;
+
+	var profitMtd = fc.mtd - costsTotal;
+	var profitForecast = fc.forecast - costsTotal;
 
 	var tiles =
 		'<div class="tiles">' +
@@ -589,16 +594,27 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 		'<div class="m">Ziel ' + self.eur(m.target) + '</div></div>' +
 		'<div class="tile"><p class="k">Nötig je Restwerktag</p><div class="v">' + self.eur(fc.required_daily) + '</div>' +
 		'<div class="m">an ' + fc.bd_remaining + ' Werktagen</div></div>' +
+		'<div class="tile"><p class="k">Gewinn/Verlust (Prognose)</p>' +
+		'<div class="v" style="color:' + (profitForecast >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
+		(profitForecast >= 0 ? '+' : '−') + self.eur(Math.abs(profitForecast)) + '</div>' +
+		'<div class="m">nach Abzug Gesamtkosten ' + self.eur(costsTotal) + '</div></div>' +
 		'</div>';
+
+	var verdictText = profitMtd >= 0
+		? '✅ Kosten bereits gedeckt — aktuell ' + self.eur(profitMtd) + ' im Plus.'
+		: '🔻 Noch ' + self.eur(Math.abs(profitMtd)) + ' bis zur Kostendeckung (Ist).';
 
 	var meter =
 		'<section class="card"><figcaption>Zielerreichung</figcaption><div class="meter-wrap">' +
 		'<div class="meter"><div class="meter-row">' +
 		'<div class="fill" style="width:' + mtdW.toFixed(2) + '%;background:var(--series-1)"></div>' +
 		'<div class="proj" style="width:' + projW.toFixed(2) + '%;background:' + st[0] + '"></div>' +
-		'</div><div class="mk" style="left:' + targetPos.toFixed(2) + '%"></div></div>' +
+		'</div><div class="mk" style="left:' + targetPos.toFixed(2) + '%" title="Umsatzziel"></div>' +
+		'<div class="mk costs" style="left:' + costsPos.toFixed(2) + '%" title="Gesamtkosten (Kostendeckung)"></div></div>' +
 		'<div class="meter-labels"><span>Ist ' + self.eur(fc.mtd) + '</span><span>Prognose ' + self.eur(fc.forecast) + '</span>' +
-		'<span>Ziel ' + self.eur(m.target) + '</span></div></div></section>';
+		'<span>Ziel ' + self.eur(m.target) + '</span><span class="costs-lbl">Kosten ' + self.eur(costsTotal) + '</span></div>' +
+		'<p class="meter-verdict" style="color:' + (profitMtd >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
+		verdictText + '</p></div></section>';
 
 	var coverage = this.coverageBarHtml(m);
 	var tips = this.tipsHtml(m);
@@ -795,7 +811,10 @@ var PCB_BOARD_CSS =
 	'.meter-wrap{margin-top:10px}.meter{position:relative;height:26px;border-radius:8px;background:var(--grid);overflow:hidden}' +
 	'.meter .fill{height:100%;border-radius:8px 0 0 8px}.meter .proj{height:100%;opacity:.45}.meter-row{display:flex;height:100%}' +
 	'.meter .mk{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--text-primary)}' +
+	'.meter .mk.costs{background:var(--critical);width:3px;box-shadow:0 0 0 1px var(--surface-1)}' +
 	'.meter-labels{display:flex;justify-content:space-between;font-size:.8rem;color:var(--text-secondary);margin-top:6px}' +
+	'.meter-labels .costs-lbl{color:var(--critical);font-weight:650}' +
+	'.meter-verdict{font-size:.86rem;margin-top:8px;font-weight:650}' +
 	'.cov-track{position:relative;display:flex;height:30px;border-radius:8px;overflow:hidden;background:var(--grid);gap:2px}' +
 	'.cov-track .seg{height:100%}.cov-target{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--text-primary)}' +
 	'.cov-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.82rem;color:var(--text-secondary);margin-top:10px}' +

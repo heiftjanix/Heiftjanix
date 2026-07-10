@@ -160,6 +160,27 @@ def mail_summary(mail: dict | None) -> dict:
     }
 
 
+def cost_summary(data: dict, config: dict, today: date) -> dict:
+    """Kosten laufender Monat: Wareneingänge (Purchase Receipt, aus ERPNext) plus
+    zwei fixe, in PCB Board Settings gepflegte Kostenpunkte (Personal, Miete)."""
+    month_start = date(today.year, today.month, 1)
+    goods_receipts = 0.0
+    for r in data.get("purchase_receipts", []) or []:
+        d = _pdate(r)
+        if d and month_start <= d <= today:
+            goods_receipts += _net(r)
+
+    personnel = float(config.get("personnel_costs_monthly") or 0)
+    rent = float(config.get("rent_monthly") or 0)
+    total = goods_receipts + personnel + rent
+    return {
+        "goods_receipts": round(goods_receipts, 2),
+        "personnel_costs": round(personnel, 2),
+        "rent": round(rent, 2),
+        "total": round(total, 2),
+    }
+
+
 def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
     """data: {as_of, invoices[], to_bill_delivery_notes[], open_sales_orders[], mail{}}.
 
@@ -304,6 +325,7 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
         "currency": config["currency"],
         "target": target,
         "mail": mail_summary(data.get("mail")),
+        "costs": cost_summary(data, config, today),
         "forecast": fc.to_dict(),
         "daily_series": daily_series,
         "baseline": {

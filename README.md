@@ -116,6 +116,9 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
   Refreshs, da Mails selbst nicht gespeichert werden, nur die Zuordnung). Tab
   „Zuweisungen" zeigt allen Nutzern alle offenen/erledigten Zuweisungen team-weit
   (kein Owner-Filter — bewusst für alle sichtbar/bearbeitbar).
+- **Kosten:** Tab „Kosten" summiert Wareneingänge (`Purchase Receipt`, ERPNext,
+  laufender Monat) plus zwei fixe, in PCB Board Settings gepflegte Kostenpunkte
+  (Personalkosten/Monat, Miete/Monat) zu einer Gesamtkostenzahl.
 
 ## Grenzen
 

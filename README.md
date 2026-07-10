@@ -71,9 +71,9 @@ Azure-Registrierung noch fehlt.
 ## Einstellungen
 
 Unter **PCB Board Settings** (normale ERPNext-Formularmaske, Suche im Awesomplete)
-lassen sich Umsatzziel, geteilte Postfächer, Mail-Rückblick (Tage, Standard 14),
-Prognose-Parameter und das Claude-Modell für die Mail-Triage anpassen — kein
-Datei-Edit nötig.
+lassen sich Umsatzziel, geteilte Postfächer, Mail-Rückblick (Tage, Standard 1 —
+klein halten, jede Mail kostet einen Claude-API-Call), Prognose-Parameter und
+das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
 
 ## Ablauf nach der Installation (Checkliste)
 

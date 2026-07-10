@@ -35,8 +35,8 @@
       "fieldname": "mail_lookback_days",
       "fieldtype": "Int",
       "label": "Mail-Rückblick (Tage)",
-      "default": "14",
-      "description": "Wie weit zurück Mails pro Postfach abgerufen werden."
+      "default": "1",
+      "description": "Wie weit zurück Mails pro Postfach abgerufen werden. Klein halten (1-2 Tage), da jede Mail einzeln per Claude-API eingeordnet wird — ein zu großer Rückblick macht den Refresh langsam."
     },
     {
       "fieldname": "section_break_forecast",

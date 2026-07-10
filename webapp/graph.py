@@ -13,9 +13,12 @@ SELECT = "id,subject,from,receivedDateTime,bodyPreview,internetMessageId"
 
 
 def _messages_url(mailbox: str | None) -> str:
+    # /messages ohne Ordner-Filter liefert laut Graph-API-Doku Mails aus dem
+    # GESAMTEN Postfach (u. a. auch Gesendete Elemente) — daher explizit auf
+    # den Posteingang beschränken.
     if mailbox:
-        return f"{GRAPH}/users/{mailbox}/messages"
-    return f"{GRAPH}/me/messages"
+        return f"{GRAPH}/users/{mailbox}/mailFolders/inbox/messages"
+    return f"{GRAPH}/me/mailFolders/inbox/messages"
 
 
 def fetch_mailbox(token: str, mailbox: str | None, display_name: str,

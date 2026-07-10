@@ -1,7 +1,7 @@
 {
   "doctype": "DocType",
   "name": "PCB Board Mail Token",
-  "module": "PCB Board",
+  "module": "Board",
   "custom": 0,
   "istable": 0,
   "issingle": 0,

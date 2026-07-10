@@ -3,7 +3,7 @@
   "name": "pcb-board",
   "page_name": "pcb-board",
   "title": "PCB Board",
-  "module": "PCB Board",
+  "module": "Board",
   "standard": "Yes",
   "system_page": 0,
   "icon": "octicon octicon-mail",

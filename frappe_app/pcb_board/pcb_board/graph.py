@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 GRAPH = "https://graph.microsoft.com/v1.0"
-SELECT = "id,subject,from,receivedDateTime,bodyPreview,internetMessageId"
+SELECT = "id,subject,from,receivedDateTime,bodyPreview,internetMessageId,isRead"
 
 
 def _messages_url(mailbox: str | None) -> str:
@@ -48,6 +48,7 @@ def fetch_mailbox(token: str, mailbox: str | None, display_name: str,
             "subject": msg.get("subject") or "",
             "body_preview": msg.get("bodyPreview") or "",
             "internet_message_id": msg.get("internetMessageId") or msg.get("id"),
+            "is_read": bool(msg.get("isRead")),
         })
     return out
 

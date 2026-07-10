@@ -107,10 +107,12 @@ def _cache_key(msg: dict) -> str:
 
 def _build_result(msg: dict, result: dict) -> dict:
     return {
+        "internet_message_id": msg.get("internet_message_id"),
         "mailbox": msg.get("mailbox"),
         "sender_name": msg.get("sender_name"),
         "sender": msg.get("sender"),
         "subject": msg.get("subject"),
+        "is_read": msg.get("is_read"),
         **result,
     }
 

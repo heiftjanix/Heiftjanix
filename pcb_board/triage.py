@@ -15,7 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-DEFAULT_MODEL = "claude-opus-4-8"
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 _CACHE: dict[str, dict] = {}
 
 STANDARD_ANGEBOT_DRAFT = """Sehr geehrte Damen und Herren,

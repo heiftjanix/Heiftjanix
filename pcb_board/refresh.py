@@ -160,12 +160,34 @@ def _fetch_erpnext(config: dict) -> dict:
         ignore_permissions=True,
     )
 
+    # Top-Produkte: Rechnungspositionen (Sales Invoice Item) nur für den
+    # laufenden Monat — eigene, engere Abfrage statt aus `invoices` (mehrere
+    # Monate) herausgefiltert, um kein posting_date-Format raten zu müssen.
+    month_start = date(today.year, today.month, 1).isoformat()
+    month_invoices = frappe.get_all(
+        "Sales Invoice",
+        filters=[["posting_date", ">=", month_start], ["docstatus", "=", 1]],
+        fields=["name"],
+        limit_page_length=0,
+        ignore_permissions=True,
+    )
+    invoice_items = []
+    if month_invoices:
+        invoice_items = frappe.get_all(
+            "Sales Invoice Item",
+            filters=[["parent", "in", [inv["name"] for inv in month_invoices]]],
+            fields=["item_code", "item_name", "base_net_amount"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        )
+
     return {
         "as_of": today.isoformat(),
         "invoices": invoices,
         "to_bill_delivery_notes": dns,
         "open_sales_orders": open_sales_orders,
         "purchase_receipts": purchase_receipts,
+        "invoice_items": invoice_items,
     }
 
 

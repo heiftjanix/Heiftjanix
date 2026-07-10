@@ -99,3 +99,25 @@ def disconnect_outlook():
     if frappe.db.exists("PCB Board Mail Token", frappe.session.user):
         frappe.delete_doc("PCB Board Mail Token", frappe.session.user, ignore_permissions=True)
     return {"ok": True}
+
+
+@frappe.whitelist()
+def get_config_status():
+    """Nur Ja/Nein je Secret/Einstellung — niemals die Werte selbst (auch fuer
+    Nicht-System-Manager sichtbar, damit z. B. IT-Support beim Debuggen hilft,
+    ohne Zugriff auf echte Secrets zu brauchen)."""
+    client_id, client_secret, tenant_id = _azure_conf()
+    settings = frappe.get_single("PCB Board Settings")
+    own_token = frappe.db.exists("PCB Board Mail Token", frappe.session.user)
+    return {
+        "azure_client_id": bool(client_id),
+        "azure_client_secret": bool(client_secret),
+        "azure_tenant_id": bool(tenant_id),
+        "redirect_uri": _redirect_uri(),
+        "anthropic_api_key": bool(frappe.conf.get("anthropic_api_key")),
+        "ups_client_id": bool(frappe.conf.get("ups_client_id")),
+        "ups_client_secret": bool(frappe.conf.get("ups_client_secret")),
+        "revenue_target": bool(settings.revenue_target),
+        "extra_mailboxes": bool((settings.extra_mailboxes or "").strip()),
+        "own_mailbox_connected": bool(own_token),
+    }

@@ -343,7 +343,8 @@ PCBBoard.prototype.disconnectOutlook = function () {
 PCBBoard.prototype.renderAll = function () {
 	var m = this.metrics;
 	var stand = m.generated_at ? frappe.datetime.str_to_user(m.generated_at) : '—';
-	this.$root.find('#pcb-stand').text('Stand ' + stand);
+	var duration = m.refresh_seconds ? ' (' + m.refresh_seconds + ' s)' : '';
+	this.$root.find('#pcb-stand').text('Stand ' + stand + duration);
 	this.$root.find('#pcb-tab-mail').html(this.mailTabHtml(m));
 	this.$root.find('#pcb-tab-revenue').html(this.revenueTabHtml(m));
 	this.$root.find('#pcb-tab-billing').html(this.billingTabHtml(m));

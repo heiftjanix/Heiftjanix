@@ -61,6 +61,26 @@ PCBBoard.prototype.toast = function (msg) {
 	}, 1600);
 };
 
+PCBBoard.prototype.nextRefreshIn = function () {
+	var now = new Date();
+	var d = new Date(now);
+	// nächster :00 oder :30
+	var m = d.getMinutes();
+	d.setSeconds(0); d.setMilliseconds(0);
+	if (m < 30) { d.setMinutes(30); } else { d.setMinutes(0); d.setHours(d.getHours() + 1); }
+	// Wenn außerhalb 6-18 Uhr oder Wochenende: nächsten gültigen Slot finden
+	for (var i = 0; i < 200; i++) {
+		var day = d.getDay(); // 0=So, 6=Sa
+		var h = d.getHours();
+		if (day >= 1 && day <= 5 && h >= 6 && h <= 18) break;
+		d = new Date(d.getTime() + 30 * 60 * 1000);
+	}
+	var diff = Math.max(0, Math.round((d - now) / 1000));
+	if (diff >= 3600) return Math.floor(diff / 3600) + ' h ' + Math.floor((diff % 3600) / 60) + ' min';
+	if (diff >= 60) return Math.floor(diff / 60) + ' min';
+	return diff + ' s';
+};
+
 PCBBoard.prototype.pcbLogoSvg = function (size, animated, cls) {
 	var cx = 100, cy = 100, rOut = 94, rIn = 54, disc = 38, pad = 5, redIndex = 1;
 	var segs = '';
@@ -173,6 +193,12 @@ PCBBoard.prototype.pollStatus = function () {
 			var current = self.metrics && self.metrics.generated_at;
 			if (s.generated_at && s.generated_at !== current) {
 				self.load();
+			} else if (self.metrics) {
+				self.$root.find('#pcb-stand').text(
+					'Stand ' + frappe.datetime.str_to_user(self.metrics.generated_at || '') +
+					(self.metrics.refresh_seconds ? ' (' + self.metrics.refresh_seconds + ' s)' : '') +
+					' · nächster Refresh in ' + self.nextRefreshIn()
+				);
 			}
 		}
 	});
@@ -344,7 +370,8 @@ PCBBoard.prototype.renderAll = function () {
 	var m = this.metrics;
 	var stand = m.generated_at ? frappe.datetime.str_to_user(m.generated_at) : '—';
 	var duration = m.refresh_seconds ? ' (' + m.refresh_seconds + ' s)' : '';
-	this.$root.find('#pcb-stand').text('Stand ' + stand + duration);
+	var next = ' · nächster Refresh in ' + this.nextRefreshIn();
+	this.$root.find('#pcb-stand').text('Stand ' + stand + duration + next);
 	this.$root.find('#pcb-tab-mail').html(this.mailTabHtml(m));
 	this.$root.find('#pcb-tab-revenue').html(this.revenueTabHtml(m));
 	this.$root.find('#pcb-tab-billing').html(this.billingTabHtml(m));

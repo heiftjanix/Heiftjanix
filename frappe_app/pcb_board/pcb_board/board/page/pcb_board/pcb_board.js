@@ -449,8 +449,8 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 		var subj = i.subject || '';
 		var subjHtml;
 		if (i.graph_id) {
-			var mbPath = i.mailbox_email ? encodeURIComponent(i.mailbox_email) + '/' : '';
-			var outlookUrl = 'https://outlook.office365.com/mail/' + mbPath + 'id/' + encodeURIComponent(i.graph_id);
+			var eid = encodeURIComponent(i.graph_id);
+			var outlookUrl = 'https://outlook.office.com/mail/deeplink/read/' + eid + '?ItemID=' + eid + '&exvsurl=1';
 			subjHtml = '<a href="' + outlookUrl + '" target="_blank" class="mc-subj" title="In Outlook öffnen">' + self.esc(subj) + '</a>';
 		} else {
 			subjHtml = '<span class="mc-subj">' + self.esc(subj) + '</span>';

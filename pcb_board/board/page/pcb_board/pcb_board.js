@@ -697,7 +697,7 @@ PCBBoard.prototype.billingGroupHtml = function (title, rows, total) {
 		.map(function (r) {
 			var age = r.age_days;
 			var alt = age != null && age > 60 ? ' <span class="dot-hi">alt</span>' : '';
-			return '<tr><td>' + self.esc(r.name) + '</td><td>' + self.esc(r.customer || '') + '</td>' +
+			return '<tr><td><a href="/app/delivery-note/' + encodeURIComponent(r.name) + '" target="_blank">' + self.esc(r.name) + '</a></td><td>' + self.esc(r.customer || '') + '</td>' +
 				'<td class="num">' + self.eur(r.net_open) + '</td>' +
 				'<td>' + self.esc(r.delivered_date || r.posting_date || '—') + alt + '</td>' +
 				'<td>' + (methodLabel[r.arrival_method] || '—') + '</td></tr>';

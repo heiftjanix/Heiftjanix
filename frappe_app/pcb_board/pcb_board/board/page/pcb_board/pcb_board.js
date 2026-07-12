@@ -447,6 +447,14 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 		var prio = i.priority === 'high' ? 'high' : 'normal';
 		var sender = i.sender_name || i.sender || '';
 		var subj = i.subject || '';
+		var subjHtml;
+		if (i.graph_id) {
+			var mbPath = i.mailbox_email ? encodeURIComponent(i.mailbox_email) + '/' : '';
+			var outlookUrl = 'https://outlook.office365.com/mail/' + mbPath + 'id/' + encodeURIComponent(i.graph_id);
+			subjHtml = '<a href="' + outlookUrl + '" target="_blank" class="mc-subj" title="In Outlook öffnen">' + self.esc(subj) + '</a>';
+		} else {
+			subjHtml = '<span class="mc-subj">' + self.esc(subj) + '</span>';
+		}
 		var reason = i.reason || '';
 		var draft = (i.draft || '').trim();
 		var searchTxt = (sender + ' ' + subj + ' ' + reason).toLowerCase();
@@ -470,7 +478,7 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 		var head = '<div class="mc-head' + (can ? '' : ' nodraft') + '">' + dot + pill +
 			'<span class="mc-box">' + self.esc(self.shortBox(i.mailbox)) + '</span>' +
 			'<span class="mc-sender">' + self.esc(sender) + '</span>' +
-			'<span class="mc-subj">' + self.esc(subj) + '</span>' +
+			subjHtml +
 			'<span class="mc-reason">' + self.esc(reason) + '</span>' + actions + chev + '</div>';
 		var draftBlock = '';
 		if (can) {
@@ -828,6 +836,7 @@ var PCB_BOARD_CSS =
 	'padding:2px 8px;border-radius:6px;white-space:nowrap}' +
 	'.mc-sender{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px}' +
 	'.mc-subj{color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;grid-column:1/-1}' +
+	'a.mc-subj{color:var(--blue-500,#2490ef);text-decoration:none}a.mc-subj:hover{text-decoration:underline}' +
 	'.mc-reason{grid-column:1/-1;font-size:.86rem;color:var(--text-secondary)}' +
 	'.mc-actions{grid-column:1/-1;display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px}' +
 	'.mc-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;' +

@@ -46,11 +46,13 @@ def fetch_mailbox(token: str, mailbox: str | None, display_name: str,
         sender = (msg.get("from") or {}).get("emailAddress", {})
         out.append({
             "mailbox": display_name,
+            "mailbox_email": mailbox,
             "sender_name": sender.get("name") or sender.get("address") or "",
             "sender": sender.get("address") or "",
             "subject": msg.get("subject") or "",
             "body_preview": msg.get("bodyPreview") or "",
             "internet_message_id": msg.get("internetMessageId") or msg.get("id"),
+            "graph_id": msg.get("id"),
             "is_read": bool(msg.get("isRead")),
         })
     return out

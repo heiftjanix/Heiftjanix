@@ -842,7 +842,7 @@ var PCB_BOARD_CSS =
 	'.tip-body{display:flex;flex-direction:column}.tip-detail{color:var(--text-secondary);font-size:.88rem}' +
 	'.tbl{width:100%;border-collapse:collapse;font-size:.9rem}.tbl th,.tbl td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)}' +
 	'.tbl th{color:var(--text-secondary);font-weight:600}.tbl .num{text-align:right;font-variant-numeric:tabular-nums}' +
-	'.tbl a{color:var(--primary);text-decoration:none;font-weight:600}.tbl a:hover{text-decoration:underline}' +
+	'.tbl a{color:var(--blue-500,#2490ef);text-decoration:none;font-weight:600}.tbl a:hover{text-decoration:underline}' +
 	'.tbl tfoot td{font-weight:650;border-top:2px solid var(--baseline)}' +
 	'.pcb-root .muted{color:var(--muted)}.pcb-root .foot{color:var(--muted);font-size:.78rem;margin-top:18px}' +
 	// Bewusst kein vollflächiges Overlay: der Refresh-Status ist global (alle Nutzer

@@ -248,6 +248,15 @@ def run_refresh(started_by: str | None = None) -> None:
         )
         computed["slogan"] = config["slogan"]
         computed["generated_at"] = frappe.utils.now()
+        started_at = get_status().get("started_at")
+        if started_at:
+            from datetime import datetime
+            try:
+                t0 = datetime.strptime(started_at, "%Y-%m-%d %H:%M:%S.%f")
+                t1 = datetime.strptime(computed["generated_at"], "%Y-%m-%d %H:%M:%S.%f")
+                computed["refresh_seconds"] = round((t1 - t0).total_seconds(), 1)
+            except Exception:
+                pass
         frappe.cache().set_value(METRICS_KEY, computed)
         _set_status(state="idle", generated_at=computed["generated_at"])
     except Exception as exc:  # noqa: BLE001 — Refresh darf die App nie in "running" haengen lassen

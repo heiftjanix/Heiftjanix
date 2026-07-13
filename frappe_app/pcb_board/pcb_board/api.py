@@ -40,14 +40,22 @@ def get_board_metrics():
     return {"metrics": view, "status": rf.get_status()}
 
 
+def _assignment_name(internet_message_id: str) -> str | None:
+    # Lookup immer über das Feld, nie über den Dokumentnamen: echte
+    # internetMessageIds sehen wie "<abc@host>" aus, und Frappe verbietet
+    # '<'/'>' in Dokumentnamen (autoname ist deshalb "hash").
+    return frappe.db.exists("PCB Board Mail Assignment", {"internet_message_id": internet_message_id})
+
+
 @frappe.whitelist()
 def assign_mail(internet_message_id: str, assigned_to: str, mailbox: str | None = None,
                  sender_name: str | None = None, sender: str | None = None,
                  subject: str | None = None):
     if not (internet_message_id and assigned_to):
         frappe.throw("internet_message_id und assigned_to sind erforderlich.")
-    if frappe.db.exists("PCB Board Mail Assignment", internet_message_id):
-        doc = frappe.get_doc("PCB Board Mail Assignment", internet_message_id)
+    name = _assignment_name(internet_message_id)
+    if name:
+        doc = frappe.get_doc("PCB Board Mail Assignment", name)
     else:
         doc = frappe.new_doc("PCB Board Mail Assignment")
         doc.internet_message_id = internet_message_id
@@ -65,8 +73,9 @@ def assign_mail(internet_message_id: str, assigned_to: str, mailbox: str | None 
 
 @frappe.whitelist()
 def unassign_mail(internet_message_id: str):
-    if frappe.db.exists("PCB Board Mail Assignment", internet_message_id):
-        frappe.delete_doc("PCB Board Mail Assignment", internet_message_id, ignore_permissions=True)
+    name = _assignment_name(internet_message_id)
+    if name:
+        frappe.delete_doc("PCB Board Mail Assignment", name, ignore_permissions=True)
         frappe.db.commit()
     return {"ok": True}
 
@@ -75,8 +84,9 @@ def unassign_mail(internet_message_id: str):
 def set_assignment_status(internet_message_id: str, status: str):
     if status not in ("Offen", "Erledigt"):
         frappe.throw("Ungültiger Status.")
-    if frappe.db.exists("PCB Board Mail Assignment", internet_message_id):
-        doc = frappe.get_doc("PCB Board Mail Assignment", internet_message_id)
+    name = _assignment_name(internet_message_id)
+    if name:
+        doc = frappe.get_doc("PCB Board Mail Assignment", name)
         doc.status = status
         doc.save(ignore_permissions=True)
         frappe.db.commit()

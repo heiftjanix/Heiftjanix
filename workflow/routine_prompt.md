@@ -6,7 +6,8 @@ config/relevance_guidance.md) und hole alle Daten frisch über die MCP-Connector
 Kurzfassung der Schritte:
 0. Connector-Check (get_me + 1 ERPNext-Datensatz). Bei Fehler: degradierte Push + weiter.
 1. Outlook-Mails (Zeitfenster aus config; Mo = 72 h; auch config.email.extra_mailboxes
-   via mailboxOwnerEmail) und ERPNext-Daten holen (Sales Invoice laufender + 3 Vormonate,
+   via mailboxOwnerEmail; NUR UNGELESENE Mails berücksichtigen — gelesene gelten als
+   erledigt) und ERPNext-Daten holen (Sales Invoice laufender + 3 Vormonate,
    Delivery Note status="To Bill", offene Sales Orders) und nach state/raw.json schreiben.
 2. Mails inhaltlich einordnen und als state/raw.json["mail"] ablegen (je Eintrag
    mailbox, sender_name, subject, category "relevant"/"info", priority "high"/"normal",

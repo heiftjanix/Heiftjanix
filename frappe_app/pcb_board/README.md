@@ -106,15 +106,21 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
   (`scheduled_mail_sync`, rührt ERPNext/UPS nicht an und setzt nie den „läuft
   gerade"-Status — kein Ladehinweis dafür). Ein Rate-Limit (429) beim Mail-Triage
   löst einen einmaligen ~1-Minuten-Backoff-Retry aus, bevor der betroffene Batch auf
-  die Keyword-Heuristik zurückfällt.
+  die Keyword-Heuristik zurückfällt. Fallback-Ergebnisse werden bewusst NICHT
+  gecacht — der nächste Sync versucht die API erneut, damit Antwortvorschläge nach
+  einem vorübergehenden Rate-Limit wieder auftauchen statt dauerhaft zu fehlen.
 - **Postfach-Zugriff:** `PCB Board Mail Token` speichert den MSAL-Token-Cache pro
   Nutzer (Frappe-Password-Feld, verschlüsselt); jeder Nutzer sieht nur sein eigenes
   + die in den Settings konfigurierten geteilten Postfächer.
-- **Gelesen-Status & Zuweisung:** Mail-Karten zeigen „● ungelesen" (aus Outlook via
-  Graph `isRead`). Über „+ Zuweisen" wird eine Mail einem Kollegen zugewiesen
+- **Nur ungelesene Mails:** Der Graph-Abruf filtert auf `isRead eq false` —
+  gelesene Mails gelten als erledigt und tauchen weder in der Triage noch im
+  Posteingang auf. (Der frühere „● ungelesen"-Badge entfällt dadurch — er wäre
+  auf jeder Karte identisch.)
+- **Zuweisung:** Über „+ Zuweisen" wird eine Mail einem Kollegen zugewiesen
   (`PCB Board Mail Assignment`, ein Datensatz pro `internet_message_id` — überlebt
-  Refreshs, da Mails selbst nicht gespeichert werden, nur die Zuordnung). Tab
-  „Zuweisungen" zeigt allen Nutzern alle offenen/erledigten Zuweisungen team-weit
+  Refreshs, da Mails selbst nicht gespeichert werden, nur die Zuordnung; Dokumentname
+  ist ein Hash, weil echte Message-IDs `<`/`>` enthalten, die Frappe in Namen verbietet).
+  Tab „Zuweisungen" zeigt allen Nutzern alle offenen/erledigten Zuweisungen team-weit
   (kein Owner-Filter — bewusst für alle sichtbar/bearbeitbar).
 - **Kosten:** Tab „Kosten" summiert Wareneingänge (`Purchase Receipt`, ERPNext,
   laufender Monat) plus zwei fixe, in PCB Board Settings gepflegte Kostenpunkte

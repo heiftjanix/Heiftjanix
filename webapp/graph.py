@@ -31,7 +31,10 @@ def fetch_mailbox(token: str, mailbox: str | None, display_name: str,
         "$select": SELECT,
         "$orderby": "receivedDateTime desc",
         "$top": str(top),
-        "$filter": f"receivedDateTime ge {since}",
+        # Nur UNGELESENE Mails — gelesene gelten als erledigt und sollen weder
+        # triagiert noch angezeigt werden. receivedDateTime muss laut Graph-API
+        # als $orderby-Property an erster Stelle im $filter stehen.
+        "$filter": f"receivedDateTime ge {since} and isRead eq false",
     }
     resp = requests.get(
         _messages_url(mailbox),

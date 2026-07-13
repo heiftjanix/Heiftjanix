@@ -13,8 +13,11 @@ Der eigentliche Auslöse-Prompt steht in `routine_prompt.md`. Geldbeträge werde
 ## Schritt 1 — Daten holen (MCP → `state/raw.json`)
 1. **Outlook:** `outlook_email_search` (folderName "Inbox", order newest), Zeitfenster
    = `config.email.lookback_hours` (montags `monday_lookback_hours`, Standard 72 h).
-   Zusätzlich jedes Postfach in `config.email.extra_mailboxes` über `mailboxOwnerEmail`
-   scannen (z. B. `bestellung@example.com`). Bei Bedarf `read_resource` für Volltext.
+   **Nur UNGELESENE Mails berücksichtigen** (`isRead: false` im Suchergebnis) —
+   gelesene Mails gelten als erledigt und gehören weder in die Triage noch ins
+   Briefing/Board. Zusätzlich jedes Postfach in `config.email.extra_mailboxes` über
+   `mailboxOwnerEmail` scannen (z. B. `bestellung@example.com`). Bei Bedarf
+   `read_resource` für Volltext.
 2. **Ausgangsrechnungen:** `list_documents` Sales Invoice, `docstatus=1`,
    `posting_date >= <erster Tag des Vor-Vor-Vormonats>`; Felder name, customer,
    base_net_total, posting_date, status. (Laufender Monat = Ist, Vormonate = Baseline.)

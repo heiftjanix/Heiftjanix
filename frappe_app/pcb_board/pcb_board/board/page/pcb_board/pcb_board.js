@@ -467,7 +467,15 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 			self._mailByMid[mid] = i;
 		}
 		var unread = i.is_read === false;
+		var replied = i.is_replied === true;
+		var timeStr = '';
+		if (i.received_at) {
+			var d = new Date(i.received_at);
+			timeStr = d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+		}
 		var actions = '<span class="mc-actions">' +
+			(timeStr ? '<span class="mc-time">' + timeStr + '</span>' : '') +
+			(replied ? '<span class="mc-badge replied">✓ beantwortet</span>' : '') +
 			(unread ? '<span class="mc-badge unread">● ungelesen</span>' : '') +
 			(i.assigned_to_name
 				? '<span class="mc-badge assignee" title="Klicken zum Entfernen">👤 ' +
@@ -842,6 +850,8 @@ var PCB_BOARD_CSS =
 	'.mc-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;' +
 	'font-size:.72rem;font-weight:650;white-space:nowrap}' +
 	'.mc-badge.unread{background:color-mix(in srgb,var(--series-1) 15%,transparent);color:var(--series-1)}' +
+	'.mc-badge.replied{background:color-mix(in srgb,var(--green-500,#28a745) 15%,transparent);color:var(--green-500,#28a745)}' +
+	'.mc-time{font-size:.72rem;color:var(--text-secondary);white-space:nowrap}' +
 	'.mc-badge.assignee{background:color-mix(in srgb,var(--brand-teal) 15%,transparent);color:var(--brand-teal);cursor:pointer}' +
 	'.mc-assign-btn{font-size:.72rem;padding:2px 9px;border-radius:999px;border:1px dashed var(--border);' +
 	'background:transparent;color:var(--text-secondary);cursor:pointer}' +

@@ -11,6 +11,8 @@ import requests
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 SELECT = "id,subject,from,receivedDateTime,bodyPreview,internetMessageId,isRead"
+# PidTagLastVerbExecuted (0x1081): 102=Reply, 103=ReplyAll, 104=Forward
+REPLY_PROP = "Integer 0x1081"
 
 
 def _messages_url(mailbox: str | None) -> str:
@@ -20,6 +22,18 @@ def _messages_url(mailbox: str | None) -> str:
     if mailbox:
         return f"{GRAPH}/users/{mailbox}/mailFolders/inbox/messages"
     return f"{GRAPH}/me/mailFolders/inbox/messages"
+
+
+def _is_replied(msg: dict) -> bool:
+    """Prüft anhand der Extended Property ob die Mail beantwortet/weitergeleitet wurde."""
+    for prop in msg.get("singleValueExtendedProperties") or []:
+        if prop.get("id") == REPLY_PROP:
+            try:
+                verb = int(prop["value"])
+                return verb in (102, 103)  # Reply / ReplyAll
+            except (ValueError, KeyError):
+                pass
+    return False
 
 
 def fetch_mailbox(token: str, mailbox: str | None, display_name: str,
@@ -33,6 +47,7 @@ def fetch_mailbox(token: str, mailbox: str | None, display_name: str,
         "$orderby": "receivedDateTime desc",
         "$top": str(top),
         "$filter": f"receivedDateTime ge {since}",
+        "$expand": f"singleValueExtendedProperties($filter=id eq '{REPLY_PROP}')",
     }
     resp = requests.get(
         _messages_url(mailbox),
@@ -53,7 +68,9 @@ def fetch_mailbox(token: str, mailbox: str | None, display_name: str,
             "body_preview": msg.get("bodyPreview") or "",
             "internet_message_id": msg.get("internetMessageId") or msg.get("id"),
             "graph_id": msg.get("id"),
+            "received_at": msg.get("receivedDateTime") or "",
             "is_read": bool(msg.get("isRead")),
+            "is_replied": _is_replied(msg),
         })
     return out
 

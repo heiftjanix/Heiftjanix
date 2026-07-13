@@ -114,7 +114,9 @@ def _build_result(msg: dict, result: dict) -> dict:
         "sender_name": msg.get("sender_name"),
         "sender": msg.get("sender"),
         "subject": msg.get("subject"),
+        "received_at": msg.get("received_at"),
         "is_read": msg.get("is_read"),
+        "is_replied": msg.get("is_replied"),
         **result,
     }
 

@@ -157,13 +157,18 @@ def triage_message(msg: dict, model: str = DEFAULT_MODEL, api_key: str | None = 
                 output_format=MailTriage,
             )
             result = resp.parsed_output.model_dump()
+            _CACHE[key] = result
         except Exception as exc:  # noqa: BLE001 — jede API-Störung -> Fallback
+            # Fallback NICHT cachen: der Keyword-Fallback hat (fast) keine
+            # Antwortvorschläge — würde er gecacht, blieben die Mails bis zum
+            # Worker-Neustart ohne Vorschlag, obwohl der nächste Lauf die API
+            # wieder erreichen könnte.
             sys.stderr.write(f"[triage] Anthropic-API fehlgeschlagen, nutze Fallback: {exc}\n")
             result = _keyword_fallback(msg.get("subject", ""), msg.get("body_preview", "")).model_dump()
     else:
         result = _keyword_fallback(msg.get("subject", ""), msg.get("body_preview", "")).model_dump()
+        _CACHE[key] = result
 
-    _CACHE[key] = result
     return _build_result(msg, result)
 
 
@@ -238,6 +243,11 @@ def triage_all(messages: list[dict], model: str = DEFAULT_MODEL, api_key: str | 
 
     to_process = [m for m in messages if _cache_key(m) not in _CACHE]
     chunks = [to_process[i:i + batch_size] for i in range(0, len(to_process), batch_size)]
+    # Fallback-Ergebnisse nur für DIESEN Lauf, bewusst NICHT in _CACHE: der
+    # Keyword-Fallback hat (fast) keine Antwortvorschläge — würde er gecacht,
+    # blieben die betroffenen Mails bis zum Worker-Neustart ohne Vorschlag,
+    # obwohl der nächste (5-Min-)Sync die API längst wieder erreichen könnte.
+    fallback: dict[str, dict] = {}
 
     def _process_chunk(chunk: list[dict]) -> None:
         try:
@@ -245,7 +255,7 @@ def triage_all(messages: list[dict], model: str = DEFAULT_MODEL, api_key: str | 
         except Exception as exc:  # noqa: BLE001 — ganzer Batch fällt zurück auf Keyword-Fallback
             sys.stderr.write(f"[triage] Batch-Call fehlgeschlagen ({len(chunk)} Mails), nutze Fallback: {exc}\n")
             for m in chunk:
-                _CACHE[_cache_key(m)] = _keyword_fallback(
+                fallback[_cache_key(m)] = _keyword_fallback(
                     m.get("subject", ""), m.get("body_preview", "")
                 ).model_dump()
             return
@@ -256,4 +266,7 @@ def triage_all(messages: list[dict], model: str = DEFAULT_MODEL, api_key: str | 
         with ThreadPoolExecutor(max_workers=min(max_workers, len(chunks))) as pool:
             list(pool.map(_process_chunk, chunks))
 
-    return [_build_result(m, _CACHE[_cache_key(m)]) for m in messages]
+    return [
+        _build_result(m, _CACHE.get(_cache_key(m)) or fallback[_cache_key(m)])
+        for m in messages
+    ]

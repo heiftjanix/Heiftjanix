@@ -83,6 +83,24 @@ class TestTriageAllBatching(unittest.TestCase):
         self.assertEqual(out[0]["category"], "relevant")
         self.assertEqual(out[0]["priority"], "high")
 
+    def test_batch_failure_is_not_cached_so_next_run_retries_api(self):
+        msgs = [_msg("Dringend: Bestellung 1", "id-x")]
+        fail_module = MagicMock()
+        fail_module.Anthropic.return_value.messages.parse.side_effect = RuntimeError("boom")
+        with patch.dict(sys.modules, {"anthropic": fail_module}):
+            triage.triage_all(msgs, api_key="sk-test")
+        self.assertNotIn("id-x", triage._CACHE)
+
+        good = triage.MailTriageBatch(
+            results=[triage.MailTriage(category="relevant", priority="high", reason="ok", draft="draft-x")]
+        )
+        ok_module = MagicMock()
+        ok_module.Anthropic.return_value.messages.parse.return_value.parsed_output = good
+        with patch.dict(sys.modules, {"anthropic": ok_module}):
+            out = triage.triage_all(msgs, api_key="sk-test")
+        self.assertEqual(out[0]["draft"], "draft-x")
+        self.assertIn("id-x", triage._CACHE)
+
     def test_rate_limit_retries_once_then_succeeds(self):
         class _RateLimitError(Exception):
             status_code = 429

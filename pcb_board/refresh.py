@@ -276,6 +276,15 @@ def view_for_user(metrics_dict: dict, own_email: str, extra_mailboxes: list[str]
     return view
 
 
+def normalize_mid(internet_message_id: str | None) -> str:
+    """RFC-5322-Message-IDs kommen als "<id@host>" — die spitzen Klammern sind nur
+    Rahmen, die Identität ist der Teil dazwischen. Gespeichert/verglichen wird
+    IMMER ohne Klammern: Frappes HTML-Sanitizer hält "<...>" beim Speichern eines
+    Data-Felds für ein HTML-Tag und entfernt den kompletten Wert (Feld wäre leer,
+    Pflichtfeld-Fehler), und in Dokumentnamen sind '<'/'>' ohnehin verboten."""
+    return (internet_message_id or "").strip().strip("<>").strip()
+
+
 def attach_assignments(view: dict) -> None:
     """Blendet Zuweisungen (persistiert im DocType, nicht Teil der Refresh-Daten)
     in die Mail-Items der aktuellen Ansicht ein — nach internet_message_id gematcht,
@@ -289,10 +298,10 @@ def attach_assignments(view: dict) -> None:
         limit_page_length=0,
         ignore_permissions=True,
     )
-    by_id = {r["internet_message_id"]: r for r in rows}
+    by_id = {normalize_mid(r["internet_message_id"]): r for r in rows}
     names: dict[str, str] = {}
     for i in items:
-        row = by_id.get(i.get("internet_message_id"))
+        row = by_id.get(normalize_mid(i.get("internet_message_id")))
         if not row:
             i["assigned_to"] = None
             i["assigned_to_name"] = None

@@ -51,6 +51,9 @@ def _assignment_name(internet_message_id: str) -> str | None:
 def assign_mail(internet_message_id: str, assigned_to: str, mailbox: str | None = None,
                  sender_name: str | None = None, sender: str | None = None,
                  subject: str | None = None):
+    # Ohne "<>" speichern (siehe rf.normalize_mid): sonst entfernt Frappes
+    # HTML-Sanitizer den kompletten Wert beim Speichern ("Wert fehlt: Mail-ID").
+    internet_message_id = rf.normalize_mid(internet_message_id)
     if not (internet_message_id and assigned_to):
         frappe.throw("internet_message_id und assigned_to sind erforderlich.")
     name = _assignment_name(internet_message_id)
@@ -73,7 +76,7 @@ def assign_mail(internet_message_id: str, assigned_to: str, mailbox: str | None 
 
 @frappe.whitelist()
 def unassign_mail(internet_message_id: str):
-    name = _assignment_name(internet_message_id)
+    name = _assignment_name(rf.normalize_mid(internet_message_id))
     if name:
         frappe.delete_doc("PCB Board Mail Assignment", name, ignore_permissions=True)
         frappe.db.commit()
@@ -84,7 +87,7 @@ def unassign_mail(internet_message_id: str):
 def set_assignment_status(internet_message_id: str, status: str):
     if status not in ("Offen", "Erledigt"):
         frappe.throw("Ungültiger Status.")
-    name = _assignment_name(internet_message_id)
+    name = _assignment_name(rf.normalize_mid(internet_message_id))
     if name:
         doc = frappe.get_doc("PCB Board Mail Assignment", name)
         doc.status = status

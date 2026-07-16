@@ -171,6 +171,69 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertAlmostEqual(ph["carry_forward"], 37800, delta=0.01)
         self.assertAlmostEqual(ph["ytd_profit"], 46100, delta=0.01)
 
+    def test_top_customers_share_of_mtd(self):
+        data = self._data()
+        data["invoices"] = [
+            {"customer_name": "Kunde A", "base_net_total": 6000, "posting_date": "2026-07-02"},
+            {"customer_name": "Kunde B", "base_net_total": 3000, "posting_date": "2026-07-10"},
+            {"customer_name": "Kunde A", "base_net_total": 1000, "posting_date": "2026-07-12"},
+            {"customer_name": "Vormonat", "base_net_total": 99999, "posting_date": "2026-06-15"},
+        ]
+        top = m.build_metrics(data, CONFIG, date(2026, 7, 15))["top_customers"]
+        self.assertEqual(top[0]["customer"], "Kunde A")
+        self.assertAlmostEqual(top[0]["net_total"], 7000, delta=0.01)
+        self.assertAlmostEqual(top[0]["share_pct"], 0.7, places=4)
+        self.assertEqual(top[1]["customer"], "Kunde B")
+        self.assertAlmostEqual(top[1]["share_pct"], 0.3, places=4)
+
+    def test_top_suppliers_share_of_month(self):
+        data = self._data()
+        data["purchase_receipts"] = [
+            {"supplier_name": "Lieferant X", "base_net_total": 1500, "posting_date": "2026-07-05"},
+            {"supplier_name": "Lieferant Y", "base_net_total": 500, "posting_date": "2026-07-12"},
+            {"supplier_name": "Lieferant X", "base_net_total": 500, "posting_date": "2026-07-13"},
+            {"supplier_name": "Vormonat", "base_net_total": 7777, "posting_date": "2026-06-20"},
+        ]
+        top = m.build_metrics(data, CONFIG, date(2026, 7, 15))["top_suppliers"]
+        self.assertEqual(top[0]["supplier"], "Lieferant X")
+        self.assertAlmostEqual(top[0]["net_total"], 2000, delta=0.01)
+        self.assertAlmostEqual(top[0]["share_pct"], 0.8, places=4)
+        self.assertEqual(top[1]["supplier"], "Lieferant Y")
+
+    def test_product_margins_with_and_without_purchase_rate(self):
+        data = self._data()
+        data["invoice_items"] = [
+            {"item_code": "PCB-A", "item_name": "Platine A", "base_net_amount": 5000, "qty": 100},
+            {"item_code": "PCB-A", "item_name": "Platine A", "base_net_amount": 2000, "qty": 40},
+            {"item_code": "PCB-B", "item_name": "Platine B", "base_net_amount": 3000, "qty": 10},
+        ]
+        data["item_purchase_rates"] = [
+            {"name": "PCB-A", "item_code": "PCB-A", "last_purchase_rate": 30},
+            {"name": "PCB-B", "item_code": "PCB-B", "last_purchase_rate": 0},
+        ]
+        margins = m.build_metrics(data, CONFIG, date(2026, 7, 15))["product_margins"]
+        a = margins[0]
+        self.assertEqual(a["item_code"], "PCB-A")
+        self.assertAlmostEqual(a["cost"], 4200, delta=0.01)       # 140 Stk × 30 €
+        self.assertAlmostEqual(a["margin"], 2800, delta=0.01)     # 7000 − 4200
+        self.assertAlmostEqual(a["margin_pct"], 0.4, places=4)
+        b = margins[1]
+        self.assertEqual(b["item_code"], "PCB-B")
+        self.assertIsNone(b["cost"])
+        self.assertIsNone(b["margin"])
+
+    def test_prev_year_month_total_and_same_day(self):
+        data = self._data()
+        data["prev_year_invoices"] = [
+            {"base_net_total": 4000, "posting_date": "2025-07-03"},
+            {"base_net_total": 2000, "posting_date": "2025-07-15"},
+            {"base_net_total": 5000, "posting_date": "2025-07-28"},
+        ]
+        py = m.build_metrics(data, CONFIG, date(2026, 7, 15))["prev_year"]
+        self.assertEqual((py["year"], py["month"]), (2025, 7))
+        self.assertAlmostEqual(py["total"], 11000, delta=0.01)
+        self.assertAlmostEqual(py["mtd_same_day"], 6000, delta=0.01)
+
     def test_mail_summary_counts_and_sort(self):
         data = self._data()
         data["mail"] = {"window_hours": 24, "items": [

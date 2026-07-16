@@ -8,7 +8,7 @@ Geldbeträge werden ausschließlich in metrics.py (Python) berechnet.
 from __future__ import annotations
 
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 import frappe
 
@@ -125,7 +125,20 @@ def _fetch_erpnext(config: dict) -> dict:
     invoices = frappe.get_all(
         "Sales Invoice",
         filters=[["posting_date", ">=", cutoff], ["docstatus", "=", 1]],
-        fields=["name", "customer", "base_net_total", "posting_date", "status"],
+        fields=["name", "customer", "customer_name", "base_net_total", "posting_date", "status"],
+        limit_page_length=0,
+        ignore_permissions=True,
+    )
+
+    # Vorjahresvergleich: gleicher Monat im Vorjahr (kompletter Monat).
+    py = today.year - 1
+    py_next = date(py + 1, 1, 1) if today.month == 12 else date(py, today.month + 1, 1)
+    prev_year_invoices = frappe.get_all(
+        "Sales Invoice",
+        filters=[["posting_date", ">=", date(py, today.month, 1).isoformat()],
+                 ["posting_date", "<", py_next.isoformat()],
+                 ["docstatus", "=", 1]],
+        fields=["name", "base_net_total", "posting_date"],
         limit_page_length=0,
         ignore_permissions=True,
     )
@@ -163,7 +176,7 @@ def _fetch_erpnext(config: dict) -> dict:
     purchase_receipts = frappe.get_all(
         "Purchase Receipt",
         filters=[["posting_date", ">=", cutoff], ["docstatus", "=", 1]],
-        fields=["name", "supplier", "base_net_total", "posting_date"],
+        fields=["name", "supplier", "supplier_name", "base_net_total", "posting_date"],
         limit_page_length=0,
         ignore_permissions=True,
     )
@@ -184,7 +197,20 @@ def _fetch_erpnext(config: dict) -> dict:
         invoice_items = frappe.get_all(
             "Sales Invoice Item",
             filters=[["parent", "in", [inv["name"] for inv in month_invoices]]],
-            fields=["item_code", "item_name", "base_net_amount"],
+            fields=["item_code", "item_name", "base_net_amount", "qty"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        )
+
+    # Deckungsbeitrag: letzter Einkaufspreis je verkauftem Artikel (Wareneinsatz-
+    # Schätzung; Artikel ohne Einkaufspreis bleiben in der Marge bewusst leer).
+    item_codes = sorted({r["item_code"] for r in invoice_items if r.get("item_code")})
+    item_purchase_rates = []
+    if item_codes:
+        item_purchase_rates = frappe.get_all(
+            "Item",
+            filters=[["name", "in", item_codes]],
+            fields=["name", "item_code", "last_purchase_rate"],
             limit_page_length=0,
             ignore_permissions=True,
         )
@@ -213,6 +239,8 @@ def _fetch_erpnext(config: dict) -> dict:
         "purchase_receipts": purchase_receipts,
         "invoice_items": invoice_items,
         "purchase_receipt_items": purchase_receipt_items,
+        "item_purchase_rates": item_purchase_rates,
+        "prev_year_invoices": prev_year_invoices,
     }
 
 
@@ -252,6 +280,56 @@ def _fetch_mail(config: dict, anthropic_api_key: str | None) -> list[dict]:
     return triage.triage_all(all_items, model=config["anthropic_model"], api_key=anthropic_api_key)
 
 
+def _attach_todo_trend(computed: dict) -> None:
+    """Hängt an computed["todo"] den Vorwochen-Vergleich der überfälligen
+    Auftragssumme an (jüngster KPI-Snapshot, der mindestens 7 Tage alt ist).
+    Ohne ausreichend alten Snapshot bleibt der Trend einfach weg."""
+    todo = computed.get("todo")
+    if not todo:
+        return
+    try:
+        today = date.fromisoformat(computed["as_of"])
+        rows = frappe.get_all(
+            "PCB Board KPI Snapshot",
+            filters=[["snapshot_date", "<=", (today - timedelta(days=7)).isoformat()]],
+            fields=["snapshot_date", "overdue_net", "overdue_count"],
+            order_by="snapshot_date desc",
+            limit_page_length=1,
+            ignore_permissions=True,
+        )
+        if not rows:
+            return
+        prev = rows[0]
+        prev_net = float(prev.get("overdue_net") or 0)
+        todo["trend"] = {
+            "prev_date": str(prev["snapshot_date"]),
+            "prev_net": round(prev_net, 2),
+            "prev_count": int(prev.get("overdue_count") or 0),
+            "delta_net": round(float(todo.get("overdue_net") or 0) - prev_net, 2),
+            "delta_count": len(todo.get("overdue") or []) - int(prev.get("overdue_count") or 0),
+        }
+    except Exception:  # noqa: BLE001 — Trend ist Beiwerk, darf den Refresh nie abschießen
+        frappe.log_error(title="PCB Board Trend-Berechnung fehlgeschlagen", message=frappe.get_traceback())
+
+
+def _store_kpi_snapshot(computed: dict) -> None:
+    """Schreibt/aktualisiert den heutigen KPI-Snapshot (ein Datensatz pro Tag)."""
+    todo = computed.get("todo")
+    if not todo:
+        return
+    try:
+        snapshot_date = computed["as_of"]
+        name = frappe.db.exists("PCB Board KPI Snapshot", {"snapshot_date": snapshot_date})
+        doc = (frappe.get_doc("PCB Board KPI Snapshot", name) if name
+               else frappe.new_doc("PCB Board KPI Snapshot"))
+        doc.snapshot_date = snapshot_date
+        doc.overdue_net = float(todo.get("overdue_net") or 0)
+        doc.overdue_count = len(todo.get("overdue") or [])
+        doc.save(ignore_permissions=True)
+    except Exception:  # noqa: BLE001 — Snapshot ist Beiwerk, darf den Refresh nie abschießen
+        frappe.log_error(title="PCB Board KPI-Snapshot fehlgeschlagen", message=frappe.get_traceback())
+
+
 def run_refresh(started_by: str | None = None) -> None:
     try:
         config = _settings()
@@ -268,6 +346,8 @@ def run_refresh(started_by: str | None = None) -> None:
         )
 
         computed = m.build_metrics(raw, config)
+        _attach_todo_trend(computed)   # liest KPI-Snapshots (frappe) — daher hier, nicht in metrics.py
+        _store_kpi_snapshot(computed)  # heutigen Stand für künftige Vorwochen-Vergleiche sichern
         computed["dashboard_title"] = (
             f"{config['company_name']} Team-Board" if config["company_name"] else "Team-Board"
         )

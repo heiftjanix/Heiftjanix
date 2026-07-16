@@ -144,6 +144,21 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
   Settings, als konstant angenommen) samt kumulierter Spalte, dazu eine Kachel
   „Vortrag" = kumulierter Gewinn/Verlust der abgeschlossenen Monate. Dafür
   reicht der ERPNext-Abruf für Rechnungen/Wareneingänge bis Jahresanfang zurück.
+- **Vorwochen-Trend (ToDo):** Neben der überfälligen Auftragssumme steht der
+  Vergleich zum Stand vor einer Woche (▼ grün = besser, ▲ rot = schlechter).
+  Grundlage ist der DocType `PCB Board KPI Snapshot` — jeder Refresh schreibt
+  einen Tages-Snapshot; der Trend erscheint, sobald ein mindestens 7 Tage alter
+  Snapshot existiert (also ~1 Woche nach dem Update).
+- **Vorjahresvergleich (Umsatz):** Kacheln mit dem gleichen Monat des Vorjahres
+  (gesamt + bis zum selben Kalendertag) und dem prozentualen Delta des aktuellen
+  Ist-Umsatzes zum Vorjahr — zur Einschätzung der Saisonalität.
+- **Top-Kunden (Umsatz) / Top-Lieferanten (Kosten):** je Top 5 nach Netto-Umsatz
+  bzw. Netto-Einkaufswert im laufenden Monat, mit Anteils-Spalte
+  (Klumpenrisiko/Lieferantenabhängigkeit).
+- **Deckungsbeitrag (Kosten):** Für die Top-Umsatzprodukte des Monats wird der
+  Wareneinsatz als verkaufte Menge × letzter Einkaufspreis (`Item.last_purchase_rate`)
+  geschätzt und als DB/DB % ausgewiesen. Artikel ohne hinterlegten Einkaufspreis
+  (Eigenfertigung/Dienstleistung) zeigen bewusst „—" statt einer 100-%-Marge.
 
 ## Grenzen
 

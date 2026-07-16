@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import asdict, dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from . import calendar_utils as cal
 
@@ -199,6 +199,104 @@ def top_products(data: dict, limit: int = 5) -> list[dict]:
     return ranked[:limit]
 
 
+def todo_orders(data: dict, today: date) -> dict:
+    """Offene Aufträge nach Liefertermin: überfällig (heute oder überschritten)
+    und diese Woche fällig (Rest der laufenden Kalenderwoche, Mo–So). Aufträge
+    ohne Liefertermin oder ohne offenen Restwert werden übersprungen."""
+    week_end = today - timedelta(days=today.weekday()) + timedelta(days=6)
+    overdue, due_this_week = [], []
+    for so in data.get("open_sales_orders", []) or []:
+        raw = so.get("delivery_date")
+        if not raw:
+            continue
+        try:
+            d = date.fromisoformat(str(raw)[:10])
+        except ValueError:
+            continue
+        net_open = float(so.get("net_open", 0) or 0)
+        if net_open <= 0:
+            continue
+        item = {
+            "name": so.get("name"),
+            "customer": so.get("customer_name") or so.get("customer"),
+            "delivery_date": d.isoformat(),
+            "net_open": round(net_open, 2),
+            "days_overdue": (today - d).days,
+        }
+        if d <= today:
+            overdue.append(item)
+        elif d <= week_end:
+            due_this_week.append(item)
+    overdue.sort(key=lambda x: x["delivery_date"])
+    due_this_week.sort(key=lambda x: x["delivery_date"])
+    return {
+        "overdue": overdue,
+        "due_this_week": due_this_week,
+        "overdue_net": round(sum(i["net_open"] for i in overdue), 2),
+        "due_this_week_net": round(sum(i["net_open"] for i in due_this_week), 2),
+    }
+
+
+def top_purchases(data: dict, limit: int = 5) -> list[dict]:
+    """Top-N Einkaufsartikel nach Netto-Warenwert im laufenden Monat, aus den
+    bereits auf den laufenden Monat gefilterten Wareneingangspositionen
+    (Purchase Receipt Item) — Gegenstück zu top_products()."""
+    totals: dict[str, dict] = {}
+    for row in data.get("purchase_receipt_items", []) or []:
+        code = row.get("item_code") or row.get("item_name") or "?"
+        entry = totals.setdefault(code, {
+            "item_code": code,
+            "item_name": row.get("item_name") or code,
+            "net_total": 0.0,
+        })
+        entry["net_total"] += float(row.get("base_net_amount") or 0)
+    ranked = sorted(totals.values(), key=lambda r: r["net_total"], reverse=True)
+    for r in ranked:
+        r["net_total"] = round(r["net_total"], 2)
+    return ranked[:limit]
+
+
+def profit_history(data: dict, config: dict, today: date) -> dict:
+    """Gewinn/Verlust je Monat des laufenden Jahres: Netto-Rechnungsumsatz minus
+    Wareneingänge des jeweiligen Monats minus fixe Kosten (Personal + Miete, als
+    konstant angenommen — Annahme laut Anforderung). Vortrag = Summe der
+    ABGESCHLOSSENEN Monate; ytd_profit zusätzlich inkl. laufendem Teilmonat.
+    Setzt voraus, dass invoices/purchase_receipts bis Jahresanfang zurückreichen."""
+    fixed = float(config.get("personnel_costs_monthly") or 0) + float(config.get("rent_monthly") or 0)
+
+    revenue: dict[int, float] = defaultdict(float)
+    for inv in data.get("invoices", []) or []:
+        d = _pdate(inv)
+        if d and d.year == today.year and d <= today:
+            revenue[d.month] += _net(inv)
+    goods: dict[int, float] = defaultdict(float)
+    for pr in data.get("purchase_receipts", []) or []:
+        d = _pdate(pr)
+        if d and d.year == today.year and d <= today:
+            goods[d.month] += _net(pr)
+
+    months = []
+    carry = 0.0
+    for m in range(1, today.month + 1):
+        profit = revenue[m] - goods[m] - fixed
+        months.append({
+            "month": f"{today.year}-{m:02d}",
+            "revenue": round(revenue[m], 2),
+            "goods_receipts": round(goods[m], 2),
+            "fixed_costs": round(fixed, 2),
+            "profit": round(profit, 2),
+            "is_current": m == today.month,
+        })
+        if m < today.month:
+            carry += profit
+    return {
+        "months": months,
+        "carry_forward": round(carry, 2),
+        "ytd_profit": round(carry + months[-1]["profit"], 2) if months else 0.0,
+        "fixed_costs_monthly": round(fixed, 2),
+    }
+
+
 def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
     """data: {as_of, invoices[], to_bill_delivery_notes[], open_sales_orders[], mail{}}.
 
@@ -345,6 +443,9 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
         "mail": mail_summary(data.get("mail")),
         "costs": cost_summary(data, config, today),
         "top_products": top_products(data),
+        "top_purchases": top_purchases(data),
+        "todo": todo_orders(data, today),
+        "profit_history": profit_history(data, config, today),
         "forecast": fc.to_dict(),
         "daily_series": daily_series,
         "baseline": {

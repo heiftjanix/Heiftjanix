@@ -408,8 +408,19 @@ PCBBoard.prototype.todoTabHtml = function (m) {
 			'<th class="num">Offen (netto)</th></tr></thead><tbody>' + body + '</tbody></table>';
 	}
 
+	var trend = '';
+	if (t.trend) {
+		var dn = t.trend.delta_net || 0;
+		var better = dn < 0;
+		var arrow = dn === 0 ? '▶' : (better ? '▼' : '▲');
+		var color = dn === 0 ? 'var(--text-secondary)' : (better ? 'var(--good)' : 'var(--critical)');
+		var sign = dn > 0 ? '+' : (dn < 0 ? '−' : '±');
+		trend = ' <span style="color:' + color + ';font-weight:650" title="Vergleich mit Stand vom ' +
+			self.esc(frappe.datetime.str_to_user(t.trend.prev_date)) + ' (' + self.eur(t.trend.prev_net) + ')">' +
+			arrow + ' ' + sign + self.eur(Math.abs(dn)) + ' ggü. Vorwoche</span>';
+	}
 	var secOverdue = '<section class="card"><div class="sec-h"><h2>🔴 Liefertermin heute oder überfällig</h2>' +
-		'<span class="muted">' + overdue.length + ' Auftrag/Aufträge · ' + self.eur(t.overdue_net || 0) + ' offen</span></div>' +
+		'<span class="muted">' + overdue.length + ' Auftrag/Aufträge · ' + self.eur(t.overdue_net || 0) + ' offen' + trend + '</span></div>' +
 		(overdue.length ? table(overdue, true)
 			: '<p class="muted">Nichts überfällig — alles im Plan. ✅</p>') +
 		'</section>';
@@ -447,7 +458,56 @@ PCBBoard.prototype.costsTabHtml = function (m) {
 		'</div>';
 	return '<section class="card"><div class="sec-h"><h2>Kosten</h2>' +
 		'<span class="muted">laufender Monat</span></div>' + tiles + '</section>' +
-		this.topPurchasesHtml(m) + this.profitHistoryHtml(m);
+		this.topPurchasesHtml(m) + this.topSuppliersHtml(m) +
+		this.productMarginsHtml(m) + this.profitHistoryHtml(m);
+};
+
+PCBBoard.prototype.topSuppliersHtml = function (m) {
+	var self = this;
+	var items = m.top_suppliers || [];
+	if (!items.length) {
+		return '';
+	}
+	var rows = items.map(function (s, idx) {
+		return '<tr><td>' + (idx + 1) + '</td><td>' + self.esc(s.supplier) + '</td>' +
+			'<td class="num">' + self.eur(s.net_total) + '</td>' +
+			'<td class="num">' + self.pct(s.share_pct) + '</td></tr>';
+	}).join('');
+	return '<section class="card"><figcaption>Top 5 Lieferanten (Monat, Netto-Einkaufswert — Abhängigkeiten im Blick behalten)</figcaption>' +
+		'<table class="tbl"><thead><tr><th>#</th><th>Lieferant</th><th class="num">Einkaufswert</th>' +
+		'<th class="num">Anteil</th></tr></thead><tbody>' + rows + '</tbody></table></section>';
+};
+
+PCBBoard.prototype.productMarginsHtml = function (m) {
+	var self = this;
+	var items = m.product_margins || [];
+	if (!items.length) {
+		return '';
+	}
+	var rows = items.map(function (p) {
+		var cost = p.cost == null ? '<span class="muted">—</span>' : self.eur(p.cost);
+		var margin, marginPct;
+		if (p.margin == null) {
+			margin = '<span class="muted">—</span>';
+			marginPct = '<span class="muted">kein EK-Preis</span>';
+		} else {
+			var col = p.margin >= 0 ? 'var(--good)' : 'var(--critical)';
+			margin = '<span style="color:' + col + ';font-weight:650">' + self.eur(p.margin) + '</span>';
+			marginPct = '<span style="color:' + col + '">' + self.pct(p.margin_pct) + '</span>';
+		}
+		return '<tr><td>' + self.esc(p.item_name || p.item_code) + '</td>' +
+			'<td class="num">' + self.eur(p.revenue) + '</td>' +
+			'<td class="num">' + cost + '</td>' +
+			'<td class="num">' + margin + '</td>' +
+			'<td class="num">' + marginPct + '</td></tr>';
+	}).join('');
+	return '<section class="card"><figcaption>Deckungsbeitrag Top-Produkte (Monat)</figcaption>' +
+		'<table class="tbl"><thead><tr><th>Produkt</th><th class="num">Umsatz</th>' +
+		'<th class="num">Wareneinsatz</th><th class="num">DB</th><th class="num">DB %</th></tr></thead>' +
+		'<tbody>' + rows + '</tbody></table>' +
+		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Wareneinsatz = verkaufte Menge × ' +
+		'letzter Einkaufspreis des Artikels (ERPNext „Item"). Ohne hinterlegten Einkaufspreis ' +
+		'(z. B. Eigenfertigung/Dienstleistung) bleibt die Marge leer.</p></section>';
 };
 
 PCBBoard.prototype.topPurchasesHtml = function (m) {
@@ -761,10 +821,60 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 		verdictText + '</p></div></section>';
 
 	var topProducts = this.topProductsHtml(m);
+	var prevYear = this.prevYearHtml(m);
+	var topCustomers = this.topCustomersHtml(m);
 	var coverage = this.coverageBarHtml(m);
 	var tips = this.tipsHtml(m);
 
-	return tiles + meter + topProducts + coverage + tips;
+	return tiles + meter + prevYear + topProducts + topCustomers + coverage + tips;
+};
+
+PCBBoard.prototype.prevYearHtml = function (m) {
+	var self = this;
+	var py = m.prev_year;
+	var fc = m.forecast || {};
+	if (!py || (!py.total && !py.mtd_same_day)) {
+		return '';
+	}
+	var names = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli',
+		'August', 'September', 'Oktober', 'November', 'Dezember'];
+	var monthName = names[(py.month || 1) - 1] || '';
+	var deltaHtml = '';
+	if (py.mtd_same_day > 0) {
+		var delta = (fc.mtd || 0) - py.mtd_same_day;
+		var pct = Math.round((delta / py.mtd_same_day) * 100);
+		var up = delta >= 0;
+		deltaHtml = ' <span style="color:' + (up ? 'var(--good)' : 'var(--critical)') + ';font-weight:650">' +
+			(up ? '▲ +' : '▼ −') + Math.abs(pct) + ' %</span> ggü. Vorjahr zum selben Tag';
+	}
+	return '<section class="card"><figcaption>Vorjahresvergleich (Saisonalität)</figcaption>' +
+		'<div class="tiles">' +
+		'<div class="tile"><p class="k">' + self.esc(monthName + ' ' + py.year) + ' gesamt</p>' +
+		'<div class="v">' + self.eur(py.total) + '</div>' +
+		'<div class="m">kompletter Vorjahresmonat</div></div>' +
+		'<div class="tile"><p class="k">' + self.esc(monthName + ' ' + py.year) + ' bis zum selben Tag</p>' +
+		'<div class="v">' + self.eur(py.mtd_same_day) + '</div>' +
+		'<div class="m">Vergleichsbasis für den Ist-Umsatz</div></div>' +
+		'<div class="tile"><p class="k">Ist jetzt</p>' +
+		'<div class="v">' + self.eur(fc.mtd) + '</div>' +
+		'<div class="m">' + (deltaHtml || 'kein Vorjahres-Vergleichswert') + '</div></div>' +
+		'</div></section>';
+};
+
+PCBBoard.prototype.topCustomersHtml = function (m) {
+	var self = this;
+	var items = m.top_customers || [];
+	if (!items.length) {
+		return '';
+	}
+	var rows = items.map(function (c, idx) {
+		return '<tr><td>' + (idx + 1) + '</td><td>' + self.esc(c.customer) + '</td>' +
+			'<td class="num">' + self.eur(c.net_total) + '</td>' +
+			'<td class="num">' + self.pct(c.share_pct) + '</td></tr>';
+	}).join('');
+	return '<section class="card"><figcaption>Top 5 Kunden (Monat, Netto-Umsatz — Klumpenrisiko im Blick behalten)</figcaption>' +
+		'<table class="tbl"><thead><tr><th>#</th><th>Kunde</th><th class="num">Umsatz</th>' +
+		'<th class="num">Anteil</th></tr></thead><tbody>' + rows + '</tbody></table></section>';
 };
 
 PCBBoard.prototype.topProductsHtml = function (m) {

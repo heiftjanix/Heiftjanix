@@ -256,6 +256,112 @@ def top_purchases(data: dict, limit: int = 5) -> list[dict]:
     return ranked[:limit]
 
 
+def top_customers(data: dict, today: date, limit: int = 5) -> list[dict]:
+    """Top-N Kunden nach Netto-Rechnungsumsatz im laufenden Monat, mit Anteil am
+    Monatsumsatz (macht Kundenkonzentration/Klumpenrisiko sichtbar)."""
+    month_start = date(today.year, today.month, 1)
+    totals: dict[str, float] = defaultdict(float)
+    mtd_total = 0.0
+    for inv in data.get("invoices", []) or []:
+        d = _pdate(inv)
+        if d and month_start <= d <= today:
+            amt = _net(inv)
+            totals[inv.get("customer_name") or inv.get("customer") or "?"] += amt
+            mtd_total += amt
+    ranked = sorted(totals.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+    return [{
+        "customer": name,
+        "net_total": round(amt, 2),
+        "share_pct": round(amt / mtd_total, 4) if mtd_total else 0.0,
+    } for name, amt in ranked]
+
+
+def top_suppliers(data: dict, today: date, limit: int = 5) -> list[dict]:
+    """Top-N Lieferanten nach Netto-Einkaufswert (Wareneingänge) im laufenden
+    Monat, mit Anteil am Monats-Wareneingang (macht Lieferantenabhängigkeit
+    sichtbar) — Gegenstück zu top_customers()."""
+    month_start = date(today.year, today.month, 1)
+    totals: dict[str, float] = defaultdict(float)
+    month_total = 0.0
+    for pr in data.get("purchase_receipts", []) or []:
+        d = _pdate(pr)
+        if d and month_start <= d <= today:
+            amt = _net(pr)
+            totals[pr.get("supplier_name") or pr.get("supplier") or "?"] += amt
+            month_total += amt
+    ranked = sorted(totals.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+    return [{
+        "supplier": name,
+        "net_total": round(amt, 2),
+        "share_pct": round(amt / month_total, 4) if month_total else 0.0,
+    } for name, amt in ranked]
+
+
+def product_margins(data: dict, limit: int = 5) -> list[dict]:
+    """Deckungsbeitrag der Top-Umsatzprodukte des laufenden Monats: Umsatz minus
+    Wareneinsatz, geschätzt als verkaufte Menge × letzter Einkaufspreis des
+    Artikels (Item.last_purchase_rate). Ohne hinterlegten Einkaufspreis (z. B.
+    Eigenfertigung/Dienstleistung) bleiben Kosten/Marge leer statt 100 % zu
+    suggerieren."""
+    rates: dict[str, float] = {}
+    for row in data.get("item_purchase_rates", []) or []:
+        code = row.get("item_code") or row.get("name")
+        if code:
+            rates[code] = float(row.get("last_purchase_rate") or 0)
+
+    totals: dict[str, dict] = {}
+    for row in data.get("invoice_items", []) or []:
+        code = row.get("item_code") or row.get("item_name") or "?"
+        entry = totals.setdefault(code, {
+            "item_code": code,
+            "item_name": row.get("item_name") or code,
+            "revenue": 0.0,
+            "qty": 0.0,
+        })
+        entry["revenue"] += float(row.get("base_net_amount") or 0)
+        entry["qty"] += float(row.get("qty") or 0)
+
+    out = []
+    for entry in sorted(totals.values(), key=lambda r: r["revenue"], reverse=True)[:limit]:
+        rate = rates.get(entry["item_code"]) or 0.0
+        entry["revenue"] = round(entry["revenue"], 2)
+        entry["qty"] = round(entry["qty"], 2)
+        if rate > 0 and entry["qty"] > 0:
+            cost = entry["qty"] * rate
+            margin = entry["revenue"] - cost
+            entry["cost"] = round(cost, 2)
+            entry["margin"] = round(margin, 2)
+            entry["margin_pct"] = round(margin / entry["revenue"], 4) if entry["revenue"] else 0.0
+        else:
+            entry["cost"] = None
+            entry["margin"] = None
+            entry["margin_pct"] = None
+        out.append(entry)
+    return out
+
+
+def prev_year_month(data: dict, today: date) -> dict:
+    """Gleicher Monat im Vorjahr (aus data["prev_year_invoices"]): Gesamtsumme
+    plus Summe bis zum gleichen Kalendertag — für den fairen Vergleich mit dem
+    laufenden Monat (Saisonalität)."""
+    total = 0.0
+    mtd_same_day = 0.0
+    for inv in data.get("prev_year_invoices", []) or []:
+        d = _pdate(inv)
+        if not d:
+            continue
+        amt = _net(inv)
+        total += amt
+        if d.day <= today.day:
+            mtd_same_day += amt
+    return {
+        "year": today.year - 1,
+        "month": today.month,
+        "total": round(total, 2),
+        "mtd_same_day": round(mtd_same_day, 2),
+    }
+
+
 def profit_history(data: dict, config: dict, today: date) -> dict:
     """Gewinn/Verlust je Monat des laufenden Jahres: Netto-Rechnungsumsatz minus
     Wareneingänge des jeweiligen Monats minus fixe Kosten (Personal + Miete, als
@@ -444,6 +550,10 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
         "costs": cost_summary(data, config, today),
         "top_products": top_products(data),
         "top_purchases": top_purchases(data),
+        "top_customers": top_customers(data, today),
+        "top_suppliers": top_suppliers(data, today),
+        "product_margins": product_margins(data),
+        "prev_year": prev_year_month(data, today),
         "todo": todo_orders(data, today),
         "profit_history": profit_history(data, config, today),
         "forecast": fc.to_dict(),

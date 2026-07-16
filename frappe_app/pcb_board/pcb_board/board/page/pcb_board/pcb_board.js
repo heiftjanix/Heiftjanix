@@ -129,12 +129,14 @@ PCBBoard.prototype.shellHtml = function () {
 		'</div></div>' +
 		'<div class="tabs">' +
 		'<button class="active" data-tab="mail">📥 Posteingang</button>' +
+		'<button data-tab="todo">📋 ToDo</button>' +
 		'<button data-tab="revenue">📊 Umsatz</button>' +
 		'<button data-tab="billing">🧾 Abrechnung</button>' +
 		'<button data-tab="costs">💸 Kosten</button>' +
 		'<button data-tab="assign">👤 Zuweisungen</button>' +
 		'</div>' +
 		'<div class="tab-panel active" id="pcb-tab-mail"><p class="muted">Lade Daten …</p></div>' +
+		'<div class="tab-panel" id="pcb-tab-todo"></div>' +
 		'<div class="tab-panel" id="pcb-tab-revenue"></div>' +
 		'<div class="tab-panel" id="pcb-tab-billing"></div>' +
 		'<div class="tab-panel" id="pcb-tab-costs"></div>' +
@@ -373,15 +375,58 @@ PCBBoard.prototype.renderAll = function () {
 	var next = ' · nächster Refresh in ' + this.nextRefreshIn();
 	this.$root.find('#pcb-stand').text('Stand ' + stand + duration + next);
 	this.$root.find('#pcb-tab-mail').html(this.mailTabHtml(m));
+	this.$root.find('#pcb-tab-todo').html(this.todoTabHtml(m));
 	this.$root.find('#pcb-tab-revenue').html(this.revenueTabHtml(m));
 	this.$root.find('#pcb-tab-billing').html(this.billingTabHtml(m));
 	this.$root.find('#pcb-tab-costs').html(this.costsTabHtml(m));
 	this.bindMailInteractions();
 };
 
+PCBBoard.prototype.todoTabHtml = function (m) {
+	var self = this;
+	var t = m.todo || {};
+	var overdue = t.overdue || [];
+	var week = t.due_this_week || [];
+
+	function soLink(name) {
+		return '<a href="/app/sales-order/' + encodeURIComponent(name) + '" target="_blank">' +
+			self.esc(name) + '</a>';
+	}
+	function table(rows, withDelay) {
+		var body = rows.map(function (r) {
+			var delay = '';
+			if (withDelay) {
+				delay = '<td class="num" style="color:var(--critical)">' +
+					(r.days_overdue > 0 ? r.days_overdue + ' Tag(e)' : 'heute') + '</td>';
+			}
+			return '<tr><td>' + soLink(r.name) + '</td><td>' + self.esc(r.customer || '') + '</td>' +
+				'<td>' + self.esc(frappe.datetime.str_to_user(r.delivery_date)) + '</td>' + delay +
+				'<td class="num">' + self.eur(r.net_open) + '</td></tr>';
+		}).join('');
+		return '<table class="tbl"><thead><tr><th>Auftrag</th><th>Kunde</th><th>Liefertermin</th>' +
+			(withDelay ? '<th class="num">Verzug</th>' : '') +
+			'<th class="num">Offen (netto)</th></tr></thead><tbody>' + body + '</tbody></table>';
+	}
+
+	var secOverdue = '<section class="card"><div class="sec-h"><h2>🔴 Liefertermin heute oder überfällig</h2>' +
+		'<span class="muted">' + overdue.length + ' Auftrag/Aufträge · ' + self.eur(t.overdue_net || 0) + ' offen</span></div>' +
+		(overdue.length ? table(overdue, true)
+			: '<p class="muted">Nichts überfällig — alles im Plan. ✅</p>') +
+		'</section>';
+	var secWeek = '<section class="card"><div class="sec-h"><h2>🟡 Diese Woche fällig</h2>' +
+		'<span class="muted">sollte diese Woche fertig werden · ' + self.eur(t.due_this_week_net || 0) + ' offen</span></div>' +
+		(week.length ? table(week, false)
+			: '<p class="muted">Keine weiteren Liefertermine in dieser Woche.</p>') +
+		'</section>';
+	return secOverdue + secWeek;
+};
+
 PCBBoard.prototype.costsTabHtml = function (m) {
 	var self = this;
 	var c = m.costs || {};
+	var ph = m.profit_history || {};
+	var carry = ph.carry_forward || 0;
+	var year = (m.as_of || '').slice(0, 4);
 	var rows = [
 		['Wareneingänge (Monat)', c.goods_receipts, 'aus Purchase Receipt, ERPNext'],
 		['Personalkosten (Monat)', c.personnel_costs, 'PCB Board Settings'],
@@ -395,9 +440,64 @@ PCBBoard.prototype.costsTabHtml = function (m) {
 		'<div class="tile"><p class="k">Gesamtkosten (Monat)</p>' +
 		'<div class="v" style="color:var(--critical)">' + self.eur(c.total) + '</div>' +
 		'<div class="m">Wareneingänge + Personal + Miete</div></div>' +
+		'<div class="tile"><p class="k">Vortrag ' + self.esc(year) + '</p>' +
+		'<div class="v" style="color:' + (carry >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
+		self.eur(carry) + '</div>' +
+		'<div class="m">kumulierter Gewinn/Verlust der abgeschlossenen Monate</div></div>' +
 		'</div>';
 	return '<section class="card"><div class="sec-h"><h2>Kosten</h2>' +
-		'<span class="muted">laufender Monat</span></div>' + tiles + '</section>';
+		'<span class="muted">laufender Monat</span></div>' + tiles + '</section>' +
+		this.topPurchasesHtml(m) + this.profitHistoryHtml(m);
+};
+
+PCBBoard.prototype.topPurchasesHtml = function (m) {
+	var self = this;
+	var items = m.top_purchases || [];
+	if (!items.length) {
+		return '<section class="card"><figcaption>Top 5 Einkäufe (Monat)</figcaption>' +
+			'<p class="muted">Noch keine Wareneingangspositionen in diesem Monat.</p></section>';
+	}
+	var rows = items.map(function (p, idx) {
+		return '<tr><td>' + (idx + 1) + '</td><td>' + self.esc(p.item_name || p.item_code) + '</td>' +
+			'<td class="num">' + self.eur(p.net_total) + '</td></tr>';
+	}).join('');
+	return '<section class="card"><figcaption>Top 5 Einkäufe (Monat, Netto-Warenwert)</figcaption>' +
+		'<table class="tbl"><thead><tr><th>#</th><th>Artikel</th><th class="num">Warenwert</th></tr></thead>' +
+		'<tbody>' + rows + '</tbody></table></section>';
+};
+
+PCBBoard.prototype.profitHistoryHtml = function (m) {
+	var self = this;
+	var ph = m.profit_history || {};
+	var months = ph.months || [];
+	if (!months.length) {
+		return '';
+	}
+	var names = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+	var cum = 0;
+	var rows = months.map(function (r) {
+		cum += r.profit;
+		var lbl = names[parseInt(r.month.slice(5), 10) - 1] || r.month;
+		if (r.is_current) lbl += ' (läuft)';
+		function colored(v) {
+			return '<td class="num" style="color:' + (v >= 0 ? 'var(--good)' : 'var(--critical)') +
+				';font-weight:650">' + self.eur(v) + '</td>';
+		}
+		return '<tr' + (r.is_current ? ' style="opacity:.75"' : '') + '><td>' + self.esc(lbl) + '</td>' +
+			'<td class="num">' + self.eur(r.revenue) + '</td>' +
+			'<td class="num">' + self.eur(r.goods_receipts) + '</td>' +
+			'<td class="num">' + self.eur(r.fixed_costs) + '</td>' +
+			colored(r.profit) + colored(cum) + '</tr>';
+	}).join('');
+	return '<section class="card"><figcaption>Gewinn/Verlust je Monat (' +
+		self.esc((m.as_of || '').slice(0, 4)) + ')</figcaption>' +
+		'<table class="tbl"><thead><tr><th>Monat</th><th class="num">Umsatz</th>' +
+		'<th class="num">Wareneingänge</th><th class="num">Fixkosten</th>' +
+		'<th class="num">Gewinn/Verlust</th><th class="num">kumuliert</th></tr></thead>' +
+		'<tbody>' + rows + '</tbody></table>' +
+		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Annahme: Personalkosten und Miete ' +
+		'gleichbleibend (' + self.eur(ph.fixed_costs_monthly || 0) + '/Monat, PCB Board Settings); ' +
+		'variable Kosten = im jeweiligen Monat gebuchte Wareneingänge.</p></section>';
 };
 
 PCBBoard.prototype.mailTabHtml = function (m) {

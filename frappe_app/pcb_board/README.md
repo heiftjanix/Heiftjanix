@@ -132,6 +132,18 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
 - **Top-Produkte:** Tab „Umsatz" zeigt zusätzlich die 5 umsatzstärksten Produkte
   des laufenden Monats (aus `Sales Invoice Item`, nach `base_net_amount` summiert
   und absteigend sortiert — nur gebuchte Rechnungen).
+- **ToDo:** Eigener Tab mit offenen Aufträgen nach Liefertermin: „heute oder
+  überfällig" (rot, mit Verzugstagen) und „diese Woche fällig" (Hinweis: sollte
+  diese Woche fertig werden; Rest der laufenden Kalenderwoche Mo–So). Aufträge
+  ohne Liefertermin oder ohne offenen Restwert erscheinen nicht; Auftragsnummern
+  verlinken in den ERPNext-Beleg.
+- **Top-Einkäufe:** Tab „Kosten" zeigt die 5 teuersten Einkaufsartikel des
+  laufenden Monats (aus `Purchase Receipt Item`, nach Netto-Warenwert summiert).
+- **Gewinn/Verlust-Historie + Vortrag:** Tab „Kosten" zeigt je Monat des
+  laufenden Jahres Umsatz − Wareneingänge − Fixkosten (Personal + Miete aus den
+  Settings, als konstant angenommen) samt kumulierter Spalte, dazu eine Kachel
+  „Vortrag" = kumulierter Gewinn/Verlust der abgeschlossenen Monate. Dafür
+  reicht der ERPNext-Abruf für Rechnungen/Wareneingänge bis Jahresanfang zurück.
 
 ## Grenzen
 

@@ -115,7 +115,9 @@ def _fetch_erpnext(config: dict) -> dict:
         mo -= 1
         if mo == 0:
             mo, y = 12, y - 1
-    cutoff = date(y, mo, 1).isoformat()
+    # Rechnungen/Wareneingänge müssen sowohl die Baseline-Monate (Prognose) als
+    # auch das komplette laufende Jahr abdecken (Gewinn/Verlust-Historie + Vortrag).
+    cutoff = min(date(y, mo, 1), date(today.year, 1, 1)).isoformat()
 
     # ignore_permissions: die Kennzahlen sind für alle Board-Nutzer gleich (aggregiert,
     # nicht dokumentenscharf) — Zugriff auf das Board selbst wird über die Desk-Page-
@@ -142,14 +144,20 @@ def _fetch_erpnext(config: dict) -> dict:
     sos = frappe.get_all(
         "Sales Order",
         filters=[["status", "not in", ["Closed", "Cancelled", "Completed"]], ["docstatus", "=", 1]],
-        fields=["name", "customer", "base_net_total", "per_billed"],
+        fields=["name", "customer", "customer_name", "base_net_total", "per_billed", "delivery_date"],
         limit_page_length=0,
         ignore_permissions=True,
     )
     open_sales_orders = []
     for r in sos:
         net_open = float(r.get("base_net_total") or 0) * (1.0 - float(r.get("per_billed") or 0) / 100.0)
-        open_sales_orders.append({"name": r["name"], "customer": r.get("customer"), "net_open": round(net_open, 2)})
+        open_sales_orders.append({
+            "name": r["name"],
+            "customer": r.get("customer"),
+            "customer_name": r.get("customer_name"),
+            "delivery_date": str(r["delivery_date"]) if r.get("delivery_date") else None,
+            "net_open": round(net_open, 2),
+        })
 
     # Kosten: Wareneingänge (Purchase Receipt) — Netto-Basiswert, gebucht.
     purchase_receipts = frappe.get_all(
@@ -181,6 +189,22 @@ def _fetch_erpnext(config: dict) -> dict:
             ignore_permissions=True,
         )
 
+    # Top-Einkäufe: Wareneingangspositionen nur für den laufenden Monat — die
+    # Belegnamen stehen schon in purchase_receipts (Cutoff reicht weiter zurück).
+    month_receipt_names = [
+        r["name"] for r in purchase_receipts
+        if str(r.get("posting_date") or "") >= month_start
+    ]
+    purchase_receipt_items = []
+    if month_receipt_names:
+        purchase_receipt_items = frappe.get_all(
+            "Purchase Receipt Item",
+            filters=[["parent", "in", month_receipt_names]],
+            fields=["item_code", "item_name", "base_net_amount"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        )
+
     return {
         "as_of": today.isoformat(),
         "invoices": invoices,
@@ -188,6 +212,7 @@ def _fetch_erpnext(config: dict) -> dict:
         "open_sales_orders": open_sales_orders,
         "purchase_receipts": purchase_receipts,
         "invoice_items": invoice_items,
+        "purchase_receipt_items": purchase_receipt_items,
     }
 
 

@@ -117,6 +117,60 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertAlmostEqual(costs["rent"], 0, delta=0.01)
         self.assertAlmostEqual(costs["total"], 4500, delta=0.01)
 
+    def test_todo_orders_split_overdue_and_this_week(self):
+        # 2026-07-15 ist ein Mittwoch — Woche = Mo 13.07. bis So 19.07.
+        data = self._data()
+        data["open_sales_orders"] = [
+            {"name": "AB-ALT", "customer_name": "Kunde Alt", "delivery_date": "2026-07-01", "net_open": 500},
+            {"name": "AB-HEUTE", "customer_name": "Kunde Heute", "delivery_date": "2026-07-15", "net_open": 300},
+            {"name": "AB-FR", "customer_name": "Kunde Freitag", "delivery_date": "2026-07-17", "net_open": 200},
+            {"name": "AB-NAECHSTE", "customer_name": "Kunde Später", "delivery_date": "2026-07-25", "net_open": 900},
+            {"name": "AB-OHNE", "customer_name": "Ohne Termin", "delivery_date": None, "net_open": 100},
+            {"name": "AB-LEER", "customer_name": "Voll berechnet", "delivery_date": "2026-07-01", "net_open": 0},
+        ]
+        todo = m.build_metrics(data, CONFIG, date(2026, 7, 15))["todo"]
+        self.assertEqual([o["name"] for o in todo["overdue"]], ["AB-ALT", "AB-HEUTE"])
+        self.assertEqual([o["name"] for o in todo["due_this_week"]], ["AB-FR"])
+        self.assertEqual(todo["overdue"][0]["days_overdue"], 14)
+        self.assertEqual(todo["overdue"][1]["days_overdue"], 0)
+        self.assertAlmostEqual(todo["overdue_net"], 800, delta=0.01)
+        self.assertAlmostEqual(todo["due_this_week_net"], 200, delta=0.01)
+
+    def test_top_purchases_aggregates_and_limits(self):
+        data = self._data()
+        data["purchase_receipt_items"] = [
+            {"item_code": "BT-A", "item_name": "Bauteil A", "base_net_amount": 900},
+            {"item_code": "BT-B", "item_name": "Bauteil B", "base_net_amount": 2000},
+            {"item_code": "BT-A", "item_name": "Bauteil A", "base_net_amount": 600},
+            {"item_code": "BT-C", "item_name": "Bauteil C", "base_net_amount": 400},
+            {"item_code": "BT-D", "item_name": "Bauteil D", "base_net_amount": 300},
+            {"item_code": "BT-E", "item_name": "Bauteil E", "base_net_amount": 200},
+            {"item_code": "BT-F", "item_name": "Bauteil F", "base_net_amount": 100},
+        ]
+        top = m.build_metrics(data, CONFIG, date(2026, 7, 15))["top_purchases"]
+        self.assertEqual(len(top), 5)
+        self.assertEqual(top[0]["item_code"], "BT-B")
+        self.assertEqual(top[1]["item_code"], "BT-A")
+        self.assertAlmostEqual(top[1]["net_total"], 1500, delta=0.01)
+        self.assertEqual([p["item_code"] for p in top], ["BT-B", "BT-A", "BT-C", "BT-D", "BT-E"])
+
+    def test_profit_history_year_months_and_carry_forward(self):
+        config = dict(CONFIG, personnel_costs_monthly=6000, rent_monthly=1200)
+        ph = m.build_metrics(self._data(), config, date(2026, 7, 15))["profit_history"]
+        self.assertEqual(len(ph["months"]), 7)
+        self.assertEqual(ph["months"][0]["month"], "2026-01")
+        # Jan–Mai: keine Umsätze/Wareneingänge in den Fixtures -> je -7200 (Fixkosten)
+        self.assertAlmostEqual(ph["months"][0]["profit"], -7200, delta=0.01)
+        # Juni: 90000 Umsatz - 9000 Wareneingang - 7200 fix = 73800
+        self.assertAlmostEqual(ph["months"][5]["profit"], 73800, delta=0.01)
+        # Juli (läuft): 20000 - 4500 - 7200 = 8300
+        jul = ph["months"][6]
+        self.assertTrue(jul["is_current"])
+        self.assertAlmostEqual(jul["profit"], 8300, delta=0.01)
+        # Vortrag = abgeschlossene Monate: 5*(-7200) + 73800 = 37800
+        self.assertAlmostEqual(ph["carry_forward"], 37800, delta=0.01)
+        self.assertAlmostEqual(ph["ytd_profit"], 46100, delta=0.01)
+
     def test_mail_summary_counts_and_sort(self):
         data = self._data()
         data["mail"] = {"window_hours": 24, "items": [

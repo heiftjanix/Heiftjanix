@@ -353,24 +353,29 @@ def product_margins(data: dict, limit: int = 5) -> list[dict]:
 
 
 def prev_year_month(data: dict, today: date) -> dict:
-    """Gleicher Monat im Vorjahr (aus data["prev_year_invoices"]): Gesamtsumme
-    plus Summe bis zum gleichen Kalendertag — für den fairen Vergleich mit dem
-    laufenden Monat (Saisonalität)."""
+    """Vorjahresvergleich (aus data["prev_year_invoices"], Jahresanfang Vorjahr
+    bis Ende des gleichen Monats): Gesamtsumme des gleichen Monats, Summe bis
+    zum gleichen Kalendertag (fairer Monatsvergleich) und Jahressumme bis
+    Monatsende (Vergleichsbasis für den laufenden Jahresumsatz)."""
     total = 0.0
     mtd_same_day = 0.0
+    ytd_through_month_end = 0.0
     for inv in data.get("prev_year_invoices", []) or []:
         d = _pdate(inv)
         if not d:
             continue
         amt = _net(inv)
-        total += amt
-        if d.day <= today.day:
-            mtd_same_day += amt
+        ytd_through_month_end += amt
+        if d.month == today.month:
+            total += amt
+            if d.day <= today.day:
+                mtd_same_day += amt
     return {
         "year": today.year - 1,
         "month": today.month,
         "total": round(total, 2),
         "mtd_same_day": round(mtd_same_day, 2),
+        "ytd_through_month_end": round(ytd_through_month_end, 2),
     }
 
 
@@ -574,6 +579,12 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
         "top_suppliers": top_suppliers(data, today),
         "product_margins": product_margins(data),
         "prev_year": prev_year_month(data, today),
+        # Umsatz laufendes Jahr (Jahresanfang bis heute) — Gegenstück zu
+        # prev_year.ytd_through_month_end.
+        "ytd_revenue": round(sum(
+            _net(inv) for inv in invoices
+            if (d := _pdate(inv)) and d.year == today.year and d <= today
+        ), 2),
         "todo": todo_orders(data, today),
         "profit_history": profit_history(data, config, today),
         "forecast": fc.to_dict(),

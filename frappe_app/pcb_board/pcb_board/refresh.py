@@ -130,12 +130,13 @@ def _fetch_erpnext(config: dict) -> dict:
         ignore_permissions=True,
     )
 
-    # Vorjahresvergleich: gleicher Monat im Vorjahr (kompletter Monat).
+    # Vorjahresvergleich: Jahresanfang Vorjahr bis Ende des gleichen Monats —
+    # deckt sowohl den Monatsvergleich als auch den Jahresumsatz-Vergleich ab.
     py = today.year - 1
     py_next = date(py + 1, 1, 1) if today.month == 12 else date(py, today.month + 1, 1)
     prev_year_invoices = frappe.get_all(
         "Sales Invoice",
-        filters=[["posting_date", ">=", date(py, today.month, 1).isoformat()],
+        filters=[["posting_date", ">=", date(py, 1, 1).isoformat()],
                  ["posting_date", "<", py_next.isoformat()],
                  ["docstatus", "=", 1]],
         fields=["name", "base_net_total", "posting_date"],

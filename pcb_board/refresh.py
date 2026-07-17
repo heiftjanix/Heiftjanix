@@ -203,9 +203,11 @@ def _fetch_erpnext(config: dict) -> dict:
         )
 
     # Deckungsbeitrag: letzter Einkaufspreis je verkauftem Artikel (Wareneinsatz-
-    # Schätzung; Artikel ohne Einkaufspreis bleiben in der Marge bewusst leer).
+    # Schätzung); für Eigenfertigung ohne Einkaufspreis dient der Wert der
+    # aktiven Standard-Stückliste (BOM-Kosten je Einheit) als Fallback.
     item_codes = sorted({r["item_code"] for r in invoice_items if r.get("item_code")})
     item_purchase_rates = []
+    item_bom_costs = []
     if item_codes:
         item_purchase_rates = frappe.get_all(
             "Item",
@@ -214,6 +216,18 @@ def _fetch_erpnext(config: dict) -> dict:
             limit_page_length=0,
             ignore_permissions=True,
         )
+        boms = frappe.get_all(
+            "BOM",
+            filters=[["item", "in", item_codes], ["is_active", "=", 1],
+                     ["is_default", "=", 1], ["docstatus", "=", 1]],
+            fields=["item", "base_total_cost", "total_cost", "quantity"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        )
+        for b in boms:
+            qty = float(b.get("quantity") or 1) or 1.0
+            cost = float(b.get("base_total_cost") or b.get("total_cost") or 0)
+            item_bom_costs.append({"item_code": b["item"], "cost_per_unit": cost / qty})
 
     # Top-Einkäufe: Wareneingangspositionen nur für den laufenden Monat — die
     # Belegnamen stehen schon in purchase_receipts (Cutoff reicht weiter zurück).
@@ -240,6 +254,7 @@ def _fetch_erpnext(config: dict) -> dict:
         "invoice_items": invoice_items,
         "purchase_receipt_items": purchase_receipt_items,
         "item_purchase_rates": item_purchase_rates,
+        "item_bom_costs": item_bom_costs,
         "prev_year_invoices": prev_year_invoices,
     }
 

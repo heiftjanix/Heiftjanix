@@ -299,15 +299,21 @@ def top_suppliers(data: dict, today: date, limit: int = 5) -> list[dict]:
 
 def product_margins(data: dict, limit: int = 5) -> list[dict]:
     """Deckungsbeitrag der Top-Umsatzprodukte des laufenden Monats: Umsatz minus
-    Wareneinsatz, geschätzt als verkaufte Menge × letzter Einkaufspreis des
-    Artikels (Item.last_purchase_rate). Ohne hinterlegten Einkaufspreis (z. B.
-    Eigenfertigung/Dienstleistung) bleiben Kosten/Marge leer statt 100 % zu
-    suggerieren."""
+    Wareneinsatz, geschätzt als verkaufte Menge × Stückkosten. Stückkosten-Quelle:
+    letzter Einkaufspreis (Item.last_purchase_rate); fehlt der (Eigenfertigung),
+    der Wert der aktiven Standard-Stückliste je Einheit (BOM). cost_source sagt,
+    welche Quelle griff ("ek" | "bom"); ganz ohne beides bleiben Kosten/Marge
+    leer statt 100 % zu suggerieren."""
     rates: dict[str, float] = {}
     for row in data.get("item_purchase_rates", []) or []:
         code = row.get("item_code") or row.get("name")
         if code:
             rates[code] = float(row.get("last_purchase_rate") or 0)
+    bom_rates: dict[str, float] = {}
+    for row in data.get("item_bom_costs", []) or []:
+        code = row.get("item_code")
+        if code:
+            bom_rates[code] = float(row.get("cost_per_unit") or 0)
 
     totals: dict[str, dict] = {}
     for row in data.get("invoice_items", []) or []:
@@ -324,6 +330,10 @@ def product_margins(data: dict, limit: int = 5) -> list[dict]:
     out = []
     for entry in sorted(totals.values(), key=lambda r: r["revenue"], reverse=True)[:limit]:
         rate = rates.get(entry["item_code"]) or 0.0
+        source = "ek"
+        if rate <= 0:
+            rate = bom_rates.get(entry["item_code"]) or 0.0
+            source = "bom"
         entry["revenue"] = round(entry["revenue"], 2)
         entry["qty"] = round(entry["qty"], 2)
         if rate > 0 and entry["qty"] > 0:
@@ -332,10 +342,12 @@ def product_margins(data: dict, limit: int = 5) -> list[dict]:
             entry["cost"] = round(cost, 2)
             entry["margin"] = round(margin, 2)
             entry["margin_pct"] = round(margin / entry["revenue"], 4) if entry["revenue"] else 0.0
+            entry["cost_source"] = source
         else:
             entry["cost"] = None
             entry["margin"] = None
             entry["margin_pct"] = None
+            entry["cost_source"] = None
         out.append(entry)
     return out
 
@@ -384,17 +396,25 @@ def profit_history(data: dict, config: dict, today: date) -> dict:
     months = []
     carry = 0.0
     for m in range(1, today.month + 1):
-        profit = revenue[m] - goods[m] - fixed
+        total_costs = goods[m] + fixed
+        profit = revenue[m] - total_costs
         months.append({
             "month": f"{today.year}-{m:02d}",
             "revenue": round(revenue[m], 2),
             "goods_receipts": round(goods[m], 2),
             "fixed_costs": round(fixed, 2),
             "profit": round(profit, 2),
+            # Umsatz-zu-Kosten-Verhältnis fürs Monats-Ranking (>1 = profitabel);
+            # ohne Kosten kein sinnvolles Verhältnis -> None, landet im Rang hinten.
+            "ratio": round(revenue[m] / total_costs, 4) if total_costs > 0 else None,
             "is_current": m == today.month,
         })
         if m < today.month:
             carry += profit
+    for rank, mo in enumerate(
+        sorted(months, key=lambda r: (r["ratio"] is None, -(r["ratio"] or 0))), start=1
+    ):
+        mo["rank"] = rank if mo["ratio"] is not None else None
     return {
         "months": months,
         "carry_forward": round(carry, 2),

@@ -170,6 +170,12 @@ class TestBuildMetrics(unittest.TestCase):
         # Vortrag = abgeschlossene Monate: 5*(-7200) + 73800 = 37800
         self.assertAlmostEqual(ph["carry_forward"], 37800, delta=0.01)
         self.assertAlmostEqual(ph["ytd_profit"], 46100, delta=0.01)
+        # Ranking nach Umsatz-zu-Kosten-Verhältnis: Juni (90000/16200) vor Juli (20000/11700)
+        self.assertEqual(ph["months"][5]["rank"], 1)
+        self.assertAlmostEqual(ph["months"][5]["ratio"], 90000 / 16200, places=3)
+        self.assertEqual(ph["months"][6]["rank"], 2)
+        # Monate ohne Umsatz: Verhältnis 0, landen dahinter
+        self.assertGreater(ph["months"][0]["rank"], 2)
 
     def test_top_customers_share_of_mtd(self):
         data = self._data()
@@ -200,27 +206,38 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertAlmostEqual(top[0]["share_pct"], 0.8, places=4)
         self.assertEqual(top[1]["supplier"], "Lieferant Y")
 
-    def test_product_margins_with_and_without_purchase_rate(self):
+    def test_product_margins_ek_bom_fallback_and_empty(self):
         data = self._data()
         data["invoice_items"] = [
             {"item_code": "PCB-A", "item_name": "Platine A", "base_net_amount": 5000, "qty": 100},
             {"item_code": "PCB-A", "item_name": "Platine A", "base_net_amount": 2000, "qty": 40},
             {"item_code": "PCB-B", "item_name": "Platine B", "base_net_amount": 3000, "qty": 10},
+            {"item_code": "PCB-C", "item_name": "Platine C", "base_net_amount": 1000, "qty": 5},
         ]
         data["item_purchase_rates"] = [
             {"name": "PCB-A", "item_code": "PCB-A", "last_purchase_rate": 30},
             {"name": "PCB-B", "item_code": "PCB-B", "last_purchase_rate": 0},
+            {"name": "PCB-C", "item_code": "PCB-C", "last_purchase_rate": 0},
         ]
+        # PCB-B ohne EK, aber mit Stückliste: 200 €/Einheit
+        data["item_bom_costs"] = [{"item_code": "PCB-B", "cost_per_unit": 200}]
         margins = m.build_metrics(data, CONFIG, date(2026, 7, 15))["product_margins"]
         a = margins[0]
         self.assertEqual(a["item_code"], "PCB-A")
-        self.assertAlmostEqual(a["cost"], 4200, delta=0.01)       # 140 Stk × 30 €
+        self.assertAlmostEqual(a["cost"], 4200, delta=0.01)       # 140 Stk × 30 € EK
         self.assertAlmostEqual(a["margin"], 2800, delta=0.01)     # 7000 − 4200
         self.assertAlmostEqual(a["margin_pct"], 0.4, places=4)
+        self.assertEqual(a["cost_source"], "ek")
         b = margins[1]
         self.assertEqual(b["item_code"], "PCB-B")
-        self.assertIsNone(b["cost"])
-        self.assertIsNone(b["margin"])
+        self.assertAlmostEqual(b["cost"], 2000, delta=0.01)       # 10 Stk × 200 € Stückliste
+        self.assertAlmostEqual(b["margin"], 1000, delta=0.01)
+        self.assertEqual(b["cost_source"], "bom")
+        c = margins[2]
+        self.assertEqual(c["item_code"], "PCB-C")
+        self.assertIsNone(c["cost"])
+        self.assertIsNone(c["margin"])
+        self.assertIsNone(c["cost_source"])
 
     def test_prev_year_month_total_and_same_day(self):
         data = self._data()

@@ -485,11 +485,16 @@ PCBBoard.prototype.productMarginsHtml = function (m) {
 		return '';
 	}
 	var rows = items.map(function (p) {
-		var cost = p.cost == null ? '<span class="muted">—</span>' : self.eur(p.cost);
+		var srcTag = p.cost_source === 'bom'
+			? ' <span class="muted" style="font-size:.75rem" title="Wareneinsatz aus Stücklistenwert (BOM)">SL</span>'
+			: (p.cost_source === 'ek'
+				? ' <span class="muted" style="font-size:.75rem" title="Wareneinsatz aus letztem Einkaufspreis">EK</span>'
+				: '');
+		var cost = p.cost == null ? '<span class="muted">—</span>' : self.eur(p.cost) + srcTag;
 		var margin, marginPct;
 		if (p.margin == null) {
 			margin = '<span class="muted">—</span>';
-			marginPct = '<span class="muted">kein EK-Preis</span>';
+			marginPct = '<span class="muted">kein EK/keine Stückliste</span>';
 		} else {
 			var col = p.margin >= 0 ? 'var(--good)' : 'var(--critical)';
 			margin = '<span style="color:' + col + ';font-weight:650">' + self.eur(p.margin) + '</span>';
@@ -506,8 +511,8 @@ PCBBoard.prototype.productMarginsHtml = function (m) {
 		'<th class="num">Wareneinsatz</th><th class="num">DB</th><th class="num">DB %</th></tr></thead>' +
 		'<tbody>' + rows + '</tbody></table>' +
 		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Wareneinsatz = verkaufte Menge × ' +
-		'letzter Einkaufspreis des Artikels (ERPNext „Item"). Ohne hinterlegten Einkaufspreis ' +
-		'(z. B. Eigenfertigung/Dienstleistung) bleibt die Marge leer.</p></section>';
+		'letzter Einkaufspreis (EK) des Artikels; ohne EK greift der Wert der aktiven ' +
+		'Standard-Stückliste je Einheit (SL). Fehlt beides, bleibt die Marge leer.</p></section>';
 };
 
 PCBBoard.prototype.topPurchasesHtml = function (m) {
@@ -534,6 +539,7 @@ PCBBoard.prototype.profitHistoryHtml = function (m) {
 		return '';
 	}
 	var names = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+	var medals = { 1: '🥇', 2: '🥈', 3: '🥉' };
 	var cum = 0;
 	var rows = months.map(function (r) {
 		cum += r.profit;
@@ -543,17 +549,24 @@ PCBBoard.prototype.profitHistoryHtml = function (m) {
 			return '<td class="num" style="color:' + (v >= 0 ? 'var(--good)' : 'var(--critical)') +
 				';font-weight:650">' + self.eur(v) + '</td>';
 		}
+		var rank = '<td class="num muted">—</td>';
+		if (r.rank) {
+			rank = '<td class="num"' + (r.rank <= 3 ? ' style="font-weight:650"' : '') + '>' +
+				(medals[r.rank] || '') + ' ' + r.rank + '.' +
+				(r.ratio != null ? ' <span class="muted" style="font-size:.78rem">(' +
+					String(r.ratio.toFixed(2)).replace('.', ',') + '×)</span>' : '') + '</td>';
+		}
 		return '<tr' + (r.is_current ? ' style="opacity:.75"' : '') + '><td>' + self.esc(lbl) + '</td>' +
 			'<td class="num">' + self.eur(r.revenue) + '</td>' +
 			'<td class="num">' + self.eur(r.goods_receipts) + '</td>' +
 			'<td class="num">' + self.eur(r.fixed_costs) + '</td>' +
-			colored(r.profit) + colored(cum) + '</tr>';
+			colored(r.profit) + colored(cum) + rank + '</tr>';
 	}).join('');
 	return '<section class="card"><figcaption>Gewinn/Verlust je Monat (' +
-		self.esc((m.as_of || '').slice(0, 4)) + ')</figcaption>' +
+		self.esc((m.as_of || '').slice(0, 4)) + ') — Rang = bestes Umsatz-zu-Kosten-Verhältnis</figcaption>' +
 		'<table class="tbl"><thead><tr><th>Monat</th><th class="num">Umsatz</th>' +
 		'<th class="num">Wareneingänge</th><th class="num">Fixkosten</th>' +
-		'<th class="num">Gewinn/Verlust</th><th class="num">kumuliert</th></tr></thead>' +
+		'<th class="num">Gewinn/Verlust</th><th class="num">kumuliert</th><th class="num">Rang</th></tr></thead>' +
 		'<tbody>' + rows + '</tbody></table>' +
 		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Annahme: Personalkosten und Miete ' +
 		'gleichbleibend (' + self.eur(ph.fixed_costs_monthly || 0) + '/Monat, PCB Board Settings); ' +
@@ -617,10 +630,11 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 		}
 		var reason = i.reason || '';
 		var draft = (i.draft || '').trim();
+		var preview = (i.body_preview || '').trim();
 		var searchTxt = (sender + ' ' + subj + ' ' + reason).toLowerCase();
 		var dot = prio === 'high' ? '<span class="mc-dot hi" title="dringend"></span>' : '<span class="mc-dot"></span>';
 		var pill = rel ? '<span class="pill rel">Antwort</span>' : '<span class="pill info">Info</span>';
-		var can = !!draft;
+		var can = !!(draft || preview);
 		var chev = can ? '<span class="mc-chev">▾</span>' : '';
 		var mid = i.internet_message_id || '';
 		if (mid) {
@@ -650,10 +664,18 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 			'<span class="mc-reason">' + self.esc(reason) + '</span>' + actions + chev + '</div>';
 		var draftBlock = '';
 		if (can) {
-			draftBlock = '<div class="mc-draft" hidden><div class="mc-draft-lbl">Antwortvorschlag ' +
-				'(zum Kopieren – wird nicht automatisch gesendet):</div>' +
-				'<pre class="draft-text">' + self.esc(draft) + '</pre>' +
-				'<button class="copybtn" type="button">📋 Kopieren</button></div>';
+			var inner = '';
+			if (preview) {
+				inner += '<div class="mc-draft-lbl">Vorschau:</div>' +
+					'<pre class="preview-text">' + self.esc(preview) + '</pre>';
+			}
+			if (draft) {
+				inner += '<div class="mc-draft-lbl">Antwortvorschlag ' +
+					'(zum Kopieren – wird nicht automatisch gesendet):</div>' +
+					'<pre class="draft-text">' + self.esc(draft) + '</pre>' +
+					'<button class="copybtn" type="button">📋 Kopieren</button>';
+			}
+			draftBlock = '<div class="mc-draft" hidden>' + inner + '</div>';
 		}
 		return '<div class="mailcard' + (can ? ' has-draft' : '') + '" data-mb="' + self.esc(i.mailbox) + '" ' +
 			'data-cat="' + (rel ? 'relevant' : 'info') + '" data-prio="' + prio + '" data-mid="' + self.esc(mid) + '" ' +
@@ -787,6 +809,7 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 
 	var profitMtd = fc.mtd - costsTotal;
 	var profitForecast = fc.forecast - costsTotal;
+	var carry = (m.profit_history && m.profit_history.carry_forward) || 0;
 
 	var tiles =
 		'<div class="tiles">' +
@@ -802,6 +825,10 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 		'<div class="v" style="color:' + (profitForecast >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
 		(profitForecast >= 0 ? '+' : '−') + self.eur(Math.abs(profitForecast)) + '</div>' +
 		'<div class="m">nach Abzug Gesamtkosten ' + self.eur(costsTotal) + '</div></div>' +
+		'<div class="tile"><p class="k">Vortrag ' + self.esc((m.as_of || '').slice(0, 4)) + '</p>' +
+		'<div class="v" style="color:' + (carry >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
+		self.eur(carry) + '</div>' +
+		'<div class="m">kumulierter Gewinn/Verlust der abgeschlossenen Monate</div></div>' +
 		'</div>';
 
 	var verdictText = profitMtd >= 0
@@ -967,16 +994,21 @@ PCBBoard.prototype.billingGroupHtml = function (title, rows, total) {
 
 PCBBoard.prototype.billingTabHtml = function (m) {
 	var b = m.billing;
+	function sumNet(rows) {
+		return (rows || []).reduce(function (acc, r) { return acc + (r.net_open || 0); }, 0);
+	}
 	var ready = '<section class="card">' +
 		this.billingGroupHtml('🧾 Jetzt abrechnen (Paket zugestellt) · ' + b.ready_count, b.ready, m.pipeline.ready_net) +
 		'</section>';
 	var transit = '<section class="card">' +
-		this.billingGroupHtml('⏳ Unterwegs – nach Zustellung abrechnen · ' + b.in_transit.length, b.in_transit) +
+		this.billingGroupHtml('⏳ Unterwegs – nach Zustellung abrechnen · ' + b.in_transit.length,
+			b.in_transit, b.in_transit.length ? m.pipeline.in_transit_net : null) +
 		'</section>';
 	var extra = '';
 	if (b.stale && b.stale.length) {
 		extra = '<section class="card">' +
-			this.billingGroupHtml('⚠️ Alte offene Lieferscheine (>60 Tage) · ' + b.stale.length, b.stale) +
+			this.billingGroupHtml('⚠️ Alte offene Lieferscheine (>60 Tage) · ' + b.stale.length,
+				b.stale, sumNet(b.stale)) +
 			'</section>';
 	}
 	return ready + transit + extra;
@@ -1067,7 +1099,9 @@ var PCB_BOARD_CSS =
 	'.mc-assign-btn:hover{border-color:var(--brand-teal);color:var(--brand-teal)}' +
 	'.mc-chev{position:absolute;right:12px;color:var(--muted);transition:transform .15s}' +
 	'.mailcard.open .mc-chev{transform:rotate(180deg)}' +
-	'.mc-draft{padding:0 12px 12px}.mc-draft-lbl{font-size:.78rem;color:var(--muted);margin:2px 0 6px}' +
+	'.mc-draft{padding:0 12px 12px}.mc-draft-lbl{font-size:.78rem;color:var(--muted);margin:8px 0 6px}' +
+	'.preview-text{white-space:pre-wrap;background:var(--surface-1);border:1px dashed var(--border);border-radius:8px;' +
+	'padding:10px;font-size:.85rem;color:var(--text-secondary);max-height:180px;overflow-y:auto;margin:0}' +
 	'.draft-text{white-space:pre-wrap;background:var(--surface-1);border:1px solid var(--border);border-radius:8px;' +
 	'padding:12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.83rem;margin:0 0 8px;overflow-x:auto}' +
 	'.copybtn{border:1px solid var(--brand-teal);background:transparent;color:var(--brand-teal);border-radius:8px;' +

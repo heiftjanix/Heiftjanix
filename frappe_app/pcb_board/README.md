@@ -156,9 +156,18 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
   bzw. Netto-Einkaufswert im laufenden Monat, mit Anteils-Spalte
   (Klumpenrisiko/Lieferantenabhängigkeit).
 - **Deckungsbeitrag (Kosten):** Für die Top-Umsatzprodukte des Monats wird der
-  Wareneinsatz als verkaufte Menge × letzter Einkaufspreis (`Item.last_purchase_rate`)
-  geschätzt und als DB/DB % ausgewiesen. Artikel ohne hinterlegten Einkaufspreis
-  (Eigenfertigung/Dienstleistung) zeigen bewusst „—" statt einer 100-%-Marge.
+  Wareneinsatz als verkaufte Menge × Stückkosten geschätzt: zuerst letzter
+  Einkaufspreis (`Item.last_purchase_rate`, Kennzeichen „EK"), sonst der Wert
+  der aktiven Standard-Stückliste je Einheit (BOM, Kennzeichen „SL"). Fehlt
+  beides, zeigt die Zeile bewusst „—" statt einer 100-%-Marge.
+- **Mail-Vorschau:** Jede Mail-Karte lässt sich aufklappen und zeigt die
+  Textvorschau der Mail (Graph `bodyPreview`); bei relevanten Mails steht der
+  Antwortvorschlag mit Kopieren-Button direkt darunter.
+- **Monats-Ranking:** Die Gewinn/Verlust-Tabelle hat eine Rang-Spalte nach
+  bestem Umsatz-zu-Kosten-Verhältnis (🥇🥈🥉, mit Faktor z. B. „5,56×").
+- Der „Vortrag" erscheint zusätzlich als Kachel im Tab „Umsatz"; die
+  Abrechnungstabellen (auch „Unterwegs" und „Alte Lieferscheine") zeigen
+  jeweils eine Summenzeile.
 
 ## Grenzen
 

@@ -130,14 +130,13 @@ def _fetch_erpnext(config: dict) -> dict:
         ignore_permissions=True,
     )
 
-    # Vorjahresvergleich: Jahresanfang Vorjahr bis Ende des gleichen Monats —
-    # deckt sowohl den Monatsvergleich als auch den Jahresumsatz-Vergleich ab.
+    # Vorjahresvergleich: das KOMPLETTE Vorjahr — deckt Monatsvergleich,
+    # Jahresumsatz-Vergleich und Gewinn/Verlust 2025 ab.
     py = today.year - 1
-    py_next = date(py + 1, 1, 1) if today.month == 12 else date(py, today.month + 1, 1)
     prev_year_invoices = frappe.get_all(
         "Sales Invoice",
         filters=[["posting_date", ">=", date(py, 1, 1).isoformat()],
-                 ["posting_date", "<", py_next.isoformat()],
+                 ["posting_date", "<", date(today.year, 1, 1).isoformat()],
                  ["docstatus", "=", 1]],
         fields=["name", "base_net_total", "posting_date"],
         limit_page_length=0,
@@ -174,9 +173,11 @@ def _fetch_erpnext(config: dict) -> dict:
         })
 
     # Kosten: Wareneingänge (Purchase Receipt) — Netto-Basiswert, gebucht.
+    # Ab Jahresanfang VORJAHR, damit auch der Gewinn/Verlust 2025 (Kachel im
+    # Umsatz-Tab) berechnet werden kann.
     purchase_receipts = frappe.get_all(
         "Purchase Receipt",
-        filters=[["posting_date", ">=", cutoff], ["docstatus", "=", 1]],
+        filters=[["posting_date", ">=", date(py, 1, 1).isoformat()], ["docstatus", "=", 1]],
         fields=["name", "supplier", "supplier_name", "base_net_total", "posting_date"],
         limit_page_length=0,
         ignore_permissions=True,

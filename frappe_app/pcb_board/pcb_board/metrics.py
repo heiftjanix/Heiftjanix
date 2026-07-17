@@ -352,30 +352,47 @@ def product_margins(data: dict, limit: int = 5) -> list[dict]:
     return out
 
 
-def prev_year_month(data: dict, today: date) -> dict:
-    """Vorjahresvergleich (aus data["prev_year_invoices"], Jahresanfang Vorjahr
-    bis Ende des gleichen Monats): Gesamtsumme des gleichen Monats, Summe bis
-    zum gleichen Kalendertag (fairer Monatsvergleich) und Jahressumme bis
-    Monatsende (Vergleichsbasis für den laufenden Jahresumsatz)."""
+def prev_year_month(data: dict, config: dict, today: date) -> dict:
+    """Vorjahres-Kennzahlen (aus data["prev_year_invoices"], komplettes Vorjahr):
+    Gesamtsumme des gleichen Monats, Summe bis zum gleichen Kalendertag (fairer
+    Monatsvergleich), Jahressumme bis Ende des gleichen Monats (Vergleichsbasis
+    für den laufenden Jahresumsatz), komplette Jahressumme sowie Gewinn/Verlust
+    des Vorjahres (Umsatz − Wareneingänge Vorjahr − 12 × Fixkosten, gleiche
+    Konstanz-Annahme wie in profit_history)."""
     total = 0.0
     mtd_same_day = 0.0
     ytd_through_month_end = 0.0
+    full_year_total = 0.0
     for inv in data.get("prev_year_invoices", []) or []:
         d = _pdate(inv)
         if not d:
             continue
         amt = _net(inv)
-        ytd_through_month_end += amt
+        full_year_total += amt
+        if d.month <= today.month:
+            ytd_through_month_end += amt
         if d.month == today.month:
             total += amt
             if d.day <= today.day:
                 mtd_same_day += amt
+
+    prev_year = today.year - 1
+    goods = 0.0
+    for pr in data.get("purchase_receipts", []) or []:
+        d = _pdate(pr)
+        if d and d.year == prev_year:
+            goods += _net(pr)
+    fixed = float(config.get("personnel_costs_monthly") or 0) + float(config.get("rent_monthly") or 0)
+    full_year_profit = full_year_total - goods - 12 * fixed
+
     return {
-        "year": today.year - 1,
+        "year": prev_year,
         "month": today.month,
         "total": round(total, 2),
         "mtd_same_day": round(mtd_same_day, 2),
         "ytd_through_month_end": round(ytd_through_month_end, 2),
+        "full_year_total": round(full_year_total, 2),
+        "full_year_profit": round(full_year_profit, 2),
     }
 
 
@@ -578,7 +595,7 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
         "top_customers": top_customers(data, today),
         "top_suppliers": top_suppliers(data, today),
         "product_margins": product_margins(data),
-        "prev_year": prev_year_month(data, today),
+        "prev_year": prev_year_month(data, config, today),
         # Umsatz laufendes Jahr (Jahresanfang bis heute) — Gegenstück zu
         # prev_year.ytd_through_month_end.
         "ytd_revenue": round(sum(

@@ -239,19 +239,28 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertIsNone(c["margin"])
         self.assertIsNone(c["cost_source"])
 
-    def test_prev_year_month_total_same_day_and_ytd(self):
+    def test_prev_year_month_total_same_day_ytd_and_full_year(self):
         data = self._data()
         data["prev_year_invoices"] = [
             {"base_net_total": 9000, "posting_date": "2025-02-10"},
             {"base_net_total": 4000, "posting_date": "2025-07-03"},
             {"base_net_total": 2000, "posting_date": "2025-07-15"},
             {"base_net_total": 5000, "posting_date": "2025-07-28"},
+            {"base_net_total": 30000, "posting_date": "2025-11-20"},
         ]
-        py = m.build_metrics(data, CONFIG, date(2026, 7, 15))["prev_year"]
+        # Wareneingänge 2025 für den Vorjahres-Gewinn (Fixtures enthalten nur 2026er)
+        data["purchase_receipts"] = list(data["purchase_receipts"]) + [
+            {"name": "PR-PY", "base_net_total": 8000, "posting_date": "2025-05-10"},
+        ]
+        config = dict(CONFIG, personnel_costs_monthly=1000, rent_monthly=500)
+        py = m.build_metrics(data, config, date(2026, 7, 15))["prev_year"]
         self.assertEqual((py["year"], py["month"]), (2025, 7))
         self.assertAlmostEqual(py["total"], 11000, delta=0.01)          # nur Juli 2025
         self.assertAlmostEqual(py["mtd_same_day"], 6000, delta=0.01)    # Juli bis 15.
-        self.assertAlmostEqual(py["ytd_through_month_end"], 20000, delta=0.01)  # inkl. Februar
+        self.assertAlmostEqual(py["ytd_through_month_end"], 20000, delta=0.01)  # bis Ende Juli
+        self.assertAlmostEqual(py["full_year_total"], 50000, delta=0.01)        # inkl. November
+        # G/V 2025 = 50000 − 8000 Wareneingänge − 12 × 1500 fix = 24000
+        self.assertAlmostEqual(py["full_year_profit"], 24000, delta=0.01)
 
     def test_ytd_revenue_sums_current_year_only(self):
         metrics = m.build_metrics(self._data(), CONFIG, date(2026, 7, 15))

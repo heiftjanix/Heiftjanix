@@ -816,12 +816,6 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 		'August', 'September', 'Oktober', 'November', 'Dezember'];
 	var monthName = monthNames[(py.month || 1) - 1] || '';
 
-	// Zweite Wert-Reihe in den Kacheln: das Vorjahres-Äquivalent darunter.
-	// extra = optionaler Zusatz-HTML (z. B. Delta-Pfeil) hinter dem Wert.
-	function pyRow(label, valueHtml, extra) {
-		return '<div class="pyrow"><p class="k">' + self.esc(label) + '</p>' +
-			'<div class="v2">' + valueHtml + (extra || '') + '</div></div>';
-	}
 	function deltaArrow(delta, base, titleText) {
 		var pctv = Math.round((delta / base) * 100);
 		var up = delta >= 0;
@@ -831,52 +825,55 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 	}
 	var ytd = m.ytd_revenue || 0;
 	var pyLabelYear = py.year || '';
-	var pyMonthRow = '';
-	if (py.total) {
-		var monthDelta = py.mtd_same_day > 0
-			? deltaArrow(fc.mtd - py.mtd_same_day, py.mtd_same_day,
-				'Ist heute vs. ' + monthName + ' ' + pyLabelYear + ' bis zum selben Tag (' +
-				self.eur(py.mtd_same_day) + ')')
-			: '';
-		pyMonthRow = pyRow('Vorjahresmonat ' + monthName + ' ' + pyLabelYear,
-			self.eur(py.total), monthDelta);
-	}
-	var pyYearRow = py.full_year_total
-		? pyRow('Umsatz ' + pyLabelYear + ' gesamt', self.eur(py.full_year_total))
-		: '';
-	var pyYtdRow = py.ytd_through_month_end
-		? pyRow('Umsatz ' + pyLabelYear + ' bis Ende ' + monthName,
-			self.eur(py.ytd_through_month_end), deltaArrow(ytd - py.ytd_through_month_end, py.ytd_through_month_end))
-		: '';
-	var pyProfitRow = '';
-	if (py.full_year_total) {
-		var pyp = py.full_year_profit || 0;
-		pyProfitRow = pyRow('Gewinn/Verlust ' + pyLabelYear,
-			'<span style="color:' + (pyp >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
-			(pyp >= 0 ? '+' : '−') + self.eur(Math.abs(pyp)) + '</span>');
-	}
 
 	var tiles =
 		'<div class="tiles rev-tiles">' +
 		'<div class="tile hero"><p class="k">Ist-Umsatz (Netto)</p><div class="v">' + self.eur(fc.mtd) + '</div>' +
-		'<div class="m">' + fc.bd_elapsed + ' von ' + fc.bd_total + ' Werktagen</div>' + pyMonthRow + '</div>' +
+		'<div class="m">' + fc.bd_elapsed + ' von ' + fc.bd_total + ' Werktagen</div></div>' +
 		'<div class="tile"><p class="k">Prognose Monatsende</p><div class="v">' + self.eur(fc.forecast) + '</div>' +
-		'<div class="m"><span class="badge" style="background:' + st[0] + '">' + st[2] + ' ' + st[1] + ' · ' + self.pct(fc.attainment_pct) + '</span></div>' +
-		pyYearRow + '</div>' +
+		'<div class="m"><span class="badge" style="background:' + st[0] + '">' + st[2] + ' ' + st[1] + ' · ' + self.pct(fc.attainment_pct) + '</span></div></div>' +
 		'<div class="tile"><p class="k">Nötig je Restwerktag</p><div class="v">' + self.eur(fc.required_daily) + '</div>' +
 		'<div class="m">an ' + fc.bd_remaining + ' Werktagen</div></div>' +
 		'<div class="tile"><p class="k">Umsatz ' + self.esc(year) + ' gesamt</p><div class="v">' + self.eur(ytd) + '</div>' +
-		'<div class="m">Jahresanfang bis heute</div>' + pyYtdRow + '</div>' +
+		'<div class="m">Jahresanfang bis heute</div></div>' +
 		'<div class="tile"><p class="k">Gewinn/Verlust (Prognose)</p>' +
 		'<div class="v" style="color:' + (profitForecast >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
 		(profitForecast >= 0 ? '+' : '−') + self.eur(Math.abs(profitForecast)) + '</div>' +
-		'<div class="m">nach Abzug Gesamtkosten ' + self.eur(costsTotal) + '</div>' +
-		pyProfitRow + '</div>' +
+		'<div class="m">nach Abzug Gesamtkosten ' + self.eur(costsTotal) + '</div></div>' +
 		'<div class="tile"><p class="k">Vortrag ' + self.esc(year) + '</p>' +
 		'<div class="v" style="color:' + (carry >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
 		self.eur(carry) + '</div>' +
 		'<div class="m">kumulierter Gewinn/Verlust der abgeschlossenen Monate</div></div>' +
 		'</div>';
+
+	// Zweite Kachel-Reihe: Vorjahreswerte (nur wenn Vorjahresdaten vorhanden).
+	var pyTiles = '';
+	if (py.full_year_total || py.total) {
+		var monthDelta = py.mtd_same_day > 0
+			? deltaArrow(fc.mtd - py.mtd_same_day, py.mtd_same_day,
+				'Ist heute vs. ' + monthName + ' ' + pyLabelYear + ' bis zum selben Tag (' +
+				self.eur(py.mtd_same_day) + ')')
+			: '';
+		var pyp = py.full_year_profit || 0;
+		pyTiles =
+			'<div class="tiles rev-tiles py-tiles">' +
+			'<div class="tile"><p class="k">Vorjahresmonat ' + self.esc(monthName + ' ' + pyLabelYear) + '</p>' +
+			'<div class="v">' + self.eur(py.total) + '</div>' +
+			'<div class="m">kompletter Monat' + (monthDelta ? ' · Ist heute' + monthDelta : '') + '</div></div>' +
+			'<div class="tile"><p class="k">Umsatz ' + self.esc(String(pyLabelYear)) + ' gesamt</p>' +
+			'<div class="v">' + self.eur(py.full_year_total) + '</div>' +
+			'<div class="m">komplettes Vorjahr</div></div>' +
+			'<div class="tile"><p class="k">Umsatz ' + self.esc(String(pyLabelYear)) + ' bis Ende ' + self.esc(monthName) + '</p>' +
+			'<div class="v">' + self.eur(py.ytd_through_month_end) + '</div>' +
+			'<div class="m">' + self.esc(year) + ' bis heute: ' + self.eur(ytd) +
+			(py.ytd_through_month_end > 0 ? deltaArrow(ytd - py.ytd_through_month_end, py.ytd_through_month_end) : '') + '</div></div>' +
+			'<div class="tile"><p class="k">Gewinn/Verlust ' + self.esc(String(pyLabelYear)) + '</p>' +
+			'<div class="v" style="color:' + (pyp >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
+			(pyp >= 0 ? '+' : '−') + self.eur(Math.abs(pyp)) + '</div>' +
+			'<div class="m">Umsatz − Wareneingänge − 12× Fixkosten</div></div>' +
+			'</div>';
+	}
+	tiles += pyTiles;
 
 	var verdictText = profitMtd >= 0
 		? '✅ Kosten bereits gedeckt — aktuell ' + self.eur(profitMtd) + ' im Plus.'
@@ -1171,10 +1168,7 @@ var PCB_BOARD_CSS =
 	'.rev-tiles .tile.hero .v{font-size:2.4rem}' +
 	'.rev-tiles .tile:not(.hero) .v{font-size:1.35rem}' +
 	'.rev-tiles .tile:not(.hero) .k,.rev-tiles .tile:not(.hero) .m{font-size:.78rem}' +
-	'.tile .pyrow{margin-top:10px;padding-top:8px;border-top:1px dashed var(--border)}' +
-	'.tile .pyrow .k{margin:0 0 2px;font-size:.75rem}' +
-	'.tile .pyrow .v2{font-size:1.1rem;font-weight:650;color:var(--text-secondary)}' +
-	'.rev-tiles .tile.hero .pyrow .v2{font-size:1.35rem}' +
+	'.py-tiles{margin-top:12px}' +
 	'.meter-verdict{font-size:.86rem;margin-top:8px;font-weight:650}' +
 	'.cov-track{position:relative;display:flex;height:30px;border-radius:8px;overflow:hidden;background:var(--grid);gap:2px}' +
 	'.cov-track .seg{height:100%}.cov-target{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--text-primary)}' +

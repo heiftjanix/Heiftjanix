@@ -1,0 +1,163 @@
+{
+  "_hinweis": "Demo-Firma für DEMO_MODE — keine echten Kunden- oder Zugangsdaten.",
+  "departments": [
+    {
+      "name": "Sekretariat",
+      "description": "Posteingang, Termine und tägliche Zusammenfassungen.",
+      "icon": "📥",
+      "connectors": ["m365", "anthropic"],
+      "rules": [
+        {"pattern": "graph.microsoft.com", "note": "Microsoft Graph (Mails/Kalender)"},
+        {"pattern": "login.microsoftonline.com", "note": "Microsoft-Anmeldung"}
+      ],
+      "agents": [
+        {
+          "name": "Paula Post",
+          "role": "Posteingangs-Sortiererin",
+          "description": "Sortiert eingehende Mails nach Wichtigkeit und markiert Dringendes.",
+          "n8n_workflow_id": "demo-wf-1",
+          "active": 1
+        }
+      ]
+    },
+    {
+      "name": "Buchhaltung",
+      "description": "Rechnungen, Mahnwesen und ERP-Abgleich.",
+      "icon": "🧾",
+      "connectors": ["erpnext"],
+      "rules": [
+        {"pattern": "erp.example.com", "note": "Firmen-ERPNext"}
+      ],
+      "agents": [
+        {
+          "name": "Frieda Faktura",
+          "role": "Rechnungsprüferin",
+          "description": "Prüft täglich offene Rechnungen im ERPNext und meldet Auffälligkeiten.",
+          "n8n_workflow_id": "demo-wf-2",
+          "active": 0
+        }
+      ]
+    },
+    {
+      "name": "Versand",
+      "description": "Paketverfolgung und Lieferstatus.",
+      "icon": "📦",
+      "connectors": ["ups"],
+      "rules": [],
+      "agents": []
+    }
+  ],
+  "executions": {
+    "demo-wf-1": [
+      {"id": "1001", "status": "success", "startedAt": "2026-07-17T06:30:00.000Z", "stoppedAt": "2026-07-17T06:30:04.000Z"},
+      {"id": "1002", "status": "success", "startedAt": "2026-07-17T12:30:00.000Z", "stoppedAt": "2026-07-17T12:30:03.000Z"},
+      {"id": "1003", "status": "error", "startedAt": "2026-07-18T06:30:00.000Z", "stoppedAt": "2026-07-18T06:30:01.000Z"}
+    ],
+    "demo-wf-2": [
+      {"id": "2001", "status": "success", "startedAt": "2026-07-16T05:00:00.000Z", "stoppedAt": "2026-07-16T05:00:09.000Z"}
+    ]
+  },
+  "canned_chat": {
+    "question": "Gern! Damit ich den richtigen Mitarbeiter einstellen kann: Wie oft soll der Agent laufen (z. B. stündlich, täglich um 7 Uhr), und wohin soll das Ergebnis gehen — per E-Mail an dich oder nur ins Protokoll?",
+    "proposal": {
+      "reply": "Alles klar — hier ist mein Vorschlag: **Emil Eilig**, dein neuer E-Mail-Zusammenfasser. Er läuft werktags um 7 Uhr, holt die ungelesenen Mails aus dem Postfach über Microsoft Graph, lässt Claude eine kurze deutsche Zusammenfassung schreiben und schickt sie dir per E-Mail. Wenn dir der Entwurf gefällt, klicke auf „Übernehmen & deployen“.",
+      "agent_name": "Emil Eilig",
+      "agent_role": "E-Mail-Zusammenfasser",
+      "workflow": {
+        "name": "Emil Eilig — E-Mail-Zusammenfasser",
+        "nodes": [
+          {
+            "id": "trigger",
+            "name": "Werktags 7 Uhr",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1,
+            "position": [0, 0],
+            "parameters": {
+              "rule": {"interval": [{"field": "cronExpression", "expression": "0 7 * * 1-5"}]}
+            }
+          },
+          {
+            "id": "token",
+            "name": "Microsoft-Token holen",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [200, 0],
+            "parameters": {
+              "method": "POST",
+              "url": "=https://login.microsoftonline.com/{{$env.AZURE_TENANT_ID}}/oauth2/v2.0/token",
+              "sendBody": true,
+              "contentType": "form-urlencoded",
+              "bodyParameters": {
+                "parameters": [
+                  {"name": "grant_type", "value": "client_credentials"},
+                  {"name": "client_id", "value": "={{$env.AZURE_CLIENT_ID}}"},
+                  {"name": "client_secret", "value": "={{$env.AZURE_CLIENT_SECRET}}"},
+                  {"name": "scope", "value": "https://graph.microsoft.com/.default"}
+                ]
+              }
+            }
+          },
+          {
+            "id": "mails",
+            "name": "Ungelesene Mails holen",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [400, 0],
+            "parameters": {
+              "method": "GET",
+              "url": "https://graph.microsoft.com/v1.0/users/postfach@example.com/mailFolders/inbox/messages?$filter=isRead eq false&$top=25&$select=subject,from,bodyPreview",
+              "sendHeaders": true,
+              "headerParameters": {
+                "parameters": [
+                  {"name": "Authorization", "value": "=Bearer {{$json.access_token}}"}
+                ]
+              }
+            }
+          },
+          {
+            "id": "claude",
+            "name": "Claude-Zusammenfassung",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [600, 0],
+            "parameters": {
+              "method": "POST",
+              "url": "https://api.anthropic.com/v1/messages",
+              "sendHeaders": true,
+              "headerParameters": {
+                "parameters": [
+                  {"name": "x-api-key", "value": "={{$env.ANTHROPIC_API_KEY}}"},
+                  {"name": "anthropic-version", "value": "2023-06-01"},
+                  {"name": "content-type", "value": "application/json"}
+                ]
+              },
+              "sendBody": true,
+              "specifyBody": "json",
+              "jsonBody": "={{ JSON.stringify({model: 'claude-fable-5', max_tokens: 1000, messages: [{role: 'user', content: 'Fasse diese Mails kurz auf Deutsch zusammen: ' + JSON.stringify($json.value)}]}) }}"
+            }
+          },
+          {
+            "id": "send",
+            "name": "Zusammenfassung senden",
+            "type": "n8n-nodes-base.emailSend",
+            "typeVersion": 2,
+            "position": [800, 0],
+            "parameters": {
+              "fromEmail": "ai-systems@example.com",
+              "toEmail": "postfach@example.com",
+              "subject": "Morgen-Zusammenfassung deiner Mails",
+              "text": "={{$json.content[0].text}}"
+            }
+          }
+        ],
+        "connections": {
+          "Werktags 7 Uhr": {"main": [[{"node": "Microsoft-Token holen", "type": "main", "index": 0}]]},
+          "Microsoft-Token holen": {"main": [[{"node": "Ungelesene Mails holen", "type": "main", "index": 0}]]},
+          "Ungelesene Mails holen": {"main": [[{"node": "Claude-Zusammenfassung", "type": "main", "index": 0}]]},
+          "Claude-Zusammenfassung": {"main": [[{"node": "Zusammenfassung senden", "type": "main", "index": 0}]]}
+        },
+        "settings": {}
+      }
+    }
+  }
+}

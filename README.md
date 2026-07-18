@@ -1,5 +1,11 @@
 # Team-Board (der/die/das Sekretär/-in)
 
+> **Neu — [AI-Systems](ai_systems/README.md):** eine eigenständige, installierbare
+> Plattform (Web-App + Desktop-Wrapper) unter `ai_systems/`, mit der ihr per
+> Claude-Chat n8n-Agenten baut und wie eine **virtuelle Firma mit Abteilungen**
+> verwaltet — inkl. Konnektoren-Freigaben und Netzwerk-Zugriffsregeln.
+> Details in [`ai_systems/README.md`](ai_systems/README.md).
+
 Ein automatisiertes, **interaktives Team-Board**, das werktags laufend Outlook
 (mehrere Postfächer) und ERPNext auswertet:
 

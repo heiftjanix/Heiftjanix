@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Einstellungen</title>
+<style>
+  body{font:14px/1.5 system-ui;background:#1b232d;color:#e8edf2;margin:0;padding:20px}
+  label{display:block;margin-bottom:6px;color:#93a0ad}
+  input{width:100%;font:inherit;padding:8px 10px;border-radius:8px;border:1px solid #2a3542;
+    background:#12181f;color:#e8edf2;box-sizing:border-box}
+  button{margin-top:14px;font:inherit;padding:8px 18px;border-radius:8px;border:0;
+    background:#0e7c86;color:#fff;cursor:pointer}
+  .ok{color:#2e9e5b;margin-left:10px}
+</style>
+</head>
+<body>
+  <label for="url">Server-URL der AI-Systems-Web-App</label>
+  <input id="url" type="text" placeholder="http://localhost:8010">
+  <button id="save">Speichern</button><span class="ok" id="saved"></span>
+  <script>
+    window.aiSystems.getSettings().then(s => { document.getElementById('url').value = s.serverUrl; });
+    document.getElementById('save').addEventListener('click', async () => {
+      await window.aiSystems.setSettings({ serverUrl: document.getElementById('url').value.trim() });
+      document.getElementById('saved').textContent = 'Gespeichert ✓';
+      setTimeout(() => window.close(), 600);
+    });
+  </script>
+</body>
+</html>

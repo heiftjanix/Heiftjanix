@@ -10,6 +10,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# AI-Systems Desktop-Build (Electron)
+ai_systems/electron/node_modules/
+ai_systems/electron/dist/
+
 # Generated output
 dashboard.html
 briefing_*.md

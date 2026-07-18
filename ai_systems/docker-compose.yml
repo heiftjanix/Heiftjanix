@@ -1,0 +1,19 @@
+# AI-Systems per Docker Compose (aus diesem Ordner starten):
+#   docker compose up -d --build
+# Konfiguration kommt aus ../.env (siehe ../.env.example, Abschnitt AI-Systems).
+# n8n läuft NICHT mit — es wird eine bestehende Instanz über N8N_URL angebunden.
+services:
+  ai-systems:
+    build:
+      context: ..
+      dockerfile: ai_systems/Dockerfile
+    ports:
+      - "8010:8010"
+    env_file:
+      - ../.env
+    volumes:
+      - ai_systems_state:/data
+    restart: unless-stopped
+
+volumes:
+  ai_systems_state: {}

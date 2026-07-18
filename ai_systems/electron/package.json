@@ -1,0 +1,29 @@
+{
+  "name": "ai-systems-desktop",
+  "productName": "AI-Systems",
+  "version": "1.0.0",
+  "description": "AI-Systems Desktop — Virtuelle Firma für n8n-Agenten mit Claude",
+  "main": "main.js",
+  "author": "PCB Systems",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.0"
+  },
+  "build": {
+    "appId": "com.pcb-systems.ai-systems",
+    "productName": "AI-Systems",
+    "files": ["main.js", "preload.js", "settings.html"],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "language": "1031"
+    }
+  }
+}

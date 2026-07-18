@@ -75,6 +75,17 @@ npm start        # direkt starten (Entwicklung)
 npm run dist     # Windows-Installer (NSIS) nach electron/dist/ bauen
 ```
 
+Ein fertig gebauter Installer liegt als
+[`electron/dist/AI-Systems Setup 1.0.0.exe`](electron/dist/) im Repo
+(unsigniert; Windows SmartScreen fragt beim ersten Start nach — „Trotzdem
+ausführen"). Zum Selberbauen reicht auf Windows `npm run dist`; auf Linux wird
+zusätzlich Wine benötigt (`apt install wine wine32:i386`), und hinter einer
+Firewall helfen die Mirror-Variablen
+`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` und
+`ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/`.
+Die exe trägt das Standard-Electron-Icon (`signAndEditExecutable: false`,
+damit der Cross-Build ohne Signatur-Schritt läuft).
+
 ## Wie die Zugriffsverwaltung funktioniert (und ihre Grenzen)
 
 Jede Abteilung hat eine **Host-Allowlist** aus drei Quellen:

@@ -6,9 +6,10 @@
   "main": "main.js",
   "author": "PCB Systems",
   "license": "UNLICENSED",
+  "repository": "https://github.com/heiftjanix/Heiftjanix",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win --publish never"
   },
   "devDependencies": {
     "electron": "^31.0.0",
@@ -19,7 +20,8 @@
     "productName": "AI-Systems",
     "files": ["main.js", "preload.js", "settings.html"],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": true,

@@ -26,26 +26,33 @@ function saveSettings(settings) {
   fs.writeFileSync(configPath(), JSON.stringify(settings, null, 2), 'utf8');
 }
 
-function errorPage(url) {
-  const html = `<!doctype html><html lang="de"><meta charset="utf-8">
-    <body style="font-family:system-ui;background:#12181f;color:#e8edf2;
-      display:flex;align-items:center;justify-content:center;height:95vh;text-align:center">
-    <div><h2>Server nicht erreichbar</h2>
-    <p>AI-Systems unter <code>${url}</code> antwortet nicht.<br>
-    Bitte die Server-URL im Menü unter „Datei → Einstellungen…" prüfen.</p></div></body></html>`;
-  return 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
+function showLoader(win) {
+  if (!win || win.isDestroyed()) return;
+  // setImmediate: nie synchron aus einem Navigations-Event heraus neu laden —
+  // das ließ Electron segfaulten (App schloss sich beim Verbindungsversuch).
+  setImmediate(() => {
+    if (win.isDestroyed()) return;
+    win.loadFile(path.join(__dirname, 'loader.html'),
+      { query: { url: loadSettings().serverUrl } }).catch(() => {});
+  });
 }
 
 function createMainWindow() {
-  const { serverUrl } = loadSettings();
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
     title: 'AI-Systems',
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
-  mainWindow.loadURL(serverUrl).catch(() => mainWindow.loadURL(errorPage(serverUrl)));
-  mainWindow.webContents.on('did-fail-load', () => mainWindow.loadURL(errorPage(serverUrl)));
+  // Start IMMER über die lokale Loader-Seite: sie pingt den Server per fetch()
+  // und leitet erst bei Erfolg weiter. So schlägt die Fenster-Navigation im
+  // Normalfall nie fehl. Falls doch (Server stirbt später), zurück zum Loader —
+  // errorCode -3 (ERR_ABORTED) sind eigene Navigationen und werden ignoriert.
+  mainWindow.webContents.on('did-fail-load', (_e, errorCode, _desc, _url, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3) return;
+    showLoader(mainWindow);
+  });
+  showLoader(mainWindow);
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
@@ -68,13 +75,15 @@ function openSettings() {
   settingsWindow.on('closed', () => { settingsWindow = null; });
 }
 
+function normalizeUrl(raw) {
+  const url = String(raw || '').trim() || DEFAULT_URL;
+  return /^https?:\/\//i.test(url) ? url : 'http://' + url;
+}
+
 ipcMain.handle('settings:get', () => loadSettings());
 ipcMain.handle('settings:set', (_event, settings) => {
-  saveSettings({ serverUrl: String(settings.serverUrl || DEFAULT_URL) });
-  if (mainWindow) {
-    const { serverUrl } = loadSettings();
-    mainWindow.loadURL(serverUrl).catch(() => mainWindow.loadURL(errorPage(serverUrl)));
-  }
+  saveSettings({ serverUrl: normalizeUrl(settings.serverUrl) });
+  showLoader(mainWindow);
   return loadSettings();
 });
 

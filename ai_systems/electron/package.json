@@ -1,7 +1,7 @@
 {
   "name": "ai-systems-desktop",
   "productName": "AI-Systems",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AI-Systems Desktop — Virtuelle Firma für n8n-Agenten mit Claude",
   "main": "main.js",
   "author": "PCB Systems",
@@ -18,7 +18,7 @@
   "build": {
     "appId": "com.pcb-systems.ai-systems",
     "productName": "AI-Systems",
-    "files": ["main.js", "preload.js", "settings.html"],
+    "files": ["main.js", "preload.js", "settings.html", "loader.html"],
     "win": {
       "target": "nsis",
       "signAndEditExecutable": false

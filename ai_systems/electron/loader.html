@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>AI-Systems — Verbinden…</title>
+<style>
+  body{font:15px/1.6 system-ui;background:#12181f;color:#e8edf2;margin:0;
+    display:flex;align-items:center;justify-content:center;height:100vh;text-align:center}
+  code{background:#1b232d;border:1px solid #2a3542;border-radius:6px;padding:2px 8px}
+  button{font:inherit;margin-top:16px;padding:9px 20px;border-radius:8px;border:0;
+    background:#0e7c86;color:#fff;cursor:pointer}
+  .hint{color:#93a0ad;font-size:13.5px;margin-top:14px}
+  .spin{width:34px;height:34px;margin:0 auto 14px;border-radius:50%;
+    border:4px solid #2a3542;border-top-color:#0e7c86;animation:r 1s linear infinite}
+  @keyframes r{to{transform:rotate(360deg)}}
+  #err{display:none}
+</style>
+</head>
+<body>
+  <div>
+    <div class="spin"></div>
+    <h2 id="state">Verbinde mit AI-Systems …</h2>
+    <p>Server: <code id="target">…</code></p>
+    <div id="err">
+      <p>Der Server antwortet noch nicht — neuer Versuch alle 5 Sekunden.</p>
+      <button id="retry">Jetzt erneut versuchen</button>
+      <p class="hint">Die Server-URL änderst du im Menü unter „Datei → Einstellungen…".<br>
+      Zum Ausprobieren ohne Zugangsdaten den Server im Demo-Modus starten:<br>
+      <code>DEMO_MODE=1 uvicorn ai_systems.app:app --port 8010</code></p>
+    </div>
+  </div>
+  <script>
+    // Diese Seite ist die einzige Start-Navigation der App. Sie pingt den
+    // Server per fetch() und leitet erst bei Erfolg weiter — so gibt es keine
+    // fehlschlagende Fenster-Navigation (die ließ Electron abstürzen).
+    const target = new URLSearchParams(location.search).get('url') || 'http://localhost:8010';
+    document.getElementById('target').textContent = target;
+
+    async function tryConnect() {
+      try {
+        await fetch(target.replace(/\/$/, '') + '/healthz',
+                    { mode: 'no-cors', cache: 'no-store' });
+        document.getElementById('state').textContent = 'Verbunden — lade Oberfläche …';
+        location.replace(target);
+      } catch (e) {
+        document.getElementById('state').textContent = 'Server nicht erreichbar';
+        document.getElementById('err').style.display = 'block';
+      }
+    }
+    document.getElementById('retry').addEventListener('click', tryConnect);
+    tryConnect();
+    setInterval(tryConnect, 5000);
+  </script>
+</body>
+</html>

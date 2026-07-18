@@ -6,21 +6,39 @@
 <style>
   body{font:14px/1.5 system-ui;background:#1b232d;color:#e8edf2;margin:0;padding:20px}
   label{display:block;margin-bottom:6px;color:#93a0ad}
-  input{width:100%;font:inherit;padding:8px 10px;border-radius:8px;border:1px solid #2a3542;
+  .mode{display:flex;align-items:center;gap:8px;color:#e8edf2;margin-bottom:16px;cursor:pointer}
+  input[type=text]{width:100%;font:inherit;padding:8px 10px;border-radius:8px;border:1px solid #2a3542;
     background:#12181f;color:#e8edf2;box-sizing:border-box}
-  button{margin-top:14px;font:inherit;padding:8px 18px;border-radius:8px;border:0;
+  input[type=text]:disabled{opacity:.45}
+  button{margin-top:16px;font:inherit;padding:8px 18px;border-radius:8px;border:0;
     background:#0e7c86;color:#fff;cursor:pointer}
   .ok{color:#2e9e5b;margin-left:10px}
+  .hint{color:#93a0ad;font-size:12.5px;margin-top:12px}
 </style>
 </head>
 <body>
-  <label for="url">Server-URL der AI-Systems-Web-App</label>
-  <input id="url" type="text" placeholder="http://localhost:8010">
+  <label class="mode"><input id="embedded" type="checkbox" checked>
+    Eingebauten Server verwenden (empfohlen — startet automatisch mit)</label>
+  <label for="url">…oder eigener Server (URL):</label>
+  <input id="url" type="text" placeholder="http://server-im-firmennetz:8010" disabled>
   <button id="save">Speichern</button><span class="ok" id="saved"></span>
+  <p class="hint">Zugangsdaten für den eingebauten Server (n8n, Claude, ERPNext …)
+  pflegst du über „Datei → Server-Konfiguration (.env) öffnen".
+  Ohne Einträge läuft er im Demo-Modus.</p>
   <script>
-    window.aiSystems.getSettings().then(s => { document.getElementById('url').value = s.serverUrl; });
+    const cb = document.getElementById('embedded');
+    const url = document.getElementById('url');
+    cb.addEventListener('change', () => { url.disabled = cb.checked; });
+    window.aiSystems.getSettings().then(s => {
+      cb.checked = s.useEmbedded !== false;
+      url.value = s.serverUrl || '';
+      url.disabled = cb.checked;
+    });
     document.getElementById('save').addEventListener('click', async () => {
-      await window.aiSystems.setSettings({ serverUrl: document.getElementById('url').value.trim() });
+      await window.aiSystems.setSettings({
+        useEmbedded: cb.checked,
+        serverUrl: url.value.trim(),
+      });
       document.getElementById('saved').textContent = 'Gespeichert ✓';
       setTimeout(() => window.close(), 600);
     });

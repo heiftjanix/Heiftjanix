@@ -61,26 +61,38 @@ und Versand. „＋ Mitarbeiter einstellen" startet den Chat (gecannte Antworten
    Die SQLite-Datenbank (Abteilungen, Agenten, Regeln, Chats) liegt im Volume
    `ai_systems_state` bzw. lokal unter `state/ai_systems.db` (gitignored).
 
-## Desktop-App (Electron, Windows-Installer)
+## Desktop-App (Electron, Windows-Installer) — alles mit einem Doppelklick
 
-Unter `ai_systems/electron/` liegt ein bewusst dünner Desktop-Wrapper: Er lädt
-die Web-App von eurem Server (Standard `http://localhost:8010`; änderbar unter
-„Datei → Einstellungen…") und liefert eine Fehlerseite, wenn der Server nicht
-erreichbar ist.
+Unter `ai_systems/electron/` liegt die Desktop-App. Seit v1.1.0 bringt sie den
+**Server gleich mit**: ein eingebettetes Python (`resources/runtime/`) startet
+beim Öffnen automatisch den AI-Systems-Server auf `127.0.0.1:8010` — ohne
+Zugangsdaten im Demo-Modus. Ein Doppelklick startet also wirklich alles;
+beim Beenden der App stoppt der Server wieder.
+
+- **Echter Betrieb:** „Datei → Server-Konfiguration (.env) öffnen" — dort
+  `N8N_URL`, `ANTHROPIC_API_KEY` usw. als `KEY=VALUE` eintragen (Vorlage wird
+  automatisch angelegt), dann App neu starten.
+- **Eigener/zentraler Server statt eingebautem:** „Datei → Einstellungen…" —
+  Häkchen „Eingebauten Server verwenden" abwählen und die URL eintragen.
+- **Fehlersuche:** „Datei → Server-Protokoll öffnen" zeigt das Log des
+  eingebetteten Servers; die Datenbank liegt im Benutzerprofil
+  (`%APPDATA%/AI-Systems/ai_systems.db`).
 
 ```bash
 cd ai_systems/electron
 npm install
-npm start        # direkt starten (Entwicklung)
-npm run dist     # Windows-Installer (NSIS) nach electron/dist/ bauen
+npm start        # direkt starten (Entwicklung; nutzt System-python3)
+npm run dist     # baut runtime/ (build_runtime.sh) + Windows-Installer (NSIS)
 ```
 
 Ein fertig gebauter Installer liegt als
-[`electron/dist/AI-Systems Setup 1.0.1.exe`](electron/dist/) im Repo
-(unsigniert; Windows SmartScreen fragt beim ersten Start nach — „Trotzdem
-ausführen"). Zum Selberbauen reicht auf Windows `npm run dist`; auf Linux wird
-zusätzlich Wine benötigt (`apt install wine wine32:i386`), und hinter einer
-Firewall helfen die Mirror-Variablen
+[`electron/dist/AI-Systems Setup 1.1.0.exe`](electron/dist/) im Repo
+(unsigniert; Windows SmartScreen fragt beim ersten Start nach — „Weitere
+Informationen" → „Trotzdem ausführen"). `build_runtime.sh` lädt das offizielle
+Embeddable-CPython von python.org und die Abhängigkeiten als win_amd64-Wheels
+von PyPI. Zum Selberbauen reicht auf Windows (mit Git-Bash/WSL) `npm run dist`;
+auf Linux wird zusätzlich Wine benötigt (`apt install wine wine32:i386`), und
+hinter einer Firewall helfen die Mirror-Variablen
 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` und
 `ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/`.
 Die exe trägt das Standard-Electron-Icon (`signAndEditExecutable: false`,

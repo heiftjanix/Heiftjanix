@@ -1,7 +1,7 @@
 {
   "name": "ai-systems-desktop",
   "productName": "AI-Systems",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "AI-Systems Desktop — Virtuelle Firma für n8n-Agenten mit Claude",
   "main": "main.js",
   "author": "PCB Systems",
@@ -9,7 +9,8 @@
   "repository": "https://github.com/heiftjanix/Heiftjanix",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win --publish never"
+    "runtime": "bash build_runtime.sh",
+    "dist": "bash build_runtime.sh && electron-builder --win --publish never"
   },
   "devDependencies": {
     "electron": "^31.0.0",
@@ -19,6 +20,7 @@
     "appId": "com.pcb-systems.ai-systems",
     "productName": "AI-Systems",
     "files": ["main.js", "preload.js", "settings.html", "loader.html"],
+    "extraResources": [{"from": "runtime", "to": "runtime"}],
     "win": {
       "target": "nsis",
       "signAndEditExecutable": false

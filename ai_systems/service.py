@@ -76,6 +76,39 @@ def validate_workflow(conn: sqlite3.Connection, workflow: dict, dep_id: int,
     return problems
 
 
+def runs_summary(agent: dict, limit: int = 5) -> str | None:
+    """Kurze deutsche Zusammenfassung der letzten Läufe eines Agenten — inkl.
+    Fehlertext des jüngsten Fehllaufs. Fließt als Feedback in den Chat-Kontext,
+    damit der Mitarbeiter am Problem weiterentwickelt werden kann."""
+    if not agent.get("n8n_workflow_id"):
+        return None
+    client = n8n_client.get_client()
+    try:
+        runs = client.executions(agent["n8n_workflow_id"], limit=limit)
+    except n8n_client.N8nError:
+        return None
+    if not runs:
+        return "Noch keine Ausführungen."
+    lines = []
+    for run in runs:
+        lines.append(f"- {run.get('startedAt', '?')}: {run.get('status', '?')}")
+    newest_error = next((r for r in runs if r.get("status") == "error"), None)
+    if newest_error:
+        detail = newest_error.get("error")
+        if not detail:
+            try:
+                full = client.get_execution(str(newest_error.get("id")))
+                data = full.get("data") or {}
+                result = (data.get("resultData") or {}) if isinstance(data, dict) else {}
+                err = result.get("error") or {}
+                detail = err.get("message") or full.get("error")
+            except n8n_client.N8nError:
+                detail = None
+        if detail:
+            lines.append(f"Fehlerdetails des letzten Fehllaufs: {str(detail)[:500]}")
+    return "\n".join(lines)
+
+
 def _current_workflow_json(session: dict, conn: sqlite3.Connection) -> str | None:
     """Beim Bearbeiten eines bestehenden Agenten: dessen Workflow aus n8n holen."""
     if not session.get("agent_id"):
@@ -108,10 +141,16 @@ def chat_step(conn: sqlite3.Connection, session_id: int, text: str) -> dict:
     allowed = db.allowed_connectors(conn, dep["id"])
     patterns = effective_patterns(conn, dep["id"], session.get("agent_id"))
     current_json = _current_workflow_json(session, conn)
+    runs = None
+    if session.get("agent_id"):
+        agent = db.get_agent(conn, session["agent_id"])
+        if agent:
+            runs = runs_summary(agent)
 
     _set_status("working")
     try:
-        proposal = claude_gen.generate(dep["name"], allowed, patterns, history, current_json)
+        proposal = claude_gen.generate(dep["name"], allowed, patterns, history,
+                                       current_json, runs)
         problems: list[dict] = []
         if proposal.workflow_json:
             problems = _check_proposal_json(conn, proposal.workflow_json, dep["id"],
@@ -126,7 +165,7 @@ def chat_step(conn: sqlite3.Connection, session_id: int, text: str) -> dict:
                     {"role": "user", "content": feedback},
                 ]
                 retry = claude_gen.generate(dep["name"], allowed, patterns,
-                                            retry_history, current_json)
+                                            retry_history, current_json, runs)
                 if retry.workflow_json:
                     retry_problems = _check_proposal_json(conn, retry.workflow_json, dep["id"],
                                                           session.get("agent_id"))
@@ -192,6 +231,42 @@ def deploy_proposal(conn: sqlite3.Connection, session_id: int) -> dict:
         description="",
         n8n_workflow_id=str(created.get("id")),
     )
+
+
+def unassigned_workflows(conn: sqlite3.Connection) -> list[dict]:
+    """n8n-Workflows, die noch keinem Mitarbeiter zugeordnet sind —
+    Kandidaten für „Mitarbeiter übernehmen"."""
+    linked = {a["n8n_workflow_id"] for a in db.list_agents(conn) if a.get("n8n_workflow_id")}
+    out = []
+    for wf in n8n_client.get_client().list_workflows():
+        if str(wf.get("id")) not in linked:
+            out.append({"id": str(wf.get("id")), "name": wf.get("name", "?"),
+                        "active": bool(wf.get("active"))})
+    return sorted(out, key=lambda w: w["name"].lower())
+
+
+def import_workflow(conn: sqlite3.Connection, department_id: int, n8n_workflow_id: str,
+                    name: str, role: str = "") -> dict:
+    """Bestehenden n8n-Workflow nachträglich als Mitarbeiter einbinden.
+
+    Der Workflow bleibt in n8n unverändert (nur der Name wird angeglichen,
+    damit beide Seiten zusammenpassen); ab jetzt ist er über AI-Systems
+    verwaltbar und per Chat weiterentwickelbar."""
+    client = n8n_client.get_client()
+    wf = client.get_workflow(n8n_workflow_id)  # wirft N8nError, wenn unbekannt
+    for agent in db.list_agents(conn):
+        if agent.get("n8n_workflow_id") == str(n8n_workflow_id):
+            raise DeployError(f"Dieser Workflow ist bereits Mitarbeiter '{agent['name']}'.")
+    agent = db.create_agent(conn, department_id, name=name, role=role,
+                            description="Übernommen aus bestehendem n8n-Workflow "
+                                        f"'{wf.get('name', n8n_workflow_id)}'.",
+                            n8n_workflow_id=str(n8n_workflow_id))
+    if name and name != wf.get("name"):
+        try:
+            client.rename_workflow(str(n8n_workflow_id), name)
+        except n8n_client.N8nError:
+            pass  # Name in n8n ist kosmetisch — Import trotzdem erfolgreich
+    return db.update_agent(conn, agent["id"], active=1 if wf.get("active") else 0)  # type: ignore[return-value]
 
 
 def agent_with_status(conn: sqlite3.Connection, agent: dict, limit: int = 10) -> dict:

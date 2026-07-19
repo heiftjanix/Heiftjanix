@@ -30,6 +30,34 @@ class PromptTest(unittest.TestCase):
         self.assertIn('{"name": "Alt"}', ctx)
 
 
+class RunsFeedbackTest(unittest.TestCase):
+    def test_runs_summary_lands_in_context(self):
+        ctx = prompts.department_context("Sekretariat", [], [],
+                                         runs_summary="- 2026-07-18: error\nFehlerdetails: 401")
+        self.assertIn("LETZTE LÄUFE", ctx)
+        self.assertIn("401", ctx)
+
+    def test_history_is_capped_and_starts_with_user(self):
+        fake_resp = mock.Mock()
+        fake_resp.stop_reason = "end_turn"
+        fake_resp.parsed_output = claude_gen.AgentProposal(reply="ok")
+        fake_client = mock.Mock()
+        fake_client.messages.parse.return_value = fake_resp
+        history = []
+        for i in range(40):  # 80 Nachrichten, abwechselnd
+            history.append({"role": "user", "content": f"u{i}"})
+            history.append({"role": "assistant", "content": f"a{i}"})
+        env = {"ANTHROPIC_API_KEY": "sk-test", "N8N_URL": "https://n8n.example.com",
+               "DEMO_MODE": "0"}
+        with mock.patch.dict("os.environ", env, clear=False), \
+             mock.patch("anthropic.Anthropic", return_value=fake_client):
+            claude_gen.generate("X", [], [], history)
+        sent = fake_client.messages.parse.call_args.kwargs["messages"]
+        self.assertLessEqual(len(sent), claude_gen.MAX_HISTORY_MESSAGES)
+        self.assertEqual(sent[0]["role"], "user")
+        self.assertEqual(sent[-1]["content"], "a39")
+
+
 class DemoFallbackTest(unittest.TestCase):
     def test_first_message_asks_question(self):
         with mock.patch.dict("os.environ", {"DEMO_MODE": "1"}, clear=False):

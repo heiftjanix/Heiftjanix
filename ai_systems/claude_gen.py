@@ -19,6 +19,10 @@ from pydantic import BaseModel
 from . import config, prompts
 
 MAX_TOKENS = 16000
+# Fortlaufende Agenten-Chats wachsen unbegrenzt — an die API gehen nur die
+# jüngsten Nachrichten (das aktuelle Workflow-JSON steckt ohnehin im System-
+# Kontext, ältere Chat-Runden sind dadurch verzichtbar).
+MAX_HISTORY_MESSAGES = 24
 REFUSAL_REPLY = ("Diese Anfrage wurde aus Sicherheitsgründen abgelehnt. "
                  "Bitte formuliere um, was der Agent tun soll.")
 
@@ -56,7 +60,8 @@ def _use_llm() -> bool:
 
 
 def generate(dep_name: str, allowed_keys: list[str], host_patterns: list[str],
-             history: list[dict], current_workflow_json: str | None = None) -> AgentProposal:
+             history: list[dict], current_workflow_json: str | None = None,
+             runs_summary: str | None = None) -> AgentProposal:
     """history: [{role: 'user'|'assistant', content: str}, ...] — letzter Eintrag
     ist die aktuelle Nutzernachricht."""
     if not _use_llm():
@@ -64,14 +69,19 @@ def generate(dep_name: str, allowed_keys: list[str], host_patterns: list[str],
 
     import anthropic
 
+    recent = history[-MAX_HISTORY_MESSAGES:]
+    # Die Messages API verlangt einen user-Turn am Anfang.
+    while recent and recent[0]["role"] != "user":
+        recent = recent[1:]
+
     try:
         client = anthropic.Anthropic()
         resp = client.messages.parse(
             model=config.model(),
             max_tokens=MAX_TOKENS,
             system=prompts.system_blocks(dep_name, allowed_keys, host_patterns,
-                                         current_workflow_json),
-            messages=[{"role": m["role"], "content": m["content"]} for m in history],
+                                         current_workflow_json, runs_summary),
+            messages=[{"role": m["role"], "content": m["content"]} for m in recent],
             output_format=AgentProposal,
         )
         if getattr(resp, "stop_reason", None) == "refusal":

@@ -209,6 +209,7 @@ async function viewDepartment(id){
   <div class="section"><h2>${esc(dep.icon)} ${esc(dep.name)} <span class="hint">${esc(dep.description)}</span></h2>
   <div class="formrow">
     <button class="primary" onclick="openChat(${id},null)">＋ Mitarbeiter einstellen (mit Claude bauen)</button>
+    <button onclick="openImport(${id})">↳ Vorhandenen n8n-Workflow übernehmen</button>
     <button onclick="renameDepartment(${id},'${esc(dep.name)}')">Umbenennen</button>
     <button class="danger" onclick="removeDepartment(${id},'${esc(dep.name)}')">Abteilung auflösen</button>
   </div></div>`;
@@ -304,10 +305,13 @@ async function viewAgent(id){
     <p class="hint">${esc(a.description||'')}</p>
     <p class="hint">${a.n8n_workflow_id?('n8n-Workflow: '+esc(a.n8n_workflow_id)+' · '+(a.active?'aktiv':'inaktiv')):'Entwurf — noch nicht deployt'}</p>
     <div class="formrow">
-      <button class="primary" onclick="openChat(${a.department_id},${a.id})">Per Chat bearbeiten</button>
+      <button class="primary" onclick="openChat(${a.department_id},${a.id})">Feedback geben / weiterentwickeln (Chat)</button>
       <button onclick="renameAgent(${a.id},'${esc(a.name)}')">Umbenennen</button>
       <button class="danger" onclick="fireAgent(${a.id},'${esc(a.name)}')">Mitarbeiter entlassen</button>
-    </div></div>
+    </div>
+    <p class="hint">Der Chat merkt sich den bisherigen Verlauf dieses Mitarbeiters und
+    kennt seine letzten Läufe (inkl. Fehlermeldungen) — einfach beschreiben, was
+    besser werden soll.</p></div>
   <div class="section card"><h2>Ausführungsverlauf</h2>`;
   if(a.executions.length){
     html+='<table><tr><th>Status</th><th>Start</th><th>Ende</th></tr>';
@@ -334,15 +338,41 @@ async function fireAgent(id,name){
   catch(e){alert(e.message);}
 }
 
-/* --- Chat: Agent bauen / bearbeiten --------------------------------------------- */
+/* --- Chat: Agent bauen / weiterentwickeln ---------------------------------------- */
 let chatSession=null;
+function proposalCard(p){
+  return `<div class="proposal"><h4>💼 ${esc(p.agent_name||p.workflow.name)}</h4>
+    <div class="role">${esc(p.agent_role||'')}</div>
+    <details><summary>Workflow-JSON ansehen (${p.workflow.nodes.length} Schritte)</summary>
+    <pre>${esc(JSON.stringify(p.workflow,null,2))}</pre></details>
+    <div class="formrow"><button class="primary" onclick="deployProposal()">Übernehmen &amp; deployen</button>
+    <span class="hint">…oder unten weiter besprechen.</span></div></div>`;
+}
 async function openChat(depId,agentId){
   chatSession=await api('/api/chat/sessions',{method:'POST',
     body:JSON.stringify({department_id:depId,agent_id:agentId})});
-  $('#chatTitle').textContent=agentId?'Mitarbeiter per Chat bearbeiten':'Neuen Mitarbeiter einstellen';
-  $('#chatLog').innerHTML='<div class="msg assistant"><div class="bubble">Hallo! Beschreibe mir, was der neue Mitarbeiter tun soll — z. B. „Fasse mir jeden Morgen die ungelesenen Mails zusammen“.</div></div>';
+  $('#chatTitle').textContent=agentId?'Mitarbeiter weiterentwickeln (Verlauf bleibt erhalten)':'Neuen Mitarbeiter einstellen';
+  const log=$('#chatLog');
+  log.innerHTML='';
+  // Fortlaufender Verlauf: bisherige Nachrichten (und den letzten Vorschlag) anzeigen.
+  for(const m of (chatSession.messages||[])){
+    log.insertAdjacentHTML('beforeend',
+      `<div class="msg ${esc(m.role)}"><div class="bubble">${esc(m.content)}</div></div>`);
+    if(m.proposal_json){
+      try{
+        log.insertAdjacentHTML('beforeend',proposalCard(
+          {agent_name:m.agent_name,agent_role:m.agent_role,workflow:JSON.parse(m.proposal_json)}));
+      }catch(e){/* defektes Alt-JSON nur überspringen */}
+    }
+  }
+  if(!(chatSession.messages||[]).length){
+    log.innerHTML='<div class="msg assistant"><div class="bubble">'+(agentId
+      ?'Hallo! Sag mir, was dieser Mitarbeiter besser machen soll — ich kenne seinen Workflow und seine letzten Läufe.'
+      :'Hallo! Beschreibe mir, was der neue Mitarbeiter tun soll — z. B. „Fasse mir jeden Morgen die ungelesenen Mails zusammen“.')+'</div></div>';
+  }
   $('#chatInput').value='';
   $('#chatDlg').showModal();
+  log.scrollTop=log.scrollHeight;
   $('#chatInput').focus();
 }
 function appendMsg(role,text){
@@ -366,14 +396,7 @@ async function sendChat(){
         res.problems.map(p=>'<li>'+esc(p.reason)+'</li>').join('')+'</ul></div>');
     }
     if(res.proposal){
-      const p=res.proposal;
-      $('#chatLog').insertAdjacentHTML('beforeend',
-        `<div class="proposal"><h4>💼 ${esc(p.agent_name||p.workflow.name)}</h4>
-         <div class="role">${esc(p.agent_role||'')}</div>
-         <details><summary>Workflow-JSON ansehen (${p.workflow.nodes.length} Schritte)</summary>
-         <pre>${esc(JSON.stringify(p.workflow,null,2))}</pre></details>
-         <div class="formrow"><button class="primary" onclick="deployProposal()">Übernehmen &amp; deployen</button>
-         <span class="hint">…oder unten weiter besprechen.</span></div></div>`);
+      $('#chatLog').insertAdjacentHTML('beforeend',proposalCard(res.proposal));
     }
     $('#chatLog').scrollTop=$('#chatLog').scrollHeight;
   }catch(e){appendMsg('assistant','Fehler: '+e.message);}
@@ -394,6 +417,42 @@ async function deployProposal(){
       '</ul>Beschreibe im Chat, was angepasst werden soll — oder erweitere die Netzwerkregeln der Abteilung.</div>');
     $('#chatLog').scrollTop=$('#chatLog').scrollHeight;
   }
+}
+
+/* --- Vorhandenen n8n-Workflow als Mitarbeiter übernehmen -------------------------- */
+let importDepId=null;
+async function openImport(depId){
+  importDepId=depId;
+  let list=[];
+  try{list=await api('/api/n8n/workflows');}catch(e){alert(e.message);return;}
+  const sel=$('#importSelect');
+  sel.innerHTML='';
+  if(!list.length){
+    alert('Alle n8n-Workflows sind bereits Mitarbeitern zugeordnet (oder es gibt keine).');
+    return;
+  }
+  for(const wf of list){
+    const opt=document.createElement('option');
+    opt.value=wf.id;
+    opt.textContent=`${wf.name} (${wf.active?'aktiv':'inaktiv'})`;
+    opt.dataset.name=wf.name;
+    sel.appendChild(opt);
+  }
+  $('#importName').value=sel.selectedOptions[0].dataset.name;
+  sel.onchange=()=>{$('#importName').value=sel.selectedOptions[0].dataset.name;};
+  $('#importDlg').showModal();
+}
+async function doImport(){
+  const name=$('#importName').value.trim();
+  if(!name){alert('Bitte einen Mitarbeiternamen vergeben.');return;}
+  try{
+    const agent=await api('/api/agents/import',{method:'POST',body:JSON.stringify({
+      department_id:importDepId,
+      n8n_workflow_id:$('#importSelect').value,
+      name,role:$('#importRole').value.trim()})});
+    $('#importDlg').close();
+    location.hash='#/agent/'+agent.id;route();
+  }catch(e){alert(e.message);}
 }
 
 /* --- Start ----------------------------------------------------------------------- */
@@ -422,6 +481,24 @@ def render() -> str:
   <button onclick="toggleTheme()" title="Hell/Dunkel umschalten">🌓</button>
 </header>
 <main id="main"><p class="empty">Lade …</p></main>
+<dialog id="importDlg">
+  <div class="dlg-head"><h3>n8n-Workflow als Mitarbeiter übernehmen</h3>
+    <button onclick="document.getElementById('importDlg').close()">✕</button></div>
+  <div class="dlg-body">
+    <p class="hint">Der Workflow bleibt in n8n unverändert — er bekommt nur einen
+    Mitarbeiternamen und ist danach hier verwaltbar und per Chat weiterentwickelbar.</p>
+    <div class="formrow"><label>Workflow:</label>
+      <select id="importSelect" style="flex:1;font:inherit;padding:7px 10px;border-radius:8px;
+        border:1px solid var(--line);background:var(--bg);color:var(--text)"></select></div>
+    <div class="formrow"><label>Name:</label>
+      <input type="text" id="importName" style="flex:1" placeholder="z. B. Berta Bestellung"></div>
+    <div class="formrow"><label>Rolle:</label>
+      <input type="text" id="importRole" style="flex:1" placeholder="z. B. Bestellbestätigerin (optional)"></div>
+  </div>
+  <div class="dlg-foot">
+    <button class="primary" onclick="doImport()">Als Mitarbeiter übernehmen</button>
+  </div>
+</dialog>
 <dialog id="chatDlg">
   <div class="dlg-head"><h3 id="chatTitle">Neuen Mitarbeiter einstellen</h3>
     <button onclick="document.getElementById('chatDlg').close()">✕</button></div>

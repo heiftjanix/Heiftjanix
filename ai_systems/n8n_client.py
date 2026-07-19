@@ -99,6 +99,11 @@ class N8nClient:
                              params={"workflowId": workflow_id, "limit": limit})
         return data.get("data", [])
 
+    def get_execution(self, execution_id: str) -> dict:
+        """Einzelne Ausführung inkl. Daten — für Fehlerdetails im Agenten-Feedback."""
+        return self._request("GET", f"/executions/{execution_id}",
+                             params={"includeData": "true"})
+
 
 class DemoN8n:
     """In-Memory-n8n mit identischer Schnittstelle, gespeist aus demo_data.json.
@@ -120,6 +125,13 @@ class DemoN8n:
                         "id": wf_id, "name": agent["name"], "active": bool(agent.get("active")),
                         "nodes": [], "connections": {}, "settings": {},
                     }
+        # Unverwaltete Demo-Workflows (für „Mitarbeiter übernehmen")
+        for wf in data.get("extra_workflows", []):
+            self._workflows[wf["id"]] = {
+                "id": wf["id"], "name": wf["name"], "active": bool(wf.get("active")),
+                "nodes": wf.get("nodes", []), "connections": wf.get("connections", {}),
+                "settings": {},
+            }
 
     def list_workflows(self) -> list[dict]:
         return [copy.deepcopy(wf) for wf in self._workflows.values()]
@@ -166,6 +178,13 @@ class DemoN8n:
 
     def executions(self, workflow_id: str, limit: int = 20) -> list[dict]:
         return copy.deepcopy(self._executions.get(workflow_id, [])[:limit])
+
+    def get_execution(self, execution_id: str) -> dict:
+        for runs in self._executions.values():
+            for run in runs:
+                if run.get("id") == execution_id:
+                    return copy.deepcopy(run)
+        raise N8nError(f"Ausführung '{execution_id}' nicht gefunden.", status=404)
 
 
 _DEMO: DemoN8n | None = None

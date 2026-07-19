@@ -47,11 +47,15 @@
       "agents": []
     }
   ],
+  "extra_workflows": [
+    {"id": "demo-wf-frei-1", "name": "Bestellbestätigung alt (unverwaltet)", "active": true,
+     "nodes": [], "connections": {}}
+  ],
   "executions": {
     "demo-wf-1": [
       {"id": "1001", "status": "success", "startedAt": "2026-07-17T06:30:00.000Z", "stoppedAt": "2026-07-17T06:30:04.000Z"},
       {"id": "1002", "status": "success", "startedAt": "2026-07-17T12:30:00.000Z", "stoppedAt": "2026-07-17T12:30:03.000Z"},
-      {"id": "1003", "status": "error", "startedAt": "2026-07-18T06:30:00.000Z", "stoppedAt": "2026-07-18T06:30:01.000Z"}
+      {"id": "1003", "status": "error", "startedAt": "2026-07-18T06:30:00.000Z", "stoppedAt": "2026-07-18T06:30:01.000Z", "error": "HTTP 401 Unauthorized im Node 'Ungelesene Mails holen' — Microsoft-Token abgelaufen oder Berechtigung fehlt."}
     ],
     "demo-wf-2": [
       {"id": "2001", "status": "success", "startedAt": "2026-07-16T05:00:00.000Z", "stoppedAt": "2026-07-16T05:00:09.000Z"}

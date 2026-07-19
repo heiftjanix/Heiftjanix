@@ -250,8 +250,14 @@ async def create_chat_session(request: Request):
     conn = db.get_conn()
     if not db.get_department(conn, data["department_id"]):
         raise HTTPException(404, "Abteilung nicht gefunden.")
-    if data.get("agent_id") and not db.get_agent(conn, data["agent_id"]):
-        raise HTTPException(404, "Agent nicht gefunden.")
+    if data.get("agent_id"):
+        if not db.get_agent(conn, data["agent_id"]):
+            raise HTTPException(404, "Agent nicht gefunden.")
+        # Agenten-Chats sind fortlaufend: vorhandene Sitzung samt Verlauf
+        # weiterführen — der Kontext des Mitarbeiters wächst mit.
+        existing = db.latest_session_for_agent(conn, data["agent_id"])
+        if existing:
+            return {**existing, "messages": db.list_chat_messages(conn, existing["id"])}
     session = db.create_chat_session(conn, data["department_id"], data.get("agent_id"))
     return {**session, "messages": []}
 
@@ -279,6 +285,26 @@ async def post_chat_message(session_id: int, request: Request):
 @app.post("/api/chat/sessions/{session_id}/deploy")
 def deploy_chat_proposal(session_id: int) -> dict:
     return {"agent": service.deploy_proposal(db.get_conn(), session_id)}
+
+
+# --- n8n-Workflows übernehmen -------------------------------------------------
+
+@app.get("/api/n8n/workflows")
+def n8n_unassigned_workflows() -> list:
+    """Noch keinem Mitarbeiter zugeordnete n8n-Workflows (Import-Kandidaten)."""
+    return service.unassigned_workflows(db.get_conn())
+
+
+@app.post("/api/agents/import")
+async def import_agent(request: Request):
+    data = _json_body(await request.json(), "department_id", "n8n_workflow_id",
+                      "name", "role", required=("department_id", "n8n_workflow_id", "name"))
+    conn = db.get_conn()
+    if not db.get_department(conn, data["department_id"]):
+        raise HTTPException(404, "Abteilung nicht gefunden.")
+    return service.import_workflow(conn, data["department_id"],
+                                   str(data["n8n_workflow_id"]),
+                                   data["name"].strip(), (data["role"] or "").strip())
 
 
 # --- Konnektoren-Katalog -----------------------------------------------------

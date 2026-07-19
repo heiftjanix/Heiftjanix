@@ -62,7 +62,8 @@ AUSGABEVERTRAG
 
 
 def department_context(dep_name: str, allowed_keys: list[str], host_patterns: list[str],
-                       current_workflow_json: str | None = None) -> str:
+                       current_workflow_json: str | None = None,
+                       runs_summary: str | None = None) -> str:
     """Volatiler Kontext: was DIESE Abteilung darf (steht nach dem Cache-Breakpoint)."""
     lines = [f'AKTUELLE ABTEILUNG: "{dep_name}"']
 
@@ -89,14 +90,20 @@ def department_context(dep_name: str, allowed_keys: list[str], host_patterns: li
                      "(bei Änderungen vollständig und angepasst zurückgeben):\n"
                      + current_workflow_json)
 
+    if runs_summary:
+        lines.append("\nLETZTE LÄUFE DIESES MITARBEITERS (nutze dieses Feedback aktiv, "
+                     "um Fehler zu diagnostizieren und den Workflow zu verbessern):\n"
+                     + runs_summary)
+
     return "\n".join(lines)
 
 
 def system_blocks(dep_name: str, allowed_keys: list[str], host_patterns: list[str],
-                  current_workflow_json: str | None = None) -> list[dict]:
+                  current_workflow_json: str | None = None,
+                  runs_summary: str | None = None) -> list[dict]:
     """system-Parameter für die Messages API: statischer Block gecacht, Kontext volatil."""
     return [
         {"type": "text", "text": STATIC_SPEC, "cache_control": {"type": "ephemeral"}},
         {"type": "text", "text": department_context(dep_name, allowed_keys, host_patterns,
-                                                    current_workflow_json)},
+                                                    current_workflow_json, runs_summary)},
     ]

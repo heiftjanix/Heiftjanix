@@ -114,6 +114,49 @@ class AppTest(unittest.TestCase):
         rules = self.client.get(f"/api/departments/{sekretariat['id']}/rules").json()
         self.assertIn("api.anthropic.com", rules["implicit_hosts"])
 
+    def test_import_existing_workflow_as_agent(self):
+        # Der unverwaltete Demo-Workflow taucht als Import-Kandidat auf …
+        candidates = self.client.get("/api/n8n/workflows").json()
+        ids = [w["id"] for w in candidates]
+        self.assertIn("demo-wf-frei-1", ids)
+        # … und wird als benannter Mitarbeiter übernommen.
+        deps = self.client.get("/api/departments").json()
+        versand = next(d for d in deps if d["name"] == "Versand")
+        agent = self.client.post("/api/agents/import", json={
+            "department_id": versand["id"], "n8n_workflow_id": "demo-wf-frei-1",
+            "name": "Berta Bestellung", "role": "Bestellbestätigerin"}).json()
+        self.assertEqual(agent["n8n_workflow_id"], "demo-wf-frei-1")
+        self.assertEqual(agent["active"], 1)  # Aktiv-Status aus n8n übernommen
+        # Doppelter Import desselben Workflows wird abgelehnt.
+        dup = self.client.post("/api/agents/import", json={
+            "department_id": versand["id"], "n8n_workflow_id": "demo-wf-frei-1",
+            "name": "Nochmal"})
+        self.assertEqual(dup.status_code, 422)
+        # Nach dem Import ist der Workflow kein Kandidat mehr.
+        ids = [w["id"] for w in self.client.get("/api/n8n/workflows").json()]
+        self.assertNotIn("demo-wf-frei-1", ids)
+        self.client.delete(f"/api/agents/{agent['id']}")
+
+    def test_agent_chat_session_is_continuous(self):
+        deps = self.client.get("/api/departments").json()
+        sekretariat = next(d for d in deps if d["name"] == "Sekretariat")
+        agents = self.client.get(f"/api/agents?department_id={sekretariat['id']}").json()
+        paula = next(a for a in agents if a["name"] == "Paula Post")
+        s1 = self.client.post("/api/chat/sessions", json={
+            "department_id": sekretariat["id"], "agent_id": paula["id"]}).json()
+        self.client.post(f"/api/chat/sessions/{s1['id']}/message", json={"text": "Hallo"})
+        # Erneutes Öffnen liefert DIESELBE Sitzung samt Verlauf.
+        s2 = self.client.post("/api/chat/sessions", json={
+            "department_id": sekretariat["id"], "agent_id": paula["id"]}).json()
+        self.assertEqual(s2["id"], s1["id"])
+        self.assertEqual(len(s2["messages"]), 2)  # Nutzerfrage + Antwort
+        # Abteilungs-Chats (neuer Mitarbeiter) bleiben dagegen frisch.
+        d1 = self.client.post("/api/chat/sessions",
+                              json={"department_id": sekretariat["id"]}).json()
+        d2 = self.client.post("/api/chat/sessions",
+                              json={"department_id": sekretariat["id"]}).json()
+        self.assertNotEqual(d1["id"], d2["id"])
+
     def test_connector_catalog_hides_secrets(self):
         catalog = self.client.get("/api/connectors").json()
         text = str(catalog)

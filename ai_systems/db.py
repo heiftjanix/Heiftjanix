@@ -272,6 +272,16 @@ def get_chat_session(conn: sqlite3.Connection, session_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def latest_session_for_agent(conn: sqlite3.Connection, agent_id: int) -> dict | None:
+    """Jüngste Chat-Sitzung eines Agenten — für den fortlaufenden Verlauf
+    („wachsender Kontext" statt bei jedem Öffnen ein frischer Chat)."""
+    row = conn.execute(
+        "SELECT * FROM chat_sessions WHERE agent_id = ? ORDER BY id DESC LIMIT 1",
+        (agent_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def list_chat_messages(conn: sqlite3.Connection, session_id: int) -> list[dict]:
     rows = conn.execute(
         "SELECT * FROM chat_messages WHERE session_id = ? ORDER BY id", (session_id,)

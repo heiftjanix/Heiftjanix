@@ -25,6 +25,11 @@ class DeployError(Exception):
         self.violations = violations or []
 
 
+def active_model(conn: sqlite3.Connection) -> str:
+    """Aktives Claude-Modell: UI-Einstellung (DB) vor ENV vor Standard."""
+    return db.get_setting(conn, "model") or config.model()
+
+
 def status() -> dict:
     with _STATUS_LOCK:
         return dict(_STATUS)
@@ -147,10 +152,11 @@ def chat_step(conn: sqlite3.Connection, session_id: int, text: str) -> dict:
         if agent:
             runs = runs_summary(agent)
 
+    model = active_model(conn)
     _set_status("working")
     try:
         proposal = claude_gen.generate(dep["name"], allowed, patterns, history,
-                                       current_json, runs)
+                                       current_json, runs, model)
         problems: list[dict] = []
         if proposal.workflow_json:
             problems = _check_proposal_json(conn, proposal.workflow_json, dep["id"],
@@ -165,7 +171,7 @@ def chat_step(conn: sqlite3.Connection, session_id: int, text: str) -> dict:
                     {"role": "user", "content": feedback},
                 ]
                 retry = claude_gen.generate(dep["name"], allowed, patterns,
-                                            retry_history, current_json, runs)
+                                            retry_history, current_json, runs, model)
                 if retry.workflow_json:
                     retry_problems = _check_proposal_json(conn, retry.workflow_json, dep["id"],
                                                           session.get("agent_id"))

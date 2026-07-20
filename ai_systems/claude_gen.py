@@ -59,16 +59,57 @@ def _use_llm() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY")) and not config.is_demo_mode()
 
 
+def _api_message(exc: Exception) -> str:
+    """Extrahiert die eigentliche Fehlermeldung aus einer Anthropic-Exception."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict) and err.get("message"):
+            return str(err["message"])
+    return str(exc)
+
+
+def friendly_error(exc: Exception, model: str) -> str:
+    """Übersetzt einen Claude-API-Fehler in eine verständliche deutsche Meldung —
+    inklusive der echten API-Meldung, damit die Ursache erkennbar bleibt."""
+    status = getattr(exc, "status_code", None)
+    detail = _api_message(exc)
+    low = detail.lower()
+
+    if "credit balance" in low or "insufficient" in low or "billing" in low:
+        return ("Kein Claude-Guthaben mehr. Bitte unter console.anthropic.com Guthaben "
+                "aufladen und es dann erneut versuchen.")
+    if status == 401 or "authentication" in low or "x-api-key" in low or "invalid api key" in low:
+        return ("Der Claude-API-Key ist ungültig. Bitte in der Server-Konfiguration "
+                "(Datei → Server-Konfiguration (.env) öffnen) den ANTHROPIC_API_KEY prüfen.")
+    if status == 404 or ("model" in low and ("not found" in low or "not_found" in low
+                                             or "does not exist" in low or "unknown" in low)):
+        return (f"Das eingestellte Claude-Modell „{model}“ ist für deinen API-Key nicht "
+                f"verfügbar. Bitte AI_SYSTEMS_MODEL in der Server-Konfiguration auf ein "
+                f"freigeschaltetes Modell setzen. (Claude meldet: {detail[:200]})")
+    if status == 429 or "rate limit" in low:
+        return "Zu viele Anfragen an Claude in kurzer Zeit. Bitte kurz warten und erneut senden."
+    if status == 529 or "overloaded" in low:
+        return "Claude ist momentan überlastet. Bitte in ein bis zwei Minuten erneut versuchen."
+    if "max_tokens" in low:
+        return f"Anfrage-Parameter ungültig ({detail[:200]}). Bitte den Support kontaktieren."
+    if "connection" in low or "timeout" in low or "connect" in low:
+        return ("Keine Verbindung zu Claude (Netzwerk oder Firewall). Bitte die "
+                "Internetverbindung prüfen und erneut versuchen.")
+    return f"Die Claude-Anfrage ist fehlgeschlagen: {detail[:250]}"
+
+
 def generate(dep_name: str, allowed_keys: list[str], host_patterns: list[str],
              history: list[dict], current_workflow_json: str | None = None,
-             runs_summary: str | None = None) -> AgentProposal:
+             runs_summary: str | None = None, model: str | None = None) -> AgentProposal:
     """history: [{role: 'user'|'assistant', content: str}, ...] — letzter Eintrag
-    ist die aktuelle Nutzernachricht."""
+    ist die aktuelle Nutzernachricht. `model` überschreibt das Standardmodell."""
     if not _use_llm():
         return _demo_generate(history)
 
     import anthropic
 
+    active_model = model or config.model()
     recent = history[-MAX_HISTORY_MESSAGES:]
     # Die Messages API verlangt einen user-Turn am Anfang.
     while recent and recent[0]["role"] != "user":
@@ -77,7 +118,7 @@ def generate(dep_name: str, allowed_keys: list[str], host_patterns: list[str],
     try:
         client = anthropic.Anthropic()
         resp = client.messages.parse(
-            model=config.model(),
+            model=active_model,
             max_tokens=MAX_TOKENS,
             system=prompts.system_blocks(dep_name, allowed_keys, host_patterns,
                                          current_workflow_json, runs_summary),
@@ -88,8 +129,6 @@ def generate(dep_name: str, allowed_keys: list[str], host_patterns: list[str],
             return AgentProposal(reply=REFUSAL_REPLY)
         return resp.parsed_output
     except Exception as exc:  # noqa: BLE001 — API-Störung sauber im Chat melden
-        sys.stderr.write(f"[ai-systems] Anthropic-API fehlgeschlagen: {exc}\n")
-        return AgentProposal(
-            reply=("Die Claude-Anfrage ist fehlgeschlagen "
-                   f"({type(exc).__name__}). Bitte später erneut versuchen.")
-        )
+        sys.stderr.write(f"[ai-systems] Anthropic-API fehlgeschlagen: "
+                         f"{type(exc).__name__}: {exc}\n")
+        return AgentProposal(reply=friendly_error(exc, active_model))

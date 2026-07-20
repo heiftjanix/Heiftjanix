@@ -38,6 +38,18 @@ def _key_error(_req: Request, exc: KeyError):
     return JSONResponse(status_code=404, content={"error": str(exc.args[0]) if exc.args else "Nicht gefunden."})
 
 
+@app.exception_handler(Exception)
+def _unhandled_error(_req: Request, exc: Exception):
+    """Letzte Absicherung: jeder unerwartete Fehler kommt als JSON zurück (nie als
+    Klartext-„Internal Server Error"), damit die Oberfläche eine lesbare Meldung
+    zeigen kann statt eines JSON-Parserfehlers."""
+    import sys
+    sys.stderr.write(f"[ai-systems] Unerwarteter Fehler: {type(exc).__name__}: {exc}\n")
+    return JSONResponse(status_code=500,
+                        content={"error": f"Unerwarteter Serverfehler: {type(exc).__name__}. "
+                                          "Details im Server-Protokoll (Datei-Menü)."})
+
+
 def _json_body(payload, *keys, required=()):
     if not isinstance(payload, dict):
         raise HTTPException(400, "JSON-Objekt erwartet.")
@@ -305,6 +317,39 @@ async def import_agent(request: Request):
     return service.import_workflow(conn, data["department_id"],
                                    str(data["n8n_workflow_id"]),
                                    data["name"].strip(), (data["role"] or "").strip())
+
+
+# --- Einstellungen (Claude-Modell) -------------------------------------------
+
+# Vorschläge fürs Modell-Feld; freie Eingabe bleibt möglich (Verfügbarkeit
+# hängt vom jeweiligen Anthropic-API-Key ab).
+MODEL_SUGGESTIONS = [
+    "claude-fable-5",
+    "claude-opus-4-8",
+    "claude-sonnet-5",
+    "claude-haiku-4-5-20251001",
+]
+
+
+@app.get("/api/settings")
+def get_settings() -> dict:
+    conn = db.get_conn()
+    override = db.get_setting(conn, "model")
+    return {
+        "model": service.active_model(conn),
+        "model_override": override,
+        "default_model": config.model(),
+        "suggestions": MODEL_SUGGESTIONS,
+        "demo_mode": config.is_demo_mode(),
+    }
+
+
+@app.put("/api/settings")
+async def update_settings(request: Request):
+    data = _json_body(await request.json(), "model")
+    model = (data.get("model") or "").strip()
+    db.set_setting(db.get_conn(), "model", model or None)  # leer = auf Standard zurück
+    return get_settings()
 
 
 # --- Konnektoren-Katalog -----------------------------------------------------

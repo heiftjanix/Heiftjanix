@@ -107,7 +107,12 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
 .dlg-head{display:flex;align-items:center;gap:10px;padding:14px 18px;
   border-bottom:1px solid var(--line)}
 .dlg-head h3{margin:0;font-size:16px;flex:1}
-.dlg-body{padding:16px 18px;max-height:60vh;overflow:auto}
+.dlg-model{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 18px;
+  border-bottom:1px solid var(--line);font-size:13px;color:var(--muted)}
+.dlg-model input{font:inherit;padding:5px 8px;border-radius:7px;border:1px solid var(--line);
+  background:var(--bg);color:var(--text);min-width:220px}
+.dlg-model button{padding:5px 10px;font-size:13px}
+.dlg-body{padding:16px 18px;max-height:56vh;overflow:auto}
 .dlg-foot{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px}
 .dlg-foot input{flex:1}
 .msg{margin:8px 0;display:flex}
@@ -143,7 +148,17 @@ async function api(path,opts){
   setBusy(true);
   try{
     const resp=await fetch(path,Object.assign({headers:{'Content-Type':'application/json'}},opts));
-    const data=resp.status===204?{}:await resp.json();
+    // Antwort defensiv lesen: bei Server-/Proxy-Fehlern kann der Body Text statt
+    // JSON sein (z. B. "Internal Server Error") — dann keinen kryptischen
+    // JSON-Parserfehler werfen, sondern eine verständliche Meldung bauen.
+    let data={};
+    if(resp.status!==204){
+      const raw=await resp.text();
+      if(raw){
+        try{data=JSON.parse(raw);}
+        catch{data={error:(resp.ok?raw:('Serverfehler '+resp.status+': '+raw.slice(0,200)))};}
+      }
+    }
     if(!resp.ok){const err=new Error(data.error||('Fehler '+resp.status));err.data=data;throw err;}
     return data;
   }finally{setBusy(false);}
@@ -371,9 +386,32 @@ async function openChat(depId,agentId){
       :'Hallo! Beschreibe mir, was der neue Mitarbeiter tun soll — z. B. „Fasse mir jeden Morgen die ungelesenen Mails zusammen“.')+'</div></div>';
   }
   $('#chatInput').value='';
+  await loadModelPicker();
   $('#chatDlg').showModal();
   log.scrollTop=log.scrollHeight;
   $('#chatInput').focus();
+}
+async function loadModelPicker(){
+  try{
+    const s=await api('/api/settings');
+    const dl=$('#modelList');
+    dl.innerHTML='';
+    for(const m of (s.suggestions||[])){
+      const o=document.createElement('option');o.value=m;dl.appendChild(o);
+    }
+    $('#modelInput').value=s.model||'';
+    $('#modelInput').placeholder=s.default_model||'claude-fable-5';
+    $('#modelSaved').textContent=s.demo_mode?'(Demo-Modus: Modell wird nicht genutzt)':'';
+  }catch(e){/* Einstellungen optional — Chat funktioniert auch ohne */}
+}
+async function saveModel(){
+  const model=$('#modelInput').value.trim();
+  try{
+    const s=await api('/api/settings',{method:'PUT',body:JSON.stringify({model})});
+    $('#modelInput').value=s.model||'';
+    $('#modelSaved').textContent='gespeichert ✓ (gilt für alle Agenten)';
+    setTimeout(()=>{$('#modelSaved').textContent='';},2500);
+  }catch(e){$('#modelSaved').textContent='Fehler: '+e.message;}
 }
 function appendMsg(role,text){
   $('#chatLog').insertAdjacentHTML('beforeend',
@@ -502,6 +540,13 @@ def render() -> str:
 <dialog id="chatDlg">
   <div class="dlg-head"><h3 id="chatTitle">Neuen Mitarbeiter einstellen</h3>
     <button onclick="document.getElementById('chatDlg').close()">✕</button></div>
+  <div class="dlg-model">
+    <span>🧠 Claude-Modell:</span>
+    <input type="text" id="modelInput" list="modelList" placeholder="claude-fable-5">
+    <datalist id="modelList"></datalist>
+    <button onclick="saveModel()">übernehmen</button>
+    <span id="modelSaved" class="hint"></span>
+  </div>
   <div class="dlg-body" id="chatLog"></div>
   <div class="dlg-foot">
     <input type="text" id="chatInput" placeholder="Beschreibe, was der Agent tun soll …"

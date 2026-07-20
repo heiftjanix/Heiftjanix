@@ -157,6 +157,20 @@ class AppTest(unittest.TestCase):
                               json={"department_id": sekretariat["id"]}).json()
         self.assertNotEqual(d1["id"], d2["id"])
 
+    def test_model_setting_roundtrip(self):
+        s = self.client.get("/api/settings").json()
+        self.assertIn("model", s)
+        self.assertIn("claude-fable-5", s["suggestions"])
+        # Modell setzen
+        updated = self.client.put("/api/settings", json={"model": "claude-sonnet-5"}).json()
+        self.assertEqual(updated["model"], "claude-sonnet-5")
+        self.assertEqual(updated["model_override"], "claude-sonnet-5")
+        self.assertEqual(self.client.get("/api/settings").json()["model"], "claude-sonnet-5")
+        # Leeren -> zurück auf Standard
+        cleared = self.client.put("/api/settings", json={"model": ""}).json()
+        self.assertIsNone(cleared["model_override"])
+        self.assertEqual(cleared["model"], cleared["default_model"])
+
     def test_connector_catalog_hides_secrets(self):
         catalog = self.client.get("/api/connectors").json()
         text = str(catalog)

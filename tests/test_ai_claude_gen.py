@@ -79,6 +79,37 @@ class DemoFallbackTest(unittest.TestCase):
         self.assertEqual(validate_structure(workflow), [])
 
 
+class FriendlyErrorTest(unittest.TestCase):
+    def _err(self, status, message):
+        exc = RuntimeError(message)
+        exc.status_code = status
+        exc.body = {"error": {"message": message}}
+        return exc
+
+    def test_credit_balance(self):
+        msg = claude_gen.friendly_error(
+            self._err(400, "Your credit balance is too low to access the API."), "claude-fable-5")
+        self.assertIn("Guthaben", msg)
+
+    def test_invalid_key(self):
+        msg = claude_gen.friendly_error(self._err(401, "invalid x-api-key"), "claude-fable-5")
+        self.assertIn("API-Key", msg)
+
+    def test_unknown_model_mentions_model_name(self):
+        msg = claude_gen.friendly_error(
+            self._err(404, "model: claude-fable-5 not found"), "claude-fable-5")
+        self.assertIn("claude-fable-5", msg)
+        self.assertIn("AI_SYSTEMS_MODEL", msg)
+
+    def test_overloaded(self):
+        msg = claude_gen.friendly_error(self._err(529, "Overloaded"), "m")
+        self.assertIn("überlastet", msg)
+
+    def test_generic_includes_real_message(self):
+        msg = claude_gen.friendly_error(self._err(400, "some odd validation problem"), "m")
+        self.assertIn("some odd validation problem", msg)
+
+
 class RefusalTest(unittest.TestCase):
     def test_refusal_stop_reason_handled(self):
         fake_resp = mock.Mock()

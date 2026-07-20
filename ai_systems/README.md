@@ -31,6 +31,11 @@ ist in Wirklichkeit ein n8n-Workflow auf eurer bestehenden n8n-Instanz.
 - 🎭 **Demo-Modus ohne Zugangsdaten:** Ohne `N8N_URL` (oder mit `DEMO_MODE=1`)
   startet eine Demo-Firma mit Beispiel-Mitarbeitern und gecannten
   Claude-Antworten — ideal zum Ausprobieren.
+- 🧠 **Modell direkt im Chat wählbar:** Oben im Chat-Fenster lässt sich das
+  Claude-Modell umstellen (z. B. wenn `claude-fable-5` für den API-Key nicht
+  freigeschaltet ist); die Auswahl gilt für alle Agenten und wird gespeichert.
+  Claude-Fehler werden im Klartext angezeigt (z. B. „Kein Guthaben mehr" oder
+  „Modell nicht verfügbar") statt als kryptische Meldung.
 
 > **Grundregel wie beim Team-Board:** Secrets bleiben in Umgebungsvariablen.
 > Sie landen weder in der Datenbank noch im Workflow-JSON — Claude verdrahtet
@@ -93,7 +98,7 @@ npm run dist     # baut runtime/ (build_runtime.sh) + Windows-Installer (NSIS)
 ```
 
 Ein fertig gebauter Installer liegt als
-[`electron/dist/AI-Systems Setup 1.2.0.exe`](electron/dist/) im Repo
+[`electron/dist/AI-Systems Setup 1.3.0.exe`](electron/dist/) im Repo
 (unsigniert; Windows SmartScreen fragt beim ersten Start nach — „Weitere
 Informationen" → „Trotzdem ausführen"). `build_runtime.sh` lädt das offizielle
 Embeddable-CPython von python.org und die Abhängigkeiten als win_amd64-Wheels

@@ -171,6 +171,14 @@ class AppTest(unittest.TestCase):
         self.assertIsNone(cleared["model_override"])
         self.assertEqual(cleared["model"], cleared["default_model"])
 
+    def test_diagnostics_endpoint(self):
+        r = self.client.get("/api/diagnostics").json()
+        self.assertIn("version", r)
+        self.assertTrue(r["demo_mode"])
+        self.assertTrue(r["n8n"]["ok"])          # Demo-n8n gilt als ok
+        self.assertIn("connectors", r)
+        self.assertTrue(any(c["key"] == "anthropic" for c in r["connectors"]))
+
     def test_claude_test_endpoint_in_demo(self):
         # Im Demo-Modus meldet der Test klar, dass kein echter Aufruf erfolgt.
         r = self.client.post("/api/claude/test").json()

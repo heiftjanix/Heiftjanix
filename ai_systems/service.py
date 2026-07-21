@@ -30,6 +30,20 @@ def active_model(conn: sqlite3.Connection) -> str:
     return db.get_setting(conn, "model") or config.model()
 
 
+def n8n_status() -> dict:
+    """Prüft die n8n-Anbindung (für die Diagnose-Seite)."""
+    if config.is_demo_mode():
+        return {"configured": False, "ok": True,
+                "message": "Demo-Modus aktiv — keine echte n8n-Instanz angebunden "
+                           "(N8N_URL nicht gesetzt)."}
+    try:
+        count = len(n8n_client.get_client().list_workflows())
+        return {"configured": True, "ok": True,
+                "message": f"n8n erreichbar unter {config.n8n_url()} ({count} Workflows)."}
+    except n8n_client.N8nError as exc:
+        return {"configured": True, "ok": False, "message": str(exc)}
+
+
 def status() -> dict:
     with _STATUS_LOCK:
         return dict(_STATUS)

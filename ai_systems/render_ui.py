@@ -525,6 +525,27 @@ async function doImport(){
   }catch(e){alert(e.message);}
 }
 
+/* --- Diagnose: Schnittstellen prüfen --------------------------------------------- */
+async function openDiagnostics(){
+  const d=$('#diagBody');
+  d.innerHTML='<p class="empty">Prüfe Verbindungen …</p>';
+  $('#diagDlg').showModal();
+  try{
+    const r=await api('/api/diagnostics');
+    let h=`<p><b>Version:</b> ${esc(r.version)} · <b>Betriebsart:</b> `+
+      (r.demo_mode?'Demo (kein echtes n8n/Claude)':'Echtbetrieb')+
+      ` · <b>Modell:</b> ${esc(r.model)}</p>`;
+    h+=`<p>${r.n8n.ok?'✅':'❌'} <b>n8n:</b> ${esc(r.n8n.message)}</p>`;
+    h+=`<p>${r.claude.ok?'✅':'❌'} <b>Claude:</b> ${esc(r.claude.message)}</p>`;
+    if(r.claude.raw)h+=`<p class="hint">Original von Anthropic: ${esc(r.claude.raw)}</p>`;
+    h+='<p style="margin-top:10px"><b>Konnektoren (Zugangsdaten gesetzt?):</b></p><div class="chips">';
+    for(const c of r.connectors)
+      h+=`<span class="chip">${c.configured?'✅':'⬜'} ${esc(c.label)}</span>`;
+    h+='</div>';
+    d.innerHTML=h;
+  }catch(e){d.innerHTML='<p class="errorcard">Diagnose fehlgeschlagen: '+esc(e.message)+'</p>';}
+}
+
 /* --- Start ----------------------------------------------------------------------- */
 initTheme();
 api('/api/status').then(s=>{if(s.demo_mode)$('#demoBadge').style.display='inline-block';});
@@ -550,9 +571,17 @@ def render() -> str:
     <div class="sub">Virtuelle Firma — n8n-Agenten mit Claude</div></div>
   <span class="badge" id="demoBadge" style="display:none">DEMO-MODUS</span>
   <div class="spacer"></div>
+  <button onclick="openDiagnostics()" title="Verbindungen prüfen">🩺 Diagnose</button>
   <button onclick="toggleTheme()" title="Hell/Dunkel umschalten">🌓</button>
 </header>
 <main id="main"><p class="empty">Lade …</p></main>
+<dialog id="diagDlg">
+  <div class="dlg-head"><h3>🩺 Diagnose der Schnittstellen</h3>
+    <button onclick="document.getElementById('diagDlg').close()">✕</button></div>
+  <div class="dlg-body" id="diagBody"></div>
+  <div class="dlg-foot"><button onclick="openDiagnostics()">Erneut prüfen</button>
+    <button class="primary" onclick="document.getElementById('diagDlg').close()">Schließen</button></div>
+</dialog>
 <dialog id="depDlg">
   <div class="dlg-head"><h3 id="depDlgTitle">Neue Abteilung anlegen</h3>
     <button onclick="document.getElementById('depDlg').close()">✕</button></div>

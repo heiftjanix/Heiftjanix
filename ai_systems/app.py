@@ -359,6 +359,23 @@ def claude_test() -> dict:
     return claude_gen.test_connection(service.active_model(db.get_conn()))
 
 
+@app.get("/api/diagnostics")
+def diagnostics() -> dict:
+    """Sammel-Diagnose aller Schnittstellen — ohne Secret-Werte. Nützlich für IT:
+    n8n erreichbar? Claude-Key/-Modell ok? welche Konnektoren sind konfiguriert?"""
+    from . import claude_gen
+    conn = db.get_conn()
+    return {
+        "version": config.VERSION,
+        "demo_mode": config.is_demo_mode(),
+        "model": service.active_model(conn),
+        "n8n": service.n8n_status(),
+        "claude": claude_gen.test_connection(service.active_model(conn)),
+        "connectors": [{"key": c["key"], "label": c["label"], "configured": c["configured"]}
+                       for c in connectors.catalog()],
+    }
+
+
 # --- Konnektoren-Katalog -----------------------------------------------------
 
 @app.get("/api/connectors")

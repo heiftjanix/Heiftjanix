@@ -33,6 +33,13 @@
       "fieldtype": "Int",
       "label": "Überfällige Aufträge (Anzahl)",
       "read_only": 1
+    },
+    {
+      "fieldname": "avg_overdue_days",
+      "fieldtype": "Float",
+      "label": "Ø Verzug (Tage)",
+      "read_only": 1,
+      "precision": "1"
     }
   ],
   "permissions": [

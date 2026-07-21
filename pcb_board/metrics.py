@@ -229,12 +229,35 @@ def todo_orders(data: dict, today: date) -> dict:
             due_this_week.append(item)
     overdue.sort(key=lambda x: x["delivery_date"])
     due_this_week.sort(key=lambda x: x["delivery_date"])
+    avg_overdue_days = (
+        round(sum(i["days_overdue"] for i in overdue) / len(overdue), 1) if overdue else 0.0
+    )
     return {
         "overdue": overdue,
         "due_this_week": due_this_week,
         "overdue_net": round(sum(i["net_open"] for i in overdue), 2),
         "due_this_week_net": round(sum(i["net_open"] for i in due_this_week), 2),
+        "avg_overdue_days": avg_overdue_days,
     }
+
+
+def recent_receipts(data: dict, limit: int = 5) -> list[dict]:
+    """Die zuletzt gebuchten Wareneingänge (Purchase Receipt) mit Positionsanzahl.
+    positions kommt aus data["receipt_positions"] (name -> Anzahl), von refresh.py
+    befüllt; fehlt der Eintrag, bleibt die Positionszahl None."""
+    positions = data.get("receipt_positions") or {}
+    rows = [r for r in (data.get("purchase_receipts") or []) if _pdate(r)]
+    rows.sort(key=lambda r: (_pdate(r), r.get("name") or ""), reverse=True)
+    out = []
+    for r in rows[:limit]:
+        out.append({
+            "name": r.get("name"),
+            "supplier": r.get("supplier_name") or r.get("supplier") or "",
+            "positions": positions.get(r.get("name")),
+            "net_total": round(_net(r), 2),
+            "posting_date": _pdate(r).isoformat(),
+        })
+    return out
 
 
 def top_purchases(data: dict, limit: int = 5) -> list[dict]:
@@ -362,6 +385,7 @@ def prev_year_month(data: dict, config: dict, today: date) -> dict:
     total = 0.0
     mtd_same_day = 0.0
     ytd_through_month_end = 0.0
+    ytd_same_day = 0.0
     full_year_total = 0.0
     for inv in data.get("prev_year_invoices", []) or []:
         d = _pdate(inv)
@@ -371,6 +395,9 @@ def prev_year_month(data: dict, config: dict, today: date) -> dict:
         full_year_total += amt
         if d.month <= today.month:
             ytd_through_month_end += amt
+        # fairer Jahresvergleich: Vorjahr bis zum selben Kalendertag wie heute
+        if d.month < today.month or (d.month == today.month and d.day <= today.day):
+            ytd_same_day += amt
         if d.month == today.month:
             total += amt
             if d.day <= today.day:
@@ -391,56 +418,91 @@ def prev_year_month(data: dict, config: dict, today: date) -> dict:
         "total": round(total, 2),
         "mtd_same_day": round(mtd_same_day, 2),
         "ytd_through_month_end": round(ytd_through_month_end, 2),
+        "ytd_same_day": round(ytd_same_day, 2),
         "full_year_total": round(full_year_total, 2),
         "full_year_profit": round(full_year_profit, 2),
     }
 
 
 def profit_history(data: dict, config: dict, today: date) -> dict:
-    """Gewinn/Verlust je Monat des laufenden Jahres: Netto-Rechnungsumsatz minus
-    Wareneingänge des jeweiligen Monats minus fixe Kosten (Personal + Miete, als
-    konstant angenommen — Annahme laut Anforderung). Vortrag = Summe der
-    ABGESCHLOSSENEN Monate; ytd_profit zusätzlich inkl. laufendem Teilmonat.
-    Setzt voraus, dass invoices/purchase_receipts bis Jahresanfang zurückreichen."""
-    fixed = float(config.get("personnel_costs_monthly") or 0) + float(config.get("rent_monthly") or 0)
+    """Gewinn/Verlust je Monat, KUMULIERT SEIT DEM VORJAHR: Netto-Rechnungsumsatz
+    minus Wareneingänge des jeweiligen Monats minus fixe Kosten (Personal + Miete,
+    als konstant angenommen — Annahme laut Anforderung). Die kumulierte Spalte
+    läuft durchgehend vom Januar des Vorjahres bis zum laufenden Monat, das
+    laufende Jahr baut also auf dem Vorjahresergebnis auf.
 
-    revenue: dict[int, float] = defaultdict(float)
-    for inv in data.get("invoices", []) or []:
+    - carry_forward: kumulierter G/V der abgeschlossenen Monate des LAUFENDEN
+      Jahres (unverändert, für die „Vortrag <Jahr>"-Kachel).
+    - since_prev_total: kumuliert Vorjahr-Anfang bis heute (inkl. laufendem Monat).
+    - since_prev_completed: dasselbe bis zum letzten ABGESCHLOSSENEN Monat.
+    - trend: G/V des letzten abgeschlossenen Monats (Richtung der Kumulierten).
+    Setzt voraus, dass invoices bis Jahresanfang und prev_year_invoices/
+    purchase_receipts bis Vorjahresanfang zurückreichen."""
+    fixed = float(config.get("personnel_costs_monthly") or 0) + float(config.get("rent_monthly") or 0)
+    prev_year = today.year - 1
+
+    revenue: dict[tuple[int, int], float] = defaultdict(float)
+    for inv in list(data.get("invoices", []) or []) + list(data.get("prev_year_invoices", []) or []):
         d = _pdate(inv)
-        if d and d.year == today.year and d <= today:
-            revenue[d.month] += _net(inv)
-    goods: dict[int, float] = defaultdict(float)
+        if d and d <= today:
+            revenue[(d.year, d.month)] += _net(inv)
+    goods: dict[tuple[int, int], float] = defaultdict(float)
     for pr in data.get("purchase_receipts", []) or []:
         d = _pdate(pr)
-        if d and d.year == today.year and d <= today:
-            goods[d.month] += _net(pr)
+        if d and d <= today:
+            goods[(d.year, d.month)] += _net(pr)
 
     months = []
-    carry = 0.0
-    for m in range(1, today.month + 1):
-        total_costs = goods[m] + fixed
-        profit = revenue[m] - total_costs
+    cumulative = 0.0
+    carry = 0.0                       # nur laufendes Jahr, abgeschlossene Monate
+    since_prev_completed = 0.0        # alle abgeschlossenen Monate seit Vorjahr
+    y, mth = prev_year, 1
+    while (y, mth) <= (today.year, today.month):
+        total_costs = goods[(y, mth)] + fixed
+        profit = revenue[(y, mth)] - total_costs
+        cumulative += profit
+        is_current = (y == today.year and mth == today.month)
         months.append({
-            "month": f"{today.year}-{m:02d}",
-            "revenue": round(revenue[m], 2),
-            "goods_receipts": round(goods[m], 2),
+            "month": f"{y}-{mth:02d}",
+            "year": y,
+            "revenue": round(revenue[(y, mth)], 2),
+            "goods_receipts": round(goods[(y, mth)], 2),
             "fixed_costs": round(fixed, 2),
             "profit": round(profit, 2),
+            "cumulative": round(cumulative, 2),
             # Umsatz-zu-Kosten-Verhältnis fürs Monats-Ranking (>1 = profitabel);
             # ohne Kosten kein sinnvolles Verhältnis -> None, landet im Rang hinten.
-            "ratio": round(revenue[m] / total_costs, 4) if total_costs > 0 else None,
-            "is_current": m == today.month,
+            "ratio": round(revenue[(y, mth)] / total_costs, 4) if total_costs > 0 else None,
+            "is_current": is_current,
         })
-        if m < today.month:
-            carry += profit
+        if not is_current:
+            since_prev_completed += profit
+            if y == today.year:
+                carry += profit
+        mth += 1
+        if mth == 13:
+            y, mth = y + 1, 1
+
     for rank, mo in enumerate(
         sorted(months, key=lambda r: (r["ratio"] is None, -(r["ratio"] or 0))), start=1
     ):
         mo["rank"] = rank if mo["ratio"] is not None else None
+
+    # Trend der Kumulierten = G/V des letzten abgeschlossenen Monats.
+    last_completed = None
+    for mo in reversed(months):
+        if not mo["is_current"]:
+            last_completed = mo
+            break
     return {
         "months": months,
         "carry_forward": round(carry, 2),
-        "ytd_profit": round(carry + months[-1]["profit"], 2) if months else 0.0,
+        "ytd_profit": round(carry + (months[-1]["profit"] if months else 0), 2),
+        "since_prev_total": round(cumulative, 2),
+        "since_prev_completed": round(since_prev_completed, 2),
+        "prev_year": prev_year,
+        "trend_last_month": last_completed["month"] if last_completed else None,
+        "trend_value": last_completed["profit"] if last_completed else None,
         "fixed_costs_monthly": round(fixed, 2),
     }
 
@@ -583,6 +645,27 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
         })
     tips.sort(key=lambda t: t["impact_eur"], reverse=True)
 
+    # Durchlaufzeit-Analyse: wie lange liegen die noch offenen „To Bill"-
+    # Lieferscheine schon (Lieferschein erstellt → noch nicht abgerechnet)?
+    # Das ist die aktionable Kennzahl (Backlog, der abgerechnet werden sollte);
+    # ehrlich als „offen/wartend" bezeichnet, nicht als realisierte Ø-Zeit.
+    open_ages = sorted(
+        it["age_days"] for it in (ready + in_transit + unknown) if it.get("age_days") is not None
+    )
+    if open_ages:
+        n = len(open_ages)
+        mid = n // 2
+        median_age = open_ages[mid] if n % 2 else (open_ages[mid - 1] + open_ages[mid]) / 2
+        throughput = {
+            "open_count": n,
+            "avg_open_age_days": round(sum(open_ages) / n, 1),
+            "median_open_age_days": round(median_age, 1),
+            "max_open_age_days": open_ages[-1],
+        }
+    else:
+        throughput = {"open_count": 0, "avg_open_age_days": 0.0,
+                      "median_open_age_days": 0.0, "max_open_age_days": 0}
+
     return {
         "as_of": today.isoformat(),
         "company": config["company"],
@@ -595,6 +678,7 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
         "top_customers": top_customers(data, today),
         "top_suppliers": top_suppliers(data, today),
         "product_margins": product_margins(data),
+        "recent_receipts": recent_receipts(data),
         "prev_year": prev_year_month(data, config, today),
         # Umsatz laufendes Jahr (Jahresanfang bis heute) — Gegenstück zu
         # prev_year.ytd_through_month_end.
@@ -626,6 +710,7 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
             "stale": stale,
             "ready_count": len(ready),
             "total_open_count": len(ready) + len(in_transit) + len(unknown),
+            "throughput": throughput,
         },
         "tips": tips,
     }

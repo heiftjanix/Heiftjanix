@@ -112,6 +112,27 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
 - **Postfach-Zugriff:** `PCB Board Mail Token` speichert den MSAL-Token-Cache pro
   Nutzer (Frappe-Password-Feld, verschlüsselt); jeder Nutzer sieht nur sein eigenes
   + die in den Settings konfigurierten geteilten Postfächer.
+- **Reiter-Struktur:** vier Tabs — **Posteingang**, **Materialwirtschaft**
+  (früher „ToDo" + „Abrechnung": Liefertermine + ausgehende Lieferscheine),
+  **GuV** (früher „Umsatz" + „Kosten") und **Zuweisungen**. Die unten genannten
+  „Umsatz"/„Kosten"-Inhalte liegen jetzt gemeinsam im GuV-Tab, „ToDo"/
+  „Abrechnung" gemeinsam in der Materialwirtschaft.
+- **Materialwirtschaft:** Eine Kachel „Liefertermine: diese Woche oder überfällig"
+  (überfällige + diese Woche fällige Aufträge in einer Tabelle) mit Liefertreue-
+  Analyse (Ø Verzug in Tagen + Vorwochen-Trend), und eine Kachel „Ausgehende
+  Pakete" (alle offenen Lieferscheine — zugestellt/unterwegs/alt — in einer
+  Tabelle) mit Durchlaufzeit-Analyse (Ø/Median Wartezeit der offenen Lieferscheine
+  bis zur Abrechnung).
+- **Posteingang-Feinschliff:** kompaktere Zähl-Kacheln; feste Farbe je Postfach
+  (Rand + Chip), sodass die Herkunft einer Mail auf einen Blick erkennbar ist;
+  eine aufgeklappte Mail-Vorschau bleibt über Hintergrund-Refreshs hinweg offen,
+  bis sie aktiv geschlossen wird.
+- **GuV-Erweiterungen:** „Letzte 5 Wareneingänge" (WE-Nr., Lieferant, Positionen,
+  Gesamtsumme) im Kostenteil; die Gewinn/Verlust-Tabelle läuft **kumuliert seit
+  dem Vorjahr** durch (das laufende Jahr baut auf dem Vorjahresergebnis auf) mit
+  Trend-Indikator; eine Kachel „Gesamt seit &lt;Vorjahr&gt;" führt den Vorjahres-G/V
+  mit dem laufenden Vortrag fort. Der Vorjahresmonats-Trend vergleicht die
+  Monatsprognose mit dem vollen Vorjahresmonat (unter Vorjahr → rot).
 - **Nur ungelesene Mails:** Der Graph-Abruf filtert auf `isRead eq false` —
   gelesene Mails gelten als erledigt und tauchen weder in der Triage noch im
   Posteingang auf. (Der frühere „● ungelesen"-Badge entfällt dadurch — er wäre

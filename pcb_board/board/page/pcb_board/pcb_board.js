@@ -21,6 +21,7 @@ function PCBBoard(page) {
 	this.selCat = 'all';
 	this.q = '';
 	this.metrics = null;
+	this._openMids = {};
 
 	this.injectStyle();
 	this.$root.html(this.shellHtml());
@@ -129,17 +130,13 @@ PCBBoard.prototype.shellHtml = function () {
 		'</div></div>' +
 		'<div class="tabs">' +
 		'<button class="active" data-tab="mail">📥 Posteingang</button>' +
-		'<button data-tab="todo">📋 ToDo</button>' +
-		'<button data-tab="revenue">📊 Umsatz</button>' +
-		'<button data-tab="billing">🧾 Abrechnung</button>' +
-		'<button data-tab="costs">💸 Kosten</button>' +
+		'<button data-tab="material">📦 Materialwirtschaft</button>' +
+		'<button data-tab="guv">📊 GuV</button>' +
 		'<button data-tab="assign">👤 Zuweisungen</button>' +
 		'</div>' +
 		'<div class="tab-panel active" id="pcb-tab-mail"><p class="muted">Lade Daten …</p></div>' +
-		'<div class="tab-panel" id="pcb-tab-todo"></div>' +
-		'<div class="tab-panel" id="pcb-tab-revenue"></div>' +
-		'<div class="tab-panel" id="pcb-tab-billing"></div>' +
-		'<div class="tab-panel" id="pcb-tab-costs"></div>' +
+		'<div class="tab-panel" id="pcb-tab-material"></div>' +
+		'<div class="tab-panel" id="pcb-tab-guv"></div>' +
 		'<div class="tab-panel" id="pcb-tab-assign"><p class="muted">Lade Daten …</p></div>' +
 		'<p class="foot">Nur Vorschläge — es wird nichts automatisch gesendet oder gebucht. ' +
 		'Alle Beträge netto.</p>' +
@@ -375,14 +372,23 @@ PCBBoard.prototype.renderAll = function () {
 	var next = ' · nächster Refresh in ' + this.nextRefreshIn();
 	this.$root.find('#pcb-stand').text('Stand ' + stand + duration + next);
 	this.$root.find('#pcb-tab-mail').html(this.mailTabHtml(m));
-	this.$root.find('#pcb-tab-todo').html(this.todoTabHtml(m));
-	this.$root.find('#pcb-tab-revenue').html(this.revenueTabHtml(m));
-	this.$root.find('#pcb-tab-billing').html(this.billingTabHtml(m));
-	this.$root.find('#pcb-tab-costs').html(this.costsTabHtml(m));
+	this.$root.find('#pcb-tab-material').html(this.materialTabHtml(m));
+	this.$root.find('#pcb-tab-guv').html(this.guvTabHtml(m));
 	this.bindMailInteractions();
 };
 
-PCBBoard.prototype.todoTabHtml = function (m) {
+// Materialwirtschaft = frühere Tabs „ToDo" (Liefertermine) + „Abrechnung"
+// (ausgehende Pakete/Lieferscheine), zusammengefasst auf je eine Kachel.
+PCBBoard.prototype.materialTabHtml = function (m) {
+	return this.deliveryDatesHtml(m) + this.outgoingPackagesHtml(m);
+};
+
+// GuV = frühere Tabs „Umsatz" + „Kosten".
+PCBBoard.prototype.guvTabHtml = function (m) {
+	return this.revenueTabHtml(m) + this.costsTabHtml(m);
+};
+
+PCBBoard.prototype.deliveryDatesHtml = function (m) {
 	var self = this;
 	var t = m.todo || {};
 	var overdue = t.overdue || [];
@@ -392,44 +398,65 @@ PCBBoard.prototype.todoTabHtml = function (m) {
 		return '<a href="/app/sales-order/' + encodeURIComponent(name) + '" target="_blank">' +
 			self.esc(name) + '</a>';
 	}
-	function table(rows, withDelay) {
-		var body = rows.map(function (r) {
-			var delay = '';
-			if (withDelay) {
-				delay = '<td class="num" style="color:var(--critical)">' +
-					(r.days_overdue > 0 ? r.days_overdue + ' Tag(e)' : 'heute') + '</td>';
-			}
-			return '<tr><td>' + soLink(r.name) + '</td><td>' + self.esc(r.customer || '') + '</td>' +
-				'<td>' + self.esc(frappe.datetime.str_to_user(r.delivery_date)) + '</td>' + delay +
-				'<td class="num">' + self.eur(r.net_open) + '</td></tr>';
-		}).join('');
-		return '<table class="tbl"><thead><tr><th>Auftrag</th><th>Kunde</th><th>Liefertermin</th>' +
-			(withDelay ? '<th class="num">Verzug</th>' : '') +
-			'<th class="num">Offen (netto)</th></tr></thead><tbody>' + body + '</tbody></table>';
-	}
+	// Eine gemeinsame, nach Liefertermin sortierte Liste (überfällig zuerst).
+	var rows = overdue.map(function (r) { return { r: r, kind: 'overdue' }; })
+		.concat(week.map(function (r) { return { r: r, kind: 'week' }; }));
+	var body = rows.map(function (o) {
+		var r = o.r;
+		var badge = o.kind === 'overdue'
+			? (r.days_overdue > 0
+				? '<span class="dot-hi">' + r.days_overdue + ' Tag(e) überfällig</span>'
+				: '<span class="dot-hi">heute fällig</span>')
+			: '<span class="pill info">diese Woche</span>';
+		return '<tr><td>' + soLink(r.name) + '</td><td>' + self.esc(r.customer || '') + '</td>' +
+			'<td>' + self.esc(frappe.datetime.str_to_user(r.delivery_date)) + '</td>' +
+			'<td>' + badge + '</td>' +
+			'<td class="num">' + self.eur(r.net_open) + '</td></tr>';
+	}).join('');
+	var table = rows.length
+		? '<table class="tbl"><thead><tr><th>Auftrag</th><th>Kunde</th><th>Liefertermin</th>' +
+			'<th>Status</th><th class="num">Offen (netto)</th></tr></thead><tbody>' + body + '</tbody></table>'
+		: '<p class="muted">Nichts diese Woche oder überfällig — alles im Plan. ✅</p>';
 
-	var trend = '';
+	// Liefertreue-Analyse: Ø Verzug (Tage) + Trend vs. Vorwoche (aus KPI-Snapshot).
+	var avg = t.avg_overdue_days || 0;
+	var trendHtml = '';
+	if (t.trend && t.trend.prev_avg_overdue_days != null) {
+		var da = t.trend.delta_avg_days || 0;
+		var better = da < 0;
+		var arrow = da === 0 ? '▶' : (better ? '▼' : '▲');
+		var color = da === 0 ? 'var(--text-secondary)' : (better ? 'var(--good)' : 'var(--critical)');
+		trendHtml = ' · <span style="color:' + color + ';font-weight:650" title="Ø Verzug vor einer Woche: ' +
+			self.esc(String(t.trend.prev_avg_overdue_days)) + ' Tage (Stand ' +
+			self.esc(frappe.datetime.str_to_user(t.trend.prev_date)) + ')">' + arrow + ' ' +
+			(da > 0 ? '+' : (da < 0 ? '−' : '±')) + Math.abs(da) + ' Tage ggü. Vorwoche</span>';
+	} else {
+		trendHtml = ' · <span class="muted">Vorwochen-Trend ab ~1 Woche Datenhistorie</span>';
+	}
+	var netTrend = '';
 	if (t.trend) {
 		var dn = t.trend.delta_net || 0;
-		var better = dn < 0;
-		var arrow = dn === 0 ? '▶' : (better ? '▼' : '▲');
-		var color = dn === 0 ? 'var(--text-secondary)' : (better ? 'var(--good)' : 'var(--critical)');
-		var sign = dn > 0 ? '+' : (dn < 0 ? '−' : '±');
-		trend = ' <span style="color:' + color + ';font-weight:650" title="Vergleich mit Stand vom ' +
-			self.esc(frappe.datetime.str_to_user(t.trend.prev_date)) + ' (' + self.eur(t.trend.prev_net) + ')">' +
-			arrow + ' ' + sign + self.eur(Math.abs(dn)) + ' ggü. Vorwoche</span>';
+		var b2 = dn < 0;
+		netTrend = ' <span style="color:' + (dn === 0 ? 'var(--text-secondary)' : (b2 ? 'var(--good)' : 'var(--critical)')) +
+			';font-weight:650">' + (dn === 0 ? '▶' : (b2 ? '▼' : '▲')) + ' ' +
+			(dn > 0 ? '+' : (dn < 0 ? '−' : '±')) + self.eur(Math.abs(dn)) + ' ggü. Vorwoche</span>';
 	}
-	var secOverdue = '<section class="card"><div class="sec-h"><h2>🔴 Liefertermin heute oder überfällig</h2>' +
-		'<span class="muted">' + overdue.length + ' Auftrag/Aufträge · ' + self.eur(t.overdue_net || 0) + ' offen' + trend + '</span></div>' +
-		(overdue.length ? table(overdue, true)
-			: '<p class="muted">Nichts überfällig — alles im Plan. ✅</p>') +
-		'</section>';
-	var secWeek = '<section class="card"><div class="sec-h"><h2>🟡 Diese Woche fällig</h2>' +
-		'<span class="muted">sollte diese Woche fertig werden · ' + self.eur(t.due_this_week_net || 0) + ' offen</span></div>' +
-		(week.length ? table(week, false)
-			: '<p class="muted">Keine weiteren Liefertermine in dieser Woche.</p>') +
-		'</section>';
-	return secOverdue + secWeek;
+	var reliability =
+		'<div class="tiles" style="margin-bottom:12px">' +
+		'<div class="tile"><p class="k">Überfällig (offen, netto)</p>' +
+		'<div class="v" style="color:' + (overdue.length ? 'var(--critical)' : 'var(--good)') + '">' +
+		self.eur(t.overdue_net || 0) + '</div><div class="m">' + overdue.length + ' Auftrag/Aufträge' + netTrend + '</div></div>' +
+		'<div class="tile"><p class="k">Ø Verzug (überfällige Aufträge)</p>' +
+		'<div class="v">' + (avg ? String(avg).replace('.', ',') + ' Tage' : '—') + '</div>' +
+		'<div class="m">Liefertreue' + trendHtml + '</div></div>' +
+		'<div class="tile"><p class="k">Diese Woche fällig (offen, netto)</p>' +
+		'<div class="v">' + self.eur(t.due_this_week_net || 0) + '</div>' +
+		'<div class="m">' + week.length + ' Auftrag/Aufträge · sollten diese Woche fertig werden</div></div>' +
+		'</div>';
+
+	return '<section class="card"><div class="sec-h"><h2>📅 Liefertermine: diese Woche oder überfällig</h2>' +
+		'<span class="muted">Handelsware & Aufträge nicht übersehen</span></div>' +
+		reliability + table + '</section>';
 };
 
 PCBBoard.prototype.costsTabHtml = function (m) {
@@ -458,7 +485,7 @@ PCBBoard.prototype.costsTabHtml = function (m) {
 		'</div>';
 	return '<section class="card"><div class="sec-h"><h2>Kosten</h2>' +
 		'<span class="muted">laufender Monat</span></div>' + tiles + '</section>' +
-		this.topPurchasesHtml(m) + this.topSuppliersHtml(m) +
+		this.recentReceiptsHtml(m) + this.topPurchasesHtml(m) + this.topSuppliersHtml(m) +
 		this.productMarginsHtml(m) + this.profitHistoryHtml(m);
 };
 
@@ -540,10 +567,9 @@ PCBBoard.prototype.profitHistoryHtml = function (m) {
 	}
 	var names = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
 	var medals = { 1: '🥇', 2: '🥈', 3: '🥉' };
-	var cum = 0;
 	var rows = months.map(function (r) {
-		cum += r.profit;
-		var lbl = names[parseInt(r.month.slice(5), 10) - 1] || r.month;
+		var mi = parseInt(r.month.slice(5), 10) - 1;
+		var lbl = (names[mi] || r.month) + ' ' + r.month.slice(0, 4);
 		if (r.is_current) lbl += ' (läuft)';
 		function colored(v) {
 			return '<td class="num" style="color:' + (v >= 0 ? 'var(--good)' : 'var(--critical)') +
@@ -556,21 +582,60 @@ PCBBoard.prototype.profitHistoryHtml = function (m) {
 				(r.ratio != null ? ' <span class="muted" style="font-size:.78rem">(' +
 					String(r.ratio.toFixed(2)).replace('.', ',') + '×)</span>' : '') + '</td>';
 		}
-		return '<tr' + (r.is_current ? ' style="opacity:.75"' : '') + '><td>' + self.esc(lbl) + '</td>' +
+		// Jahreswechsel optisch markieren.
+		var boundary = (mi === 0) ? ' style="border-top:2px solid var(--border)"' : '';
+		var opacity = r.is_current ? ' style="opacity:.75"' : '';
+		var trAttr = boundary || opacity;
+		return '<tr' + trAttr + '><td>' + self.esc(lbl) + '</td>' +
 			'<td class="num">' + self.eur(r.revenue) + '</td>' +
 			'<td class="num">' + self.eur(r.goods_receipts) + '</td>' +
 			'<td class="num">' + self.eur(r.fixed_costs) + '</td>' +
-			colored(r.profit) + colored(cum) + rank + '</tr>';
+			colored(r.profit) + colored(r.cumulative) + rank + '</tr>';
 	}).join('');
-	return '<section class="card"><figcaption>Gewinn/Verlust je Monat (' +
-		self.esc((m.as_of || '').slice(0, 4)) + ') — Rang = bestes Umsatz-zu-Kosten-Verhältnis</figcaption>' +
+
+	// Trend-Indikator für die kumulierte Kurve (letzter abgeschlossener Monat).
+	var trendBadge = '';
+	if (ph.trend_value != null) {
+		var up = ph.trend_value >= 0;
+		trendBadge = ' <span style="color:' + (up ? 'var(--good)' : 'var(--critical)') +
+			';font-weight:650">' + (up ? '▲ steigend' : '▼ fallend') + ' (' +
+			(up ? '+' : '−') + self.eur(Math.abs(ph.trend_value)) + ' im ' +
+			self.esc(String(ph.trend_last_month || '')) + ')</span>';
+	}
+	var sinceTotal = ph.since_prev_total != null ? ph.since_prev_total : 0;
+	return '<section class="card"><figcaption>Gewinn/Verlust je Monat — kumuliert seit ' +
+		self.esc(String(ph.prev_year != null ? ph.prev_year : '')) +
+		' (Rang = bestes Umsatz-zu-Kosten-Verhältnis)</figcaption>' +
+		'<p class="m" style="margin:0 0 8px">Kumuliert bis heute: <b style="color:' +
+		(sinceTotal >= 0 ? 'var(--good)' : 'var(--critical)') + '">' + self.eur(sinceTotal) + '</b>' +
+		trendBadge + '</p>' +
 		'<table class="tbl"><thead><tr><th>Monat</th><th class="num">Umsatz</th>' +
 		'<th class="num">Wareneingänge</th><th class="num">Fixkosten</th>' +
-		'<th class="num">Gewinn/Verlust</th><th class="num">kumuliert</th><th class="num">Rang</th></tr></thead>' +
+		'<th class="num">Gewinn/Verlust</th><th class="num">kumuliert seit ' +
+		self.esc(String(ph.prev_year != null ? ph.prev_year : '')) + '</th><th class="num">Rang</th></tr></thead>' +
 		'<tbody>' + rows + '</tbody></table>' +
 		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Annahme: Personalkosten und Miete ' +
 		'gleichbleibend (' + self.eur(ph.fixed_costs_monthly || 0) + '/Monat, PCB Board Settings); ' +
 		'variable Kosten = im jeweiligen Monat gebuchte Wareneingänge.</p></section>';
+};
+
+PCBBoard.prototype.recentReceiptsHtml = function (m) {
+	var self = this;
+	var items = m.recent_receipts || [];
+	if (!items.length) {
+		return '';
+	}
+	var rows = items.map(function (r) {
+		return '<tr><td><a href="/app/purchase-receipt/' + encodeURIComponent(r.name) +
+			'" target="_blank">' + self.esc(r.name) + '</a></td>' +
+			'<td>' + self.esc(r.supplier) + '</td>' +
+			'<td class="num">' + (r.positions != null ? r.positions : '—') + '</td>' +
+			'<td class="num">' + self.eur(r.net_total) + '</td></tr>';
+	}).join('');
+	return '<section class="card"><figcaption>Letzte 5 Wareneingänge</figcaption>' +
+		'<table class="tbl"><thead><tr><th>WE-Nr.</th><th>Lieferant</th>' +
+		'<th class="num">Positionen</th><th class="num">Gesamt (netto)</th></tr></thead>' +
+		'<tbody>' + rows + '</tbody></table></section>';
 };
 
 PCBBoard.prototype.mailTabHtml = function (m) {
@@ -592,9 +657,20 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 			'<button class="btn ghost small" id="pcb-disconnect">Trennen</button></div>';
 	}
 
+	// Feste Farbe je Postfach — auf einen Blick erkennbar, woher eine Mail kommt.
+	var mbPalette = ['#2a78d6', '#1baf7a', '#eda100', '#c30f3b', '#7b52d6', '#0c8a8c', '#d0631b'];
+	this._mbColors = {};
+	var self2 = this;
+	boxes.forEach(function (b, idx) {
+		self2._mbColors[b.name] = mbPalette[idx % mbPalette.length];
+	});
+	function mbColor(name) { return self2._mbColors[name] || 'var(--brand-teal)'; }
+
 	var chips = '<button class="chip active" data-mb="all">Alle</button>';
 	boxes.forEach(function (b) {
-		chips += '<button class="chip" data-mb="' + self.esc(b.name) + '">' +
+		var col = mbColor(b.name);
+		chips += '<button class="chip" data-mb="' + self.esc(b.name) + '" ' +
+			'style="border-left:4px solid ' + col + '">' +
 			self.esc(self.shortBox(b.name)) + ' <span class="chip-n">' + b.total + '</span></button>';
 	});
 
@@ -657,11 +733,14 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 				: '') +
 			(mid ? '<button class="mc-assign-btn" type="button">+ Zuweisen</button>' : '') +
 			'</span>';
+		var col = mbColor(i.mailbox);
 		var head = '<div class="mc-head' + (can ? '' : ' nodraft') + '">' + dot + pill +
-			'<span class="mc-box">' + self.esc(self.shortBox(i.mailbox)) + '</span>' +
+			'<span class="mc-box" style="color:' + col + ';background:color-mix(in srgb,' + col + ' 14%,transparent)">' +
+			self.esc(self.shortBox(i.mailbox)) + '</span>' +
 			'<span class="mc-sender">' + self.esc(sender) + '</span>' +
 			subjHtml +
 			'<span class="mc-reason">' + self.esc(reason) + '</span>' + actions + chev + '</div>';
+		var isOpen = can && self._openMids && self._openMids[mid];
 		var draftBlock = '';
 		if (can) {
 			var inner = '';
@@ -675,9 +754,10 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 					'<pre class="draft-text">' + self.esc(draft) + '</pre>' +
 					'<button class="copybtn" type="button">📋 Kopieren</button>';
 			}
-			draftBlock = '<div class="mc-draft" hidden>' + inner + '</div>';
+			draftBlock = '<div class="mc-draft"' + (isOpen ? '' : ' hidden') + '>' + inner + '</div>';
 		}
-		return '<div class="mailcard' + (can ? ' has-draft' : '') + '" data-mb="' + self.esc(i.mailbox) + '" ' +
+		return '<div class="mailcard' + (can ? ' has-draft' : '') + (isOpen ? ' open' : '') +
+			'" style="border-left:4px solid ' + col + '" data-mb="' + self.esc(i.mailbox) + '" ' +
 			'data-cat="' + (rel ? 'relevant' : 'info') + '" data-prio="' + prio + '" data-mid="' + self.esc(mid) + '" ' +
 			'data-text="' + self.esc(searchTxt) + '">' + head + draftBlock + '</div>';
 	});
@@ -750,8 +830,16 @@ PCBBoard.prototype.bindMailInteractions = function () {
 	root.find('.mailcard.has-draft .mc-head').on('click', function () {
 		var $card = $(this).parent();
 		var $d = $card.find('.mc-draft');
-		$card.toggleClass('open');
-		$d.prop('hidden', !$card.hasClass('open'));
+		var open = !$card.hasClass('open');
+		$card.toggleClass('open', open);
+		$d.prop('hidden', !open);
+		// Offen-Zustand merken, damit ein Hintergrund-Refresh (Neurendern) die
+		// Vorschau nicht zuklappt — bleibt offen, bis aktiv geschlossen wird.
+		var mid = $card.data('mid');
+		if (mid) {
+			if (open) self._openMids[mid] = true;
+			else delete self._openMids[mid];
+		}
 	});
 	root.find('.copybtn').on('click', function (e) {
 		e.stopPropagation();
@@ -826,6 +914,30 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 	var ytd = m.ytd_revenue || 0;
 	var pyLabelYear = py.year || '';
 
+	// „Gesamt seit <Vorjahr>" — führt den Vorjahres-G/V mit dem laufenden Vortrag
+	// fort (= kumulierter G/V aller abgeschlossenen Monate seit Vorjahresanfang),
+	// mit Trend = Richtung des letzten abgeschlossenen Monats.
+	var ph = m.profit_history || {};
+	var sincePrevTile = '';
+	if (ph.prev_year != null && ph.since_prev_completed != null) {
+		var sp = ph.since_prev_completed;
+		var tv = ph.trend_value;
+		var trendHtml = '';
+		if (tv != null) {
+			var upT = tv >= 0;
+			trendHtml = ' <span style="color:' + (upT ? 'var(--good)' : 'var(--critical)') +
+				';font-weight:650;font-size:.8rem" title="letzter abgeschlossener Monat ' +
+				self.esc(String(ph.trend_last_month || '')) + '">' + (upT ? '▲ +' : '▼ −') +
+				self.eur(Math.abs(tv)) + '</span>';
+		}
+		sincePrevTile =
+			'<div class="tile"><p class="k">Gesamt seit ' + self.esc(String(ph.prev_year)) + '</p>' +
+			'<div class="v" style="color:' + (sp >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
+			self.eur(sp) + '</div>' +
+			'<div class="m">G/V ' + self.esc(String(ph.prev_year)) + ' + Vortrag ' + self.esc(year) +
+			', kumuliert' + trendHtml + '</div></div>';
+	}
+
 	var tiles =
 		'<div class="tiles rev-tiles">' +
 		'<div class="tile hero"><p class="k">Ist-Umsatz (Netto)</p><div class="v">' + self.eur(fc.mtd) + '</div>' +
@@ -844,29 +956,32 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 		'<div class="v" style="color:' + (carry >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
 		self.eur(carry) + '</div>' +
 		'<div class="m">kumulierter Gewinn/Verlust der abgeschlossenen Monate</div></div>' +
+		sincePrevTile +
 		'</div>';
 
 	// Zweite Kachel-Reihe: Vorjahreswerte (nur wenn Vorjahresdaten vorhanden).
 	var pyTiles = '';
 	if (py.full_year_total || py.total) {
-		var monthDelta = py.mtd_same_day > 0
-			? deltaArrow(fc.mtd - py.mtd_same_day, py.mtd_same_day,
-				'Ist heute vs. ' + monthName + ' ' + pyLabelYear + ' bis zum selben Tag (' +
-				self.eur(py.mtd_same_day) + ')')
+		// Monatsvergleich full-month-to-full-month: Prognose (projizierter voller
+		// Monat) ggü. dem vollen Vorjahresmonat — so bedeutet „unter Vorjahr" auch
+		// rot, unabhängig vom Tag im Monat.
+		var monthDelta = py.total > 0
+			? deltaArrow(fc.forecast - py.total, py.total,
+				'Prognose ' + self.eur(fc.forecast) + ' ggü. vollem Vorjahresmonat ' + self.eur(py.total))
 			: '';
 		var pyp = py.full_year_profit || 0;
 		pyTiles =
 			'<div class="tiles rev-tiles py-tiles">' +
 			'<div class="tile"><p class="k">Vorjahresmonat ' + self.esc(monthName + ' ' + pyLabelYear) + '</p>' +
 			'<div class="v">' + self.eur(py.total) + '</div>' +
-			'<div class="m">kompletter Monat' + (monthDelta ? ' · Ist heute' + monthDelta : '') + '</div></div>' +
+			'<div class="m">Prognose ' + self.eur(fc.forecast) + (monthDelta ? monthDelta : '') + '</div></div>' +
 			'<div class="tile"><p class="k">Umsatz ' + self.esc(String(pyLabelYear)) + ' gesamt</p>' +
 			'<div class="v">' + self.eur(py.full_year_total) + '</div>' +
 			'<div class="m">komplettes Vorjahr</div></div>' +
-			'<div class="tile"><p class="k">Umsatz ' + self.esc(String(pyLabelYear)) + ' bis Ende ' + self.esc(monthName) + '</p>' +
-			'<div class="v">' + self.eur(py.ytd_through_month_end) + '</div>' +
+			'<div class="tile"><p class="k">Umsatz ' + self.esc(String(pyLabelYear)) + ' bis zum selben Tag</p>' +
+			'<div class="v">' + self.eur(py.ytd_same_day) + '</div>' +
 			'<div class="m">' + self.esc(year) + ' bis heute: ' + self.eur(ytd) +
-			(py.ytd_through_month_end > 0 ? deltaArrow(ytd - py.ytd_through_month_end, py.ytd_through_month_end) : '') + '</div></div>' +
+			(py.ytd_same_day > 0 ? deltaArrow(ytd - py.ytd_same_day, py.ytd_same_day) : '') + '</div></div>' +
 			'<div class="tile"><p class="k">Gewinn/Verlust ' + self.esc(String(pyLabelYear)) + '</p>' +
 			'<div class="v" style="color:' + (pyp >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
 			(pyp >= 0 ? '+' : '−') + self.eur(Math.abs(pyp)) + '</div>' +
@@ -1009,50 +1124,62 @@ PCBBoard.prototype.tipsHtml = function (m) {
 	return '<section class="card"><figcaption>🚀 Wo wir pushen können</figcaption><ol class="tips">' + rows + '</ol></section>';
 };
 
-PCBBoard.prototype.billingGroupHtml = function (title, rows, total) {
+PCBBoard.prototype.outgoingPackagesHtml = function (m) {
 	var self = this;
-	var methodLabel = { ups: 'UPS', fallback: 'geschätzt', none: '—' };
-	if (!rows || !rows.length) {
-		return '<figcaption>' + title + '</figcaption><p class="muted">—</p>';
-	}
-	var body = rows
-		.map(function (r) {
-			var age = r.age_days;
-			var alt = age != null && age > 60 ? ' <span class="dot-hi">alt</span>' : '';
-			return '<tr><td><a href="/app/delivery-note/' + encodeURIComponent(r.name) + '" target="_blank">' + self.esc(r.name) + '</a></td><td>' + self.esc(r.customer || '') + '</td>' +
-				'<td class="num">' + self.eur(r.net_open) + '</td>' +
-				'<td>' + self.esc(r.delivered_date || r.posting_date || '—') + alt + '</td>' +
-				'<td>' + (methodLabel[r.arrival_method] || '—') + '</td></tr>';
-		})
-		.join('');
-	var tfoot = total != null
-		? '<tfoot><tr><td colspan="2">Summe</td><td class="num">' + self.eur(total) + '</td><td colspan="2"></td></tr></tfoot>'
-		: '';
-	return '<figcaption>' + title + '</figcaption><table class="tbl"><thead><tr><th>Lieferschein</th>' +
-		'<th>Kunde</th><th class="num">Netto</th><th>zugestellt / Datum</th><th>Quelle</th></tr></thead>' +
-		'<tbody>' + body + '</tbody>' + tfoot + '</table>';
-};
-
-PCBBoard.prototype.billingTabHtml = function (m) {
 	var b = m.billing;
-	function sumNet(rows) {
-		return (rows || []).reduce(function (acc, r) { return acc + (r.net_open || 0); }, 0);
+	var methodLabel = { ups: 'UPS', fallback: 'geschätzt', none: '—' };
+	// Ausgehende Pakete (Lieferscheine) in EINER Tabelle, Status als Spalte.
+	var staleNames = {};
+	(b.stale || []).forEach(function (r) { staleNames[r.name] = true; });
+	function tag(r, group) {
+		if (staleNames[r.name]) return '<span class="dot-hi">alt (>60 T.)</span>';
+		if (group === 'ready') return '<span class="pill rel">zugestellt – abrechnen</span>';
+		if (group === 'transit') return '<span class="pill info">unterwegs</span>';
+		return '<span class="muted">Status offen</span>';
 	}
-	var ready = '<section class="card">' +
-		this.billingGroupHtml('🧾 Jetzt abrechnen (Paket zugestellt) · ' + b.ready_count, b.ready, m.pipeline.ready_net) +
-		'</section>';
-	var transit = '<section class="card">' +
-		this.billingGroupHtml('⏳ Unterwegs – nach Zustellung abrechnen · ' + b.in_transit.length,
-			b.in_transit, b.in_transit.length ? m.pipeline.in_transit_net : null) +
-		'</section>';
-	var extra = '';
-	if (b.stale && b.stale.length) {
-		extra = '<section class="card">' +
-			this.billingGroupHtml('⚠️ Alte offene Lieferscheine (>60 Tage) · ' + b.stale.length,
-				b.stale, sumNet(b.stale)) +
-			'</section>';
-	}
-	return ready + transit + extra;
+	var groups = [['ready', b.ready], ['transit', b.in_transit], ['unknown', b.unknown]];
+	var rows = [];
+	groups.forEach(function (g) {
+		(g[1] || []).forEach(function (r) { rows.push({ r: r, group: g[0] }); });
+	});
+	rows.sort(function (a, z) { return (z.r.age_days || 0) - (a.r.age_days || 0); });
+	var totalNet = rows.reduce(function (acc, o) { return acc + (o.r.net_open || 0); }, 0);
+	var body = rows.map(function (o) {
+		var r = o.r;
+		return '<tr><td><a href="/app/delivery-note/' + encodeURIComponent(r.name) +
+			'" target="_blank">' + self.esc(r.name) + '</a></td>' +
+			'<td>' + self.esc(r.customer || '') + '</td>' +
+			'<td class="num">' + self.eur(r.net_open) + '</td>' +
+			'<td>' + tag(r, o.group) + '</td>' +
+			'<td class="num">' + (r.age_days != null ? r.age_days + ' T.' : '—') + '</td>' +
+			'<td>' + (methodLabel[r.arrival_method] || '—') + '</td></tr>';
+	}).join('');
+	var table = rows.length
+		? '<table class="tbl"><thead><tr><th>Lieferschein</th><th>Kunde</th><th class="num">Netto</th>' +
+			'<th>Status</th><th class="num">Alter</th><th>Zustellquelle</th></tr></thead><tbody>' + body +
+			'</tbody><tfoot><tr><td colspan="2">Summe (' + rows.length + ')</td>' +
+			'<td class="num">' + self.eur(totalNet) + '</td><td colspan="3"></td></tr></tfoot></table>'
+		: '<p class="muted">Keine offenen Lieferscheine zur Abrechnung. ✅</p>';
+
+	// Durchlaufzeit-Analyse (Backlog): wie lange warten offene Lieferscheine schon.
+	var tp = b.throughput || {};
+	var analysis =
+		'<div class="tiles" style="margin-bottom:12px">' +
+		'<div class="tile"><p class="k">Jetzt abrechenbar (zugestellt)</p>' +
+		'<div class="v" style="color:var(--good)">' + self.eur(m.pipeline.ready_net) + '</div>' +
+		'<div class="m">' + b.ready_count + ' Lieferschein(e) – direkt in Umsatz</div></div>' +
+		'<div class="tile"><p class="k">Ø Wartezeit bis Abrechnung</p>' +
+		'<div class="v">' + (tp.open_count ? String(tp.avg_open_age_days).replace('.', ',') + ' Tage' : '—') + '</div>' +
+		'<div class="m">' + (tp.open_count ? 'Median ' + String(tp.median_open_age_days).replace('.', ',') +
+			' T. · ältester ' + tp.max_open_age_days + ' T.' : 'keine offenen Lieferscheine') + '</div></div>' +
+		'<div class="tile"><p class="k">Offene Lieferscheine gesamt</p>' +
+		'<div class="v">' + (tp.open_count || 0) + '</div>' +
+		'<div class="m">warten auf Abrechnung (Lieferschein erstellt → noch nicht berechnet)</div></div>' +
+		'</div>';
+
+	return '<section class="card"><div class="sec-h"><h2>📦 Ausgehende Pakete (Lieferscheine)</h2>' +
+		'<span class="muted">zugestellt / unterwegs / alt — alles zum Abrechnen</span></div>' +
+		analysis + table + '</section>';
 };
 
 // ------------------------------------------------------------------------ CSS
@@ -1106,9 +1233,10 @@ var PCB_BOARD_CSS =
 	'border-radius:999px;padding:6px 13px;font-size:.84rem;font-weight:600;cursor:pointer}' +
 	'.chip.active{background:var(--brand-teal);color:#fff;border-color:transparent}' +
 	'.chip-n{opacity:.75;font-weight:700;margin-left:3px}' +
-	'.mini{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px}' +
-	'.mini .b{background:var(--plane);border:1px solid var(--border);border-radius:10px;padding:10px 12px}' +
-	'.mini .b .v{font-size:1.45rem;font-weight:680}.mini .b .k{font-size:.78rem;color:var(--text-secondary)}' +
+	'.mini{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}' +
+	'.mini .b{display:flex;align-items:baseline;gap:6px;background:var(--plane);border:1px solid var(--border);' +
+	'border-radius:999px;padding:4px 12px}' +
+	'.mini .b .v{font-size:1rem;font-weight:700}.mini .b .k{font-size:.74rem;color:var(--text-secondary)}' +
 	'.mailctl{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}' +
 	'.segbtns{display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden}' +
 	'.segbtns button{background:var(--surface-1);border:0;border-right:1px solid var(--border);color:var(--text-secondary);' +

@@ -247,6 +247,25 @@ def _fetch_erpnext(config: dict) -> dict:
             ignore_permissions=True,
         )
 
+    # Positionsanzahl der 5 zuletzt gebuchten Wareneingänge (für die Kosten-Übersicht).
+    recent_names = [
+        r["name"] for r in sorted(
+            purchase_receipts,
+            key=lambda r: (str(r.get("posting_date") or ""), r.get("name") or ""),
+            reverse=True,
+        )[:5]
+    ]
+    receipt_positions: dict[str, int] = {}
+    if recent_names:
+        for row in frappe.get_all(
+            "Purchase Receipt Item",
+            filters=[["parent", "in", recent_names]],
+            fields=["parent"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        ):
+            receipt_positions[row["parent"]] = receipt_positions.get(row["parent"], 0) + 1
+
     return {
         "as_of": today.isoformat(),
         "invoices": invoices,
@@ -257,6 +276,7 @@ def _fetch_erpnext(config: dict) -> dict:
         "purchase_receipt_items": purchase_receipt_items,
         "item_purchase_rates": item_purchase_rates,
         "item_bom_costs": item_bom_costs,
+        "receipt_positions": receipt_positions,
         "prev_year_invoices": prev_year_invoices,
     }
 
@@ -309,7 +329,7 @@ def _attach_todo_trend(computed: dict) -> None:
         rows = frappe.get_all(
             "PCB Board KPI Snapshot",
             filters=[["snapshot_date", "<=", (today - timedelta(days=7)).isoformat()]],
-            fields=["snapshot_date", "overdue_net", "overdue_count"],
+            fields=["snapshot_date", "overdue_net", "overdue_count", "avg_overdue_days"],
             order_by="snapshot_date desc",
             limit_page_length=1,
             ignore_permissions=True,
@@ -318,12 +338,15 @@ def _attach_todo_trend(computed: dict) -> None:
             return
         prev = rows[0]
         prev_net = float(prev.get("overdue_net") or 0)
+        prev_avg = float(prev.get("avg_overdue_days") or 0)
         todo["trend"] = {
             "prev_date": str(prev["snapshot_date"]),
             "prev_net": round(prev_net, 2),
             "prev_count": int(prev.get("overdue_count") or 0),
+            "prev_avg_overdue_days": round(prev_avg, 1),
             "delta_net": round(float(todo.get("overdue_net") or 0) - prev_net, 2),
             "delta_count": len(todo.get("overdue") or []) - int(prev.get("overdue_count") or 0),
+            "delta_avg_days": round(float(todo.get("avg_overdue_days") or 0) - prev_avg, 1),
         }
     except Exception:  # noqa: BLE001 — Trend ist Beiwerk, darf den Refresh nie abschießen
         frappe.log_error(title="PCB Board Trend-Berechnung fehlgeschlagen", message=frappe.get_traceback())
@@ -342,6 +365,7 @@ def _store_kpi_snapshot(computed: dict) -> None:
         doc.snapshot_date = snapshot_date
         doc.overdue_net = float(todo.get("overdue_net") or 0)
         doc.overdue_count = len(todo.get("overdue") or [])
+        doc.avg_overdue_days = float(todo.get("avg_overdue_days") or 0)
         doc.save(ignore_permissions=True)
     except Exception:  # noqa: BLE001 — Snapshot ist Beiwerk, darf den Refresh nie abschießen
         frappe.log_error(title="PCB Board KPI-Snapshot fehlgeschlagen", message=frappe.get_traceback())

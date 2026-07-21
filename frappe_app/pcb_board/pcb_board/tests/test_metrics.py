@@ -154,28 +154,38 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertAlmostEqual(top[1]["net_total"], 1500, delta=0.01)
         self.assertEqual([p["item_code"] for p in top], ["BT-B", "BT-A", "BT-C", "BT-D", "BT-E"])
 
-    def test_profit_history_year_months_and_carry_forward(self):
+    def test_profit_history_cumulative_since_prev_year(self):
         config = dict(CONFIG, personnel_costs_monthly=6000, rent_monthly=1200)
         ph = m.build_metrics(self._data(), config, date(2026, 7, 15))["profit_history"]
-        self.assertEqual(len(ph["months"]), 7)
-        self.assertEqual(ph["months"][0]["month"], "2026-01")
-        # Jan–Mai: keine Umsätze/Wareneingänge in den Fixtures -> je -7200 (Fixkosten)
+        # 12 Monate 2025 + 7 Monate 2026 (Jan–Jul) = 19; kumuliert seit 2025.
+        self.assertEqual(len(ph["months"]), 19)
+        self.assertEqual(ph["months"][0]["month"], "2025-01")
+        self.assertEqual(ph["prev_year"], 2025)
+        self.assertEqual(ph["months"][-1]["month"], "2026-07")
+        # 2025 komplett leer (keine Fixtures) -> je -7200 Fixkosten, 12 Monate.
         self.assertAlmostEqual(ph["months"][0]["profit"], -7200, delta=0.01)
-        # Juni: 90000 Umsatz - 9000 Wareneingang - 7200 fix = 73800
-        self.assertAlmostEqual(ph["months"][5]["profit"], 73800, delta=0.01)
-        # Juli (läuft): 20000 - 4500 - 7200 = 8300
-        jul = ph["months"][6]
+        # Juni 2026 (Index 12 + 5 = 17): 90000 - 9000 - 7200 = 73800
+        jun = ph["months"][17]
+        self.assertEqual(jun["month"], "2026-06")
+        self.assertAlmostEqual(jun["profit"], 73800, delta=0.01)
+        # Juli 2026 (läuft): 20000 - 4500 - 7200 = 8300
+        jul = ph["months"][18]
         self.assertTrue(jul["is_current"])
         self.assertAlmostEqual(jul["profit"], 8300, delta=0.01)
-        # Vortrag = abgeschlossene Monate: 5*(-7200) + 73800 = 37800
+        # Vortrag = abgeschlossene Monate LAUFENDES JAHR: 5*(-7200) + 73800 = 37800
         self.assertAlmostEqual(ph["carry_forward"], 37800, delta=0.01)
-        self.assertAlmostEqual(ph["ytd_profit"], 46100, delta=0.01)
-        # Ranking nach Umsatz-zu-Kosten-Verhältnis: Juni (90000/16200) vor Juli (20000/11700)
-        self.assertEqual(ph["months"][5]["rank"], 1)
-        self.assertAlmostEqual(ph["months"][5]["ratio"], 90000 / 16200, places=3)
-        self.assertEqual(ph["months"][6]["rank"], 2)
-        # Monate ohne Umsatz: Verhältnis 0, landen dahinter
-        self.assertGreater(ph["months"][0]["rank"], 2)
+        # kumuliert bis heute (inkl. Juli): 12*(-7200) + 37800 + 8300 = -40300
+        self.assertAlmostEqual(ph["since_prev_total"], -40300, delta=0.01)
+        # abgeschlossen (ohne laufenden Juli): -40300 - 8300 = -48600
+        self.assertAlmostEqual(ph["since_prev_completed"], -48600, delta=0.01)
+        # kumulierte Spalte des letzten Eintrags == since_prev_total
+        self.assertAlmostEqual(ph["months"][-1]["cumulative"], -40300, delta=0.01)
+        # Trend = letzter abgeschlossener Monat (Juni 2026)
+        self.assertEqual(ph["trend_last_month"], "2026-06")
+        self.assertAlmostEqual(ph["trend_value"], 73800, delta=0.01)
+        # Ranking: Juni 2026 bestes Verhältnis -> Rang 1
+        self.assertEqual(jun["rank"], 1)
+        self.assertEqual(jul["rank"], 2)
 
     def test_top_customers_share_of_mtd(self):
         data = self._data()
@@ -258,9 +268,37 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertAlmostEqual(py["total"], 11000, delta=0.01)          # nur Juli 2025
         self.assertAlmostEqual(py["mtd_same_day"], 6000, delta=0.01)    # Juli bis 15.
         self.assertAlmostEqual(py["ytd_through_month_end"], 20000, delta=0.01)  # bis Ende Juli
+        # bis zum selben Tag (15.): Feb 9000 + Juli≤15. 6000 = 15000
+        self.assertAlmostEqual(py["ytd_same_day"], 15000, delta=0.01)
         self.assertAlmostEqual(py["full_year_total"], 50000, delta=0.01)        # inkl. November
         # G/V 2025 = 50000 − 8000 Wareneingänge − 12 × 1500 fix = 24000
         self.assertAlmostEqual(py["full_year_profit"], 24000, delta=0.01)
+
+    def test_recent_receipts_sorted_with_positions(self):
+        data = self._data()
+        data["receipt_positions"] = {"PR-2": 3, "PR-1": 1}
+        rr = m.build_metrics(data, CONFIG, date(2026, 7, 15))["recent_receipts"]
+        self.assertEqual([r["name"] for r in rr], ["PR-2", "PR-1", "PR-0"])
+        self.assertEqual(rr[0]["positions"], 3)
+        self.assertAlmostEqual(rr[0]["net_total"], 1500, delta=0.01)
+        self.assertIsNone(rr[2]["positions"])   # keine Angabe -> None
+
+    def test_billing_throughput_open_age(self):
+        tp = m.build_metrics(self._data(), CONFIG, date(2026, 7, 15))["billing"]["throughput"]
+        # offene Lieferscheine: LS-A (4 T.), LS-B (1 T.), LS-OLD (440 T.)
+        self.assertEqual(tp["open_count"], 3)
+        self.assertAlmostEqual(tp["avg_open_age_days"], (1 + 4 + 440) / 3, delta=0.05)
+        self.assertAlmostEqual(tp["median_open_age_days"], 4, delta=0.01)
+        self.assertEqual(tp["max_open_age_days"], 440)
+
+    def test_todo_avg_overdue_days(self):
+        data = self._data()
+        data["open_sales_orders"] = [
+            {"name": "AB-A", "delivery_date": "2026-07-05", "net_open": 500},   # 10 T. überfällig
+            {"name": "AB-B", "delivery_date": "2026-07-13", "net_open": 300},   # 2 T. überfällig
+        ]
+        todo = m.build_metrics(data, CONFIG, date(2026, 7, 15))["todo"]
+        self.assertAlmostEqual(todo["avg_overdue_days"], 6.0, delta=0.01)
 
     def test_ytd_revenue_sums_current_year_only(self):
         metrics = m.build_metrics(self._data(), CONFIG, date(2026, 7, 15))

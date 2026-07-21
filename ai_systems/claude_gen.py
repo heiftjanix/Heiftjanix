@@ -77,8 +77,13 @@ def friendly_error(exc: Exception, model: str) -> str:
     low = detail.lower()
 
     if "credit balance" in low or "insufficient" in low or "billing" in low:
-        return ("Kein Claude-Guthaben mehr. Bitte unter console.anthropic.com Guthaben "
-                "aufladen und es dann erneut versuchen.")
+        return ("Claude meldet für DIESEN API-Key „zu geringes Guthaben“. Wenn dein "
+                "Konto Guthaben hat (aber es trotzdem nicht klappt), gehört der Key "
+                "meist zu einer ANDEREN Organisation oder einem Workspace ohne Budget. "
+                "Bitte im Anthropic-Console oben links die Organisation prüfen, in der "
+                "das Guthaben liegt, und dort einen neuen API-Key erzeugen — diesen dann "
+                "unter „Datei → Server-Konfiguration (.env)“ eintragen. "
+                f"(Originalmeldung von Claude: {detail[:160]})")
     if status == 401 or "authentication" in low or "x-api-key" in low or "invalid api key" in low:
         return ("Der Claude-API-Key ist ungültig. Bitte in der Server-Konfiguration "
                 "(Datei → Server-Konfiguration (.env) öffnen) den ANTHROPIC_API_KEY prüfen.")
@@ -97,6 +102,34 @@ def friendly_error(exc: Exception, model: str) -> str:
         return ("Keine Verbindung zu Claude (Netzwerk oder Firewall). Bitte die "
                 "Internetverbindung prüfen und erneut versuchen.")
     return f"Die Claude-Anfrage ist fehlgeschlagen: {detail[:250]}"
+
+
+def test_connection(model: str) -> dict:
+    """Minimaler echter Claude-Aufruf zur Diagnose. Liefert {ok, model, message}
+    und bei Fehlern zusätzlich die rohe API-Meldung (raw)."""
+    if config.is_demo_mode():
+        return {"ok": False, "model": model,
+                "message": "Demo-Modus aktiv (kein echter Claude-Aufruf). "
+                           "Für den Test N8N_URL/ANTHROPIC_API_KEY in der "
+                           "Server-Konfiguration setzen."}
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return {"ok": False, "model": model,
+                "message": "Kein ANTHROPIC_API_KEY gesetzt (Datei → Server-Konfiguration)."}
+    import anthropic
+    try:
+        client = anthropic.Anthropic()
+        resp = client.messages.create(
+            model=model, max_tokens=8,
+            messages=[{"role": "user", "content": "Antworte nur mit dem Wort: OK"}],
+        )
+        text = "".join(getattr(b, "text", "") for b in resp.content).strip()
+        return {"ok": True, "model": model,
+                "message": f"Verbindung ok — Claude ({model}) antwortet: {text or 'OK'}"}
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f"[ai-systems] Verbindungstest fehlgeschlagen: "
+                         f"{type(exc).__name__}: {exc}\n")
+        return {"ok": False, "model": model,
+                "message": friendly_error(exc, model), "raw": _api_message(exc)}
 
 
 def generate(dep_name: str, allowed_keys: list[str], host_patterns: list[str],

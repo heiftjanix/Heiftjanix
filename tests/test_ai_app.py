@@ -171,6 +171,12 @@ class AppTest(unittest.TestCase):
         self.assertIsNone(cleared["model_override"])
         self.assertEqual(cleared["model"], cleared["default_model"])
 
+    def test_claude_test_endpoint_in_demo(self):
+        # Im Demo-Modus meldet der Test klar, dass kein echter Aufruf erfolgt.
+        r = self.client.post("/api/claude/test").json()
+        self.assertFalse(r["ok"])
+        self.assertIn("Demo", r["message"])
+
     def test_connector_catalog_hides_secrets(self):
         catalog = self.client.get("/api/connectors").json()
         text = str(catalog)

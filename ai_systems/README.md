@@ -98,7 +98,7 @@ npm run dist     # baut runtime/ (build_runtime.sh) + Windows-Installer (NSIS)
 ```
 
 Ein fertig gebauter Installer liegt als
-[`electron/dist/AI-Systems Setup 1.3.0.exe`](electron/dist/) im Repo
+[`electron/dist/AI-Systems Setup 1.3.1.exe`](electron/dist/) im Repo
 (unsigniert; Windows SmartScreen fragt beim ersten Start nach — „Weitere
 Informationen" → „Trotzdem ausführen"). `build_runtime.sh` lädt das offizielle
 Embeddable-CPython von python.org und die Abhängigkeiten als win_amd64-Wheels

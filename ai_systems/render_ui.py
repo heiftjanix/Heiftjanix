@@ -413,6 +413,13 @@ async function saveModel(){
     setTimeout(()=>{$('#modelSaved').textContent='';},2500);
   }catch(e){$('#modelSaved').textContent='Fehler: '+e.message;}
 }
+async function testClaude(){
+  $('#modelSaved').textContent='teste Verbindung …';
+  try{
+    const r=await api('/api/claude/test',{method:'POST'});
+    $('#modelSaved').textContent=(r.ok?'✓ ':'✗ ')+r.message;
+  }catch(e){$('#modelSaved').textContent='✗ '+e.message;}
+}
 function appendMsg(role,text){
   $('#chatLog').insertAdjacentHTML('beforeend',
     `<div class="msg ${role}"><div class="bubble">${esc(text)}</div></div>`);
@@ -545,6 +552,7 @@ def render() -> str:
     <input type="text" id="modelInput" list="modelList" placeholder="claude-fable-5">
     <datalist id="modelList"></datalist>
     <button onclick="saveModel()">übernehmen</button>
+    <button onclick="testClaude()">Verbindung testen</button>
     <span id="modelSaved" class="hint"></span>
   </div>
   <div class="dlg-body" id="chatLog"></div>

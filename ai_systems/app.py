@@ -352,6 +352,13 @@ async def update_settings(request: Request):
     return get_settings()
 
 
+@app.post("/api/claude/test")
+def claude_test() -> dict:
+    """Verbindungstest zu Claude mit dem aktiven Modell (für die Diagnose im UI)."""
+    from . import claude_gen
+    return claude_gen.test_connection(service.active_model(db.get_conn()))
+
+
 # --- Konnektoren-Katalog -----------------------------------------------------
 
 @app.get("/api/connectors")

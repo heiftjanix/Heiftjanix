@@ -16,6 +16,7 @@ from . import config
 
 _LOCK = threading.Lock()
 _CONN: sqlite3.Connection | None = None
+_LOCAL = threading.local()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS departments (
@@ -83,27 +84,54 @@ def open_db(path: str | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(target, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    if target != ":memory:":
+        # WAL erlaubt Lesen parallel zum Schreiben; busy_timeout wartet statt zu
+        # scheitern, falls doch mal zwei Threads gleichzeitig schreiben.
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(SCHEMA)
     conn.commit()
     return conn
 
 
 def get_conn() -> sqlite3.Connection:
-    """Prozessweite Standard-Connection (die App ist Single-Prozess)."""
+    """Liefert eine SQLite-Verbindung.
+
+    Datei-DB: PRO THREAD eine eigene Verbindung. uvicorn bearbeitet Requests in
+    mehreren Threads; eine gemeinsam genutzte sqlite3-Verbindung ist NICHT
+    threadsicher und führte bei gleichzeitigen Aufrufen (z. B. den vier Anfragen
+    der Abteilungsansicht) zu sporadischen Fehlern/„404". Schreibzugriffe sind
+    zusätzlich über _LOCK serialisiert.
+
+    ':memory:' (Tests): eine geteilte Verbindung, da eine In-Memory-DB nur
+    innerhalb ihrer eigenen Verbindung existiert.
+    """
     global _CONN
-    with _LOCK:
-        if _CONN is None:
-            _CONN = open_db()
-        return _CONN
+    if config.db_path() == ":memory:":
+        with _LOCK:
+            if _CONN is None:
+                _CONN = open_db(":memory:")
+            return _CONN
+    conn = getattr(_LOCAL, "conn", None)
+    if conn is None:
+        conn = open_db()
+        _LOCAL.conn = conn
+    return conn
 
 
 def reset_conn() -> None:
-    """Nur für Tests: Standard-Connection verwerfen (z. B. nach ENV-Wechsel)."""
+    """Nur für Tests: Verbindungen verwerfen (z. B. nach ENV-Wechsel)."""
     global _CONN
     with _LOCK:
         if _CONN is not None:
             _CONN.close()
             _CONN = None
+    if getattr(_LOCAL, "conn", None) is not None:
+        try:
+            _LOCAL.conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _LOCAL.conn = None
 
 
 # --- Abteilungen -----------------------------------------------------------

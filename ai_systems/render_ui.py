@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import math
 
+from . import config
+
 
 def logo_svg(size: int = 40, cls: str = "") -> str:
     """Firmenlogo als Inline-SVG: 8 Ringsegmente (teal) + 1 rotes + innere Scheibe.
@@ -107,6 +109,11 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
 .dlg-head{display:flex;align-items:center;gap:10px;padding:14px 18px;
   border-bottom:1px solid var(--line)}
 .dlg-head h3{margin:0;font-size:16px;flex:1}
+.emoji-grid{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}
+.emoji-grid .emoji{font-size:22px;width:42px;height:42px;line-height:1;padding:0;
+  border:1px solid var(--line);border-radius:10px;background:var(--bg);cursor:pointer}
+.emoji-grid .emoji:hover{border-color:var(--teal)}
+.emoji-grid .emoji.sel{border-color:var(--teal);background:var(--chip);box-shadow:0 0 0 2px var(--teal) inset}
 .dlg-model{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 18px;
   border-bottom:1px solid var(--line);font-size:13px;color:var(--muted)}
 .dlg-model input{font:inherit;padding:5px 8px;border-radius:7px;border:1px solid var(--line);
@@ -199,18 +206,43 @@ async function viewOverview(){
       <div class="meta">${d.agent_count} Mitarbeiter${d.agent_count===1?'':''} · ${esc(d.description)}</div>
     </div>`;
   }
-  html+='<div class="tile new" onclick="createDepartment()">＋ Abteilung anlegen</div></div>';
+  html+='<div class="tile new" onclick="openDepartmentDialog()">＋ Abteilung anlegen</div></div>';
   if(!deps.length)html+='<p class="empty">Noch keine Abteilungen — lege die erste an, um Mitarbeiter (Agenten) einzustellen.</p>';
   $('#main').innerHTML=html;
 }
-async function createDepartment(){
-  const name=prompt('Name der neuen Abteilung (z. B. Vertrieb):');
-  if(!name)return;
-  const icon=prompt('Emoji-Icon für die Abteilung (leer = 🏢):')||'🏢';
-  const description=prompt('Kurzbeschreibung (optional):')||'';
-  try{await api('/api/departments',{method:'POST',body:JSON.stringify({name,icon,description})});}
-  catch(e){alert(e.message);}
-  route();
+/* --- Abteilung anlegen / bearbeiten (Dialog mit Emoji-Auswahl) ---------------- */
+const DEPT_EMOJIS=['🏢','📥','🧾','📦','📞','🛒','💼','🛠️','📊','🤝','🚚','🧪',
+  '💡','🗂️','⚙️','📣','🖥️','🔧','📚','💰','📈','🏭','✉️','🧑‍💼','🎧','🔒'];
+let editDeptId=null, pickedEmoji='🏢';
+function openDepartmentDialog(dep){
+  editDeptId=dep?dep.id:null;
+  pickedEmoji=dep?dep.icon:'🏢';
+  $('#depDlgTitle').textContent=dep?'Abteilung bearbeiten':'Neue Abteilung anlegen';
+  $('#depName').value=dep?dep.name:'';
+  $('#depDesc').value=dep?dep.description:'';
+  const grid=$('#emojiGrid');
+  grid.innerHTML='';
+  for(const e of DEPT_EMOJIS){
+    const b=document.createElement('button');
+    b.type='button';b.textContent=e;b.className='emoji'+(e===pickedEmoji?' sel':'');
+    b.onclick=()=>{pickedEmoji=e;
+      grid.querySelectorAll('.emoji').forEach(x=>x.classList.remove('sel'));
+      b.classList.add('sel');};
+    grid.appendChild(b);
+  }
+  $('#depDlg').showModal();
+  $('#depName').focus();
+}
+async function saveDepartment(){
+  const name=$('#depName').value.trim();
+  if(!name){alert('Bitte einen Namen vergeben.');return;}
+  const body=JSON.stringify({name,icon:pickedEmoji,description:$('#depDesc').value.trim()});
+  try{
+    if(editDeptId) await api('/api/departments/'+editDeptId,{method:'PATCH',body});
+    else await api('/api/departments',{method:'POST',body});
+    $('#depDlg').close();
+    route();
+  }catch(e){alert(e.message);}
 }
 
 /* --- Abteilungs-Ansicht -------------------------------------------------------- */
@@ -225,7 +257,7 @@ async function viewDepartment(id){
   <div class="formrow">
     <button class="primary" onclick="openChat(${id},null)">＋ Mitarbeiter einstellen (mit Claude bauen)</button>
     <button onclick="openImport(${id})">↳ Vorhandenen n8n-Workflow übernehmen</button>
-    <button onclick="renameDepartment(${id},'${esc(dep.name)}')">Umbenennen</button>
+    <button onclick='openDepartmentDialog(${JSON.stringify({id:dep.id,name:dep.name,icon:dep.icon,description:dep.description})})'>Bearbeiten</button>
     <button class="danger" onclick="removeDepartment(${id},'${esc(dep.name)}')">Abteilung auflösen</button>
   </div></div>`;
 
@@ -290,13 +322,6 @@ async function addRule(depId){
 }
 async function removeRule(ruleId,depId){
   await api('/api/rules/'+ruleId,{method:'DELETE'});route();
-}
-async function renameDepartment(id,old){
-  const name=prompt('Neuer Name der Abteilung:',old);
-  if(!name||name===old)return;
-  try{await api('/api/departments/'+id,{method:'PATCH',body:JSON.stringify({name})});}
-  catch(e){alert(e.message);}
-  route();
 }
 async function removeDepartment(id,name){
   if(!confirm(`Abteilung „${name}“ wirklich auflösen? Alle Mitarbeiter (inkl. deployter n8n-Workflows) werden entfernt.`))return;
@@ -509,6 +534,7 @@ route();
 
 def render() -> str:
     logo = logo_svg(38)
+    version = config.VERSION
     return f"""<!doctype html>
 <html lang="de">
 <head>
@@ -520,12 +546,28 @@ def render() -> str:
 <body>
 <header>
   <span id="logo">{logo}</span>
-  <div><h1>AI-Systems</h1><div class="sub">Virtuelle Firma — n8n-Agenten mit Claude</div></div>
+  <div><h1>AI-Systems <span id="version" class="badge">v{version}</span></h1>
+    <div class="sub">Virtuelle Firma — n8n-Agenten mit Claude</div></div>
   <span class="badge" id="demoBadge" style="display:none">DEMO-MODUS</span>
   <div class="spacer"></div>
   <button onclick="toggleTheme()" title="Hell/Dunkel umschalten">🌓</button>
 </header>
 <main id="main"><p class="empty">Lade …</p></main>
+<dialog id="depDlg">
+  <div class="dlg-head"><h3 id="depDlgTitle">Neue Abteilung anlegen</h3>
+    <button onclick="document.getElementById('depDlg').close()">✕</button></div>
+  <div class="dlg-body">
+    <div class="formrow"><label>Name:</label>
+      <input type="text" id="depName" style="flex:1" placeholder="z. B. Vertrieb"></div>
+    <label style="display:block;margin-top:10px" class="hint">Symbol auswählen:</label>
+    <div class="emoji-grid" id="emojiGrid"></div>
+    <div class="formrow"><label>Beschreibung:</label>
+      <input type="text" id="depDesc" style="flex:1" placeholder="kurz, optional"></div>
+  </div>
+  <div class="dlg-foot">
+    <button class="primary" onclick="saveDepartment()">Speichern</button>
+  </div>
+</dialog>
 <dialog id="importDlg">
   <div class="dlg-head"><h3>n8n-Workflow als Mitarbeiter übernehmen</h3>
     <button onclick="document.getElementById('importDlg').close()">✕</button></div>

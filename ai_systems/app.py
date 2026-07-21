@@ -72,12 +72,12 @@ def favicon() -> Response:
 
 @app.get("/healthz")
 def healthz() -> dict:
-    return {"ok": True, "demo_mode": config.is_demo_mode()}
+    return {"ok": True, "demo_mode": config.is_demo_mode(), "version": config.VERSION}
 
 
 @app.get("/api/status")
 def api_status() -> dict:
-    return {**service.status(), "demo_mode": config.is_demo_mode()}
+    return {**service.status(), "demo_mode": config.is_demo_mode(), "version": config.VERSION}
 
 
 # --- Abteilungen -----------------------------------------------------------

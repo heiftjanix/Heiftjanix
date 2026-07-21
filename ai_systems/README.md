@@ -11,9 +11,10 @@ ist in Wirklichkeit ein n8n-Workflow auf eurer bestehenden n8n-Instanz.
   schlägt Name, Stellenbezeichnung und den fertigen n8n-Workflow vor; ihr prüft
   und klickt „Übernehmen & deployen". Bestehende Mitarbeiter lassen sich
   genauso per Chat bearbeiten.
-- 🗂️ **Verwalten wie eine Firma:** Abteilungs-Kacheln, Mitarbeiter-Karten mit
-  Aktiv-Schalter und Lauf-Status (grün/gelb/rot), Ausführungsverlauf aus n8n,
-  Umbenennen, „Mitarbeiter entlassen".
+- 🗂️ **Verwalten wie eine Firma:** Abteilungs-Kacheln (Symbol per Emoji-Auswahl,
+  jederzeit über „Bearbeiten" änderbar), Mitarbeiter-Karten mit Aktiv-Schalter
+  und Lauf-Status (grün/gelb/rot), Ausführungsverlauf aus n8n, Umbenennen,
+  „Mitarbeiter entlassen". Die Versionsnummer steht oben neben „AI-Systems".
 - ↳ **Bestehende n8n-Workflows übernehmen:** Vorhandene Workflows lassen sich
   nachträglich als Mitarbeiter einbinden und benennen („Vorhandenen
   n8n-Workflow übernehmen" in der Abteilung) — sie bleiben in n8n unverändert.
@@ -98,7 +99,7 @@ npm run dist     # baut runtime/ (build_runtime.sh) + Windows-Installer (NSIS)
 ```
 
 Ein fertig gebauter Installer liegt als
-[`electron/dist/AI-Systems Setup 1.3.1.exe`](electron/dist/) im Repo
+[`electron/dist/AI-Systems Setup 1.4.0.exe`](electron/dist/) im Repo
 (unsigniert; Windows SmartScreen fragt beim ersten Start nach — „Weitere
 Informationen" → „Trotzdem ausführen"). `build_runtime.sh` lädt das offizielle
 Embeddable-CPython von python.org und die Abhängigkeiten als win_amd64-Wheels

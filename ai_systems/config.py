@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+VERSION = "1.4.0"
 DEFAULT_MODEL = "claude-fable-5"
 DEFAULT_PORT = 8010
 

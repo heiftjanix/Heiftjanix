@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from . import claude_gen, config, connectors, db, n8n_client, netrules, workflow_validate
+from . import claude_gen, config, connectors, db, n8n_client, netrules, workflow_steps, workflow_validate
 
 _STATUS_LOCK = threading.Lock()
 _STATUS = {"state": "idle"}
@@ -289,17 +289,30 @@ def import_workflow(conn: sqlite3.Connection, department_id: int, n8n_workflow_i
     return db.update_agent(conn, agent["id"], active=1 if wf.get("active") else 0)  # type: ignore[return-value]
 
 
-def agent_with_status(conn: sqlite3.Connection, agent: dict, limit: int = 10) -> dict:
-    """Agent um n8n-Laufdaten anreichern (letzte Executions, letzter Status)."""
+def agent_with_status(conn: sqlite3.Connection, agent: dict, limit: int = 10,
+                      include_steps: bool = False) -> dict:
+    """Agent um n8n-Laufdaten anreichern (letzte Executions, letzter Status).
+
+    `include_steps`: zusätzlich eine laienverständliche Aufgaben-Visualisierung
+    aus dem Workflow-JSON laden (nur für die Detailansicht — spart den
+    zusätzlichen n8n-Aufruf in Listenansichten)."""
     out = dict(agent)
     out["executions"] = []
     out["last_status"] = None
+    out["steps"] = []
     if agent.get("n8n_workflow_id"):
+        client = n8n_client.get_client()
         try:
-            runs = n8n_client.get_client().executions(agent["n8n_workflow_id"], limit=limit)
+            runs = client.executions(agent["n8n_workflow_id"], limit=limit)
             out["executions"] = runs
             if runs:
                 out["last_status"] = runs[0].get("status")
         except n8n_client.N8nError:
             out["last_status"] = "unbekannt"
+        if include_steps:
+            try:
+                wf = client.get_workflow(agent["n8n_workflow_id"])
+                out["steps"] = workflow_steps.describe_workflow(wf)
+            except n8n_client.N8nError:
+                pass
     return out

@@ -186,7 +186,7 @@ def get_agent(agent_id: int) -> dict:
     agent = db.get_agent(conn, agent_id)
     if not agent:
         raise HTTPException(404, "Agent nicht gefunden.")
-    return service.agent_with_status(conn, agent, limit=10)
+    return service.agent_with_status(conn, agent, limit=10, include_steps=True)
 
 
 @app.patch("/api/agents/{agent_id}")

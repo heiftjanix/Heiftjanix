@@ -123,7 +123,9 @@ class DemoN8n:
                 if wf_id:
                     self._workflows[wf_id] = {
                         "id": wf_id, "name": agent["name"], "active": bool(agent.get("active")),
-                        "nodes": [], "connections": {}, "settings": {},
+                        "nodes": agent.get("nodes", []),
+                        "connections": agent.get("connections", {}),
+                        "settings": {},
                     }
         # Unverwaltete Demo-Workflows (für „Mitarbeiter übernehmen")
         for wf in data.get("extra_workflows", []):

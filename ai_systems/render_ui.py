@@ -120,8 +120,31 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
   background:var(--bg);color:var(--text);min-width:220px}
 .dlg-model button{padding:5px 10px;font-size:13px}
 .dlg-body{padding:16px 18px;max-height:56vh;overflow:auto}
-.dlg-foot{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px}
-.dlg-foot input{flex:1}
+.dlg-foot{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:flex-end}
+.dlg-foot textarea{flex:1;font:inherit;background:var(--bg);color:var(--text);
+  border:1px solid var(--line);border-radius:10px;padding:8px 11px;resize:none;
+  max-height:160px;overflow-y:auto;line-height:1.4}
+.dlg-foot textarea:focus{outline:none;border-color:var(--teal)}
+.typing{display:flex;align-items:center;gap:5px;padding:9px 13px}
+.typing span{width:6px;height:6px;border-radius:50%;background:var(--muted);
+  animation:typing-bounce 1.1s infinite}
+.typing span:nth-child(2){animation-delay:.15s}
+.typing span:nth-child(3){animation-delay:.3s}
+@keyframes typing-bounce{0%,60%,100%{opacity:.35;transform:translateY(0)}
+  30%{opacity:1;transform:translateY(-3px)}}
+.steps{display:flex;flex-direction:column;gap:0}
+.step{display:flex;gap:12px;position:relative;padding-bottom:16px}
+.step:last-child{padding-bottom:0}
+.step:not(:last-child):before{content:"";position:absolute;left:17px;top:36px;bottom:0;
+  width:2px;background:var(--line)}
+.step .step-icon{width:36px;height:36px;flex:none;border-radius:50%;background:var(--chip);
+  display:flex;align-items:center;justify-content:center;font-size:17px;z-index:1}
+.step .step-body{padding-top:4px}
+.step .step-label{font-weight:600;font-size:14px}
+.step .step-name{color:var(--muted);font-size:12.5px;margin-left:6px}
+.step .step-desc{color:var(--muted);font-size:13px;margin-top:2px}
+.step .step-detail{font-size:12.5px;margin-top:3px;background:var(--chip);
+  display:inline-block;padding:2px 8px;border-radius:6px;font-family:monospace}
 .msg{margin:8px 0;display:flex}
 .msg .bubble{max-width:85%;padding:9px 13px;border-radius:14px;white-space:pre-wrap}
 .msg.user{justify-content:flex-end}
@@ -352,7 +375,22 @@ async function viewAgent(id){
     <p class="hint">Der Chat merkt sich den bisherigen Verlauf dieses Mitarbeiters und
     kennt seine letzten Läufe (inkl. Fehlermeldungen) — einfach beschreiben, was
     besser werden soll.</p></div>
-  <div class="section card"><h2>Ausführungsverlauf</h2>`;
+  <div class="section card"><h2>🧭 Was macht dieser Mitarbeiter?</h2>`;
+  if(a.steps&&a.steps.length){
+    html+='<div class="steps">';
+    for(const s of a.steps){
+      html+=`<div class="step"><div class="step-icon">${esc(s.icon)}</div>
+        <div class="step-body"><span class="step-label">${esc(s.label)}</span>
+        <span class="step-name">„${esc(s.name)}“</span>
+        <div class="step-desc">${esc(s.description)}</div>
+        ${s.detail?`<div class="step-detail">${esc(s.detail)}</div>`:''}</div></div>`;
+    }
+    html+='</div>';
+  }else{
+    html+='<p class="empty">Keine Ablaufdaten verfügbar (Workflow evtl. nicht erreichbar).</p>';
+  }
+  html+='</div>';
+  html+='<div class="section card"><h2>Ausführungsverlauf</h2>';
   if(a.executions.length){
     html+='<table><tr><th>Status</th><th>Start</th><th>Ende</th></tr>';
     for(const e of a.executions){
@@ -411,10 +449,16 @@ async function openChat(depId,agentId){
       :'Hallo! Beschreibe mir, was der neue Mitarbeiter tun soll — z. B. „Fasse mir jeden Morgen die ungelesenen Mails zusammen“.')+'</div></div>';
   }
   $('#chatInput').value='';
+  $('#chatInput').style.height='';
   await loadModelPicker();
   $('#chatDlg').showModal();
   log.scrollTop=log.scrollHeight;
   $('#chatInput').focus();
+}
+function autoGrowChatInput(){
+  const el=$('#chatInput');
+  el.style.height='auto';
+  el.style.height=Math.min(el.scrollHeight,160)+'px';
 }
 async function loadModelPicker(){
   try{
@@ -450,15 +494,31 @@ function appendMsg(role,text){
     `<div class="msg ${role}"><div class="bubble">${esc(text)}</div></div>`);
   $('#chatLog').scrollTop=$('#chatLog').scrollHeight;
 }
+function showTyping(){
+  const log=$('#chatLog');
+  log.insertAdjacentHTML('beforeend',
+    '<div class="msg assistant" id="typingIndicator"><div class="bubble typing">'+
+    '<span></span><span></span><span></span></div></div>');
+  log.scrollTop=log.scrollHeight;
+}
+function hideTyping(){
+  const el=document.getElementById('typingIndicator');
+  if(el)el.remove();
+}
 async function sendChat(){
   const text=$('#chatInput').value.trim();
   if(!text||!chatSession)return;
   $('#chatInput').value='';
+  $('#chatInput').style.height='';
   appendMsg('user',text);
   $('#chatSend').disabled=true;
+  $('#chatSend').textContent='Claude arbeitet …';
+  $('#chatInput').disabled=true;
+  showTyping();
   try{
     const res=await api(`/api/chat/sessions/${chatSession.id}/message`,
       {method:'POST',body:JSON.stringify({text})});
+    hideTyping();
     appendMsg('assistant',res.reply);
     if(res.problems&&res.problems.length){
       $('#chatLog').insertAdjacentHTML('beforeend',
@@ -469,8 +529,11 @@ async function sendChat(){
       $('#chatLog').insertAdjacentHTML('beforeend',proposalCard(res.proposal));
     }
     $('#chatLog').scrollTop=$('#chatLog').scrollHeight;
-  }catch(e){appendMsg('assistant','Fehler: '+e.message);}
-  finally{$('#chatSend').disabled=false;$('#chatInput').focus();}
+  }catch(e){hideTyping();appendMsg('assistant','Fehler: '+e.message);}
+  finally{
+    $('#chatSend').disabled=false;$('#chatSend').textContent='Senden';
+    $('#chatInput').disabled=false;$('#chatInput').focus();
+  }
 }
 async function deployProposal(){
   if(!chatSession)return;
@@ -628,8 +691,9 @@ def render() -> str:
   </div>
   <div class="dlg-body" id="chatLog"></div>
   <div class="dlg-foot">
-    <input type="text" id="chatInput" placeholder="Beschreibe, was der Agent tun soll …"
-      onkeydown="if(event.key==='Enter')sendChat()">
+    <textarea id="chatInput" rows="1" placeholder="Beschreibe, was der Agent tun soll …"
+      oninput="autoGrowChatInput()"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){{event.preventDefault();sendChat();}}"></textarea>
     <button class="primary" id="chatSend" onclick="sendChat()">Senden</button>
   </div>
 </dialog>

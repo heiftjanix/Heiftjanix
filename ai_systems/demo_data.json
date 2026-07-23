@@ -16,7 +16,22 @@
           "role": "Posteingangs-Sortiererin",
           "description": "Sortiert eingehende Mails nach Wichtigkeit und markiert Dringendes.",
           "n8n_workflow_id": "demo-wf-1",
-          "active": 1
+          "active": 1,
+          "nodes": [
+            {"name": "Alle 30 Minuten", "type": "n8n-nodes-base.scheduleTrigger",
+             "parameters": {"rule": {"interval": [{"field": "cronExpression", "expression": "*/30 6-18 * * 1-5"}]}}},
+            {"name": "Ungelesene Mails holen", "type": "n8n-nodes-base.httpRequest",
+             "parameters": {"method": "GET",
+               "url": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$filter=isRead eq false"}},
+            {"name": "Wichtigkeit prüfen", "type": "n8n-nodes-base.if", "parameters": {}},
+            {"name": "Als dringend markieren", "type": "n8n-nodes-base.httpRequest",
+             "parameters": {"method": "PATCH", "url": "https://graph.microsoft.com/v1.0/me/messages/{{$json.id}}"}}
+          ],
+          "connections": {
+            "Alle 30 Minuten": {"main": [[{"node": "Ungelesene Mails holen", "type": "main", "index": 0}]]},
+            "Ungelesene Mails holen": {"main": [[{"node": "Wichtigkeit prüfen", "type": "main", "index": 0}]]},
+            "Wichtigkeit prüfen": {"main": [[{"node": "Als dringend markieren", "type": "main", "index": 0}]]}
+          }
         }
       ]
     },
@@ -34,7 +49,22 @@
           "role": "Rechnungsprüferin",
           "description": "Prüft täglich offene Rechnungen im ERPNext und meldet Auffälligkeiten.",
           "n8n_workflow_id": "demo-wf-2",
-          "active": 0
+          "active": 0,
+          "nodes": [
+            {"name": "Täglich 5 Uhr", "type": "n8n-nodes-base.scheduleTrigger",
+             "parameters": {"rule": {"interval": [{"field": "cronExpression", "expression": "0 5 * * 1-5"}]}}},
+            {"name": "Offene Rechnungen holen", "type": "n8n-nodes-base.httpRequest",
+             "parameters": {"method": "GET",
+               "url": "https://erp.example.com/api/resource/Sales Invoice?filters=[[\"status\",\"=\",\"Overdue\"]]"}},
+            {"name": "Auffälligkeiten filtern", "type": "n8n-nodes-base.filter", "parameters": {}},
+            {"name": "Warnung versenden", "type": "n8n-nodes-base.emailSend",
+             "parameters": {"toEmail": "buchhaltung@example.com", "subject": "Überfällige Rechnungen"}}
+          ],
+          "connections": {
+            "Täglich 5 Uhr": {"main": [[{"node": "Offene Rechnungen holen", "type": "main", "index": 0}]]},
+            "Offene Rechnungen holen": {"main": [[{"node": "Auffälligkeiten filtern", "type": "main", "index": 0}]]},
+            "Auffälligkeiten filtern": {"main": [[{"node": "Warnung versenden", "type": "main", "index": 0}]]}
+          }
         }
       ]
     },

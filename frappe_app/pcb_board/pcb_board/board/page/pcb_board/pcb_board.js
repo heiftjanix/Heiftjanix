@@ -938,6 +938,7 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 			', kumuliert' + trendHtml + '</div></div>';
 	}
 
+	// Erste Kachel-Reihe: Ist-Umsatz + Prognose
 	var tiles =
 		'<div class="tiles rev-tiles">' +
 		'<div class="tile hero"><p class="k">Ist-Umsatz (Netto)</p><div class="v">' + self.eur(fc.mtd) + '</div>' +
@@ -946,49 +947,62 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 		'<div class="m"><span class="badge" style="background:' + st[0] + '">' + st[2] + ' ' + st[1] + ' · ' + self.pct(fc.attainment_pct) + '</span></div></div>' +
 		'<div class="tile"><p class="k">Nötig je Restwerktag</p><div class="v">' + self.eur(fc.required_daily) + '</div>' +
 		'<div class="m">an ' + fc.bd_remaining + ' Werktagen</div></div>' +
-		'<div class="tile"><p class="k">Umsatz ' + self.esc(year) + ' gesamt</p><div class="v">' + self.eur(ytd) + '</div>' +
-		'<div class="m">Jahresanfang bis heute</div></div>' +
-		'<div class="tile"><p class="k">Gewinn/Verlust (Prognose)</p>' +
-		'<div class="v" style="color:' + (profitForecast >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
-		(profitForecast >= 0 ? '+' : '−') + self.eur(Math.abs(profitForecast)) + '</div>' +
-		'<div class="m">nach Abzug Gesamtkosten ' + self.eur(costsTotal) + '</div></div>' +
-		'<div class="tile"><p class="k">Vortrag ' + self.esc(year) + '</p>' +
-		'<div class="v" style="color:' + (carry >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
-		self.eur(carry) + '</div>' +
-		'<div class="m">kumulierter Gewinn/Verlust der abgeschlossenen Monate</div></div>' +
-		sincePrevTile +
 		'</div>';
 
-	// Zweite Kachel-Reihe: Vorjahreswerte (nur wenn Vorjahresdaten vorhanden).
-	var pyTiles = '';
-	if (py.full_year_total || py.total) {
-		// Monatsvergleich full-month-to-full-month: Prognose (projizierter voller
-		// Monat) ggü. dem vollen Vorjahresmonat — so bedeutet „unter Vorjahr" auch
-		// rot, unabhängig vom Tag im Monat.
-		var monthDelta = py.total > 0
-			? deltaArrow(fc.forecast - py.total, py.total,
-				'Prognose ' + self.eur(fc.forecast) + ' ggü. vollem Vorjahresmonat ' + self.eur(py.total))
-			: '';
-		var pyp = py.full_year_profit || 0;
-		pyTiles =
-			'<div class="tiles rev-tiles py-tiles">' +
-			'<div class="tile"><p class="k">Vorjahresmonat ' + self.esc(monthName + ' ' + pyLabelYear) + '</p>' +
-			'<div class="v">' + self.eur(py.total) + '</div>' +
-			'<div class="m">Prognose ' + self.eur(fc.forecast) + (monthDelta ? monthDelta : '') + '</div></div>' +
-			'<div class="tile"><p class="k">Umsatz ' + self.esc(String(pyLabelYear)) + ' gesamt</p>' +
-			'<div class="v">' + self.eur(py.full_year_total) + '</div>' +
-			'<div class="m">komplettes Vorjahr</div></div>' +
-			'<div class="tile"><p class="k">Umsatz ' + self.esc(String(pyLabelYear)) + ' bis zum selben Tag</p>' +
-			'<div class="v">' + self.eur(py.ytd_same_day) + '</div>' +
-			'<div class="m">' + self.esc(year) + ' bis heute: ' + self.eur(ytd) +
-			(py.ytd_same_day > 0 ? deltaArrow(ytd - py.ytd_same_day, py.ytd_same_day) : '') + '</div></div>' +
-			'<div class="tile"><p class="k">Gewinn/Verlust ' + self.esc(String(pyLabelYear)) + '</p>' +
-			'<div class="v" style="color:' + (pyp >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
-			(pyp >= 0 ? '+' : '−') + self.eur(Math.abs(pyp)) + '</div>' +
-			'<div class="m">Umsatz − Wareneingänge − 12× Fixkosten</div></div>' +
-			'</div>';
+	// Konsolidierte Umsatz-Karte
+	var umsatzHtml =
+		'<div class="card consolidated-card">' +
+		'<div class="card-header">Umsatz ' + self.esc(year) + '</div>' +
+		'<div class="card-row"><span class="card-label">Jahresanfang bis heute (YTD)</span>' +
+		'<span class="card-value">' + self.eur(ytd) + '</span></div>';
+
+	if (py.full_year_total) {
+		umsatzHtml += '<div class="card-row"><span class="card-label">Komplettes Vorjahr (' +
+			self.esc(String(pyLabelYear)) + ')</span>' +
+			'<span class="card-value">' + self.eur(py.full_year_total) + '</span></div>';
 	}
-	tiles += pyTiles;
+
+	if (py.ytd_same_day > 0) {
+		var ytdDelta = ytd - py.ytd_same_day;
+		var ytdDeltaPct = py.ytd_same_day > 0 ? Math.round((ytdDelta / py.ytd_same_day) * 100) : 0;
+		var ytdUp = ytdDelta >= 0;
+		var ytdDeltaHtml = ' <span style="color:' + (ytdUp ? 'var(--good)' : 'var(--critical)') + ';font-weight:650">' +
+			(ytdUp ? '▲ +' : '▼ −') + Math.abs(ytdDeltaPct) + ' %</span>';
+		umsatzHtml += '<div class="card-row"><span class="card-label">' + self.esc(String(pyLabelYear)) +
+			' bis zum selben Tag</span>' +
+			'<span class="card-value">' + self.eur(py.ytd_same_day) + ytdDeltaHtml + '</span></div>';
+	}
+
+	umsatzHtml += '</div>';
+
+	// Konsolidierte Gewinn/Verlust-Karte
+	var pyp = py.full_year_profit || 0;
+	var gewinnHtml =
+		'<div class="card consolidated-card">' +
+		'<div class="card-header">Gewinn/Verlust</div>' +
+		'<div class="card-row"><span class="card-label">Juli 2026 Prognose</span>' +
+		'<span class="card-value" style="color:' + (profitForecast >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
+		(profitForecast >= 0 ? '+' : '−') + self.eur(Math.abs(profitForecast)) + '</span></div>' +
+		'<div class="card-row"><span class="card-label">YTD (' + self.esc(year) + ')</span>' +
+		'<span class="card-value" style="color:' + (carry >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
+		self.eur(carry) + '</span></div>';
+
+	if (pyp) {
+		gewinnHtml += '<div class="card-row"><span class="card-label">Komplettes Vorjahr (' +
+			self.esc(String(pyLabelYear)) + ')</span>' +
+			'<span class="card-value" style="color:' + (pyp >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
+			(pyp >= 0 ? '+' : '−') + self.eur(Math.abs(pyp)) + '</span></div>';
+	}
+
+	if (ph.prev_year != null && ph.since_prev_completed != null) {
+		var sp = ph.since_prev_completed;
+		gewinnHtml += '<div class="card-row"><span class="card-label">Gesamt seit ' +
+			self.esc(String(ph.prev_year)) + '</span>' +
+			'<span class="card-value" style="color:' + (sp >= 0 ? 'var(--good)' : 'var(--critical)') + '">' +
+			self.eur(sp) + '</span></div>';
+	}
+
+	gewinnHtml += '</div>';
 
 	var verdictText = profitMtd >= 0
 		? '✅ Kosten bereits gedeckt — aktuell ' + self.eur(profitMtd) + ' im Plus.'
@@ -1010,7 +1024,7 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 	var meter =
 		'<section class="card"><figcaption>Zielerreichung</figcaption><div class="meter-wrap">' +
 		'<div class="mlbl-row top">' +
-		posLbl(targetPos, 'Ziel ' + self.eur(m.target)) +
+		posLbl(targetPos, '<span class="target-lbl">Ziel ' + self.eur(m.target) + '</span>') +
 		posLbl(costsPos, '<span class="costs-lbl">Kosten ' + self.eur(costsTotal) + '</span>') +
 		'</div>' +
 		'<div class="meter"><div class="meter-row">' +
@@ -1030,7 +1044,7 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 	var coverage = this.coverageBarHtml(m);
 	var tips = this.tipsHtml(m);
 
-	return tiles + meter + topProducts + topCustomers + coverage + tips;
+	return tiles + umsatzHtml + gewinnHtml + meter + coverage + topProducts + topCustomers + tips;
 };
 
 PCBBoard.prototype.topCustomersHtml = function (m) {
@@ -1101,10 +1115,14 @@ PCBBoard.prototype.coverageBarHtml = function (m) {
 		.join('');
 	var coverage = pl.coverage_after_forecast;
 	var verdict = coverage >= target ? 'Pipeline deckt das Ziel ✓' : 'Auch mit Pipeline noch ' + self.eur(target - coverage) + ' bis zum Ziel';
-	return '<figure class="card"><figcaption>Zieldeckung inkl. Pipeline</figcaption>' +
+	var targetPct = (target / scaleMax) * 100;
+	return '<section class="card"><figcaption>Zieldeckung inkl. Pipeline</figcaption><div class="meter-wrap cov-wrap">' +
+		'<div class="mlbl-row top">' +
+		'<span class="mlbl" style="left:' + targetPct.toFixed(2) + '%;transform:translateX(-50%)"><span class="target-lbl">Ziel ' + self.eur(target) + '</span></span>' +
+		'</div>' +
 		'<div class="cov-track">' + rects +
-		'<div class="cov-target" style="left:' + ((target / scaleMax) * 100).toFixed(2) + '%"></div></div>' +
-		'<div class="cov-legend">' + legend + '</div><p class="cov-verdict">' + self.esc(verdict) + '</p></figure>';
+		'<div class="cov-target" style="left:' + targetPct.toFixed(2) + '%"></div></div>' +
+		'<div class="cov-legend">' + legend + '</div><p class="cov-verdict">' + verdict + '</p></div></section>';
 };
 
 PCBBoard.prototype.tipsHtml = function (m) {
@@ -1292,6 +1310,13 @@ var PCB_BOARD_CSS =
 	'.mlbl-row.top{margin-bottom:4px}.mlbl-row.bot{margin-top:6px}' +
 	'.mlbl{position:absolute;white-space:nowrap;font-weight:650}' +
 	'.mlbl .costs-lbl{color:var(--critical)}' +
+	'.mlbl .target-lbl{color:var(--text-primary)}' +
+	'.consolidated-card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:16px;margin-top:16px}' +
+	'.card-header{font-weight:700;font-size:.98rem;color:var(--text-primary);margin-bottom:12px}' +
+	'.card-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)}' +
+	'.card-row:last-child{border-bottom:0}' +
+	'.card-label{font-size:.85rem;color:var(--text-secondary)}' +
+	'.card-value{font-weight:700;font-size:1.1rem;color:var(--text-primary);text-align:right}' +
 	'.rev-tiles .tile.hero{grid-column:span 2}' +
 	'.rev-tiles .tile.hero .v{font-size:2.4rem}' +
 	'.rev-tiles .tile:not(.hero) .v{font-size:1.35rem}' +
@@ -1303,6 +1328,7 @@ var PCB_BOARD_CSS =
 	'.cov-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.82rem;color:var(--text-secondary);margin-top:10px}' +
 	'.cov-legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-1px}' +
 	'.cov-verdict{font-size:.9rem;margin:8px 0 0;color:var(--text-secondary)}' +
+	'.cov-wrap{margin-top:10px}.cov-wrap .mlbl-row{margin-bottom:10px}.cov-wrap .cov-track{margin-bottom:10px}' +
 	'.tips{margin:0;padding:0;list-style:none}.tips li{display:flex;gap:14px;align-items:baseline;padding:10px 0;border-top:1px solid var(--border)}' +
 	'.tips li:first-child{border-top:0}.tip-eur{font-weight:680;color:var(--series-2);min-width:96px;text-align:right;font-variant-numeric:tabular-nums}' +
 	'.tip-body{display:flex;flex-direction:column}.tip-detail{color:var(--text-secondary);font-size:.88rem}' +

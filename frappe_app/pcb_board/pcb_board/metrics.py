@@ -113,14 +113,28 @@ def _net(row: dict) -> float:
     return 0.0
 
 
-def _pdate(row: dict):
-    raw = row.get("posting_date") or row.get("date")
+def _to_date(raw):
+    """Datum aus einem Feldwert (date oder ISO-String); None wenn leer/unlesbar."""
     if not raw:
         return None
+    if isinstance(raw, date):
+        return raw
     try:
         return date.fromisoformat(str(raw)[:10])
     except ValueError:
         return None
+
+
+def _pdate(row: dict):
+    return _to_date(row.get("posting_date") or row.get("date"))
+
+
+def _median(values) -> float:
+    """Median einer nicht-leeren Zahlenliste (unsortiert erlaubt)."""
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    return float(s[mid]) if n % 2 else (s[mid - 1] + s[mid]) / 2.0
 
 
 def _prev_month(y: int, m: int) -> tuple[int, int]:
@@ -258,6 +272,119 @@ def recent_receipts(data: dict, limit: int = 5) -> list[dict]:
             "posting_date": _pdate(r).isoformat(),
         })
     return out
+
+
+def supplier_lead_times(data: dict) -> dict:
+    """Lieferzeit je Lieferant in Tagen (Median) aus abgeschlossenen Vorgängen:
+    Bestelldatum -> ERSTER Wareneingang zur Bestellung. Der erste Wareneingang ist
+    der Maßstab, weil Teillieferungen dieselbe Bestellung sonst mehrfach und mit
+    künstlich langer Laufzeit zählen würden. Median statt Mittelwert, damit ein
+    einzelner Ausreißer (Sonderbestellung, Rückstand) die Erwartung nicht kippt.
+
+    data["po_receipt_pairs"]: [{purchase_order, supplier, order_date, receipt_date}]
+    """
+    first: dict[str, dict] = {}
+    for row in data.get("po_receipt_pairs") or []:
+        po = row.get("purchase_order")
+        od, rd = _to_date(row.get("order_date")), _to_date(row.get("receipt_date"))
+        if not po or not od or not rd or rd < od:
+            continue
+        cur = first.get(po)
+        if cur is None or rd < cur["receipt_date"]:
+            first[po] = {"supplier": row.get("supplier") or "", "order_date": od, "receipt_date": rd}
+
+    by_supplier: dict[str, list[int]] = defaultdict(list)
+    all_days: list[int] = []
+    for rec in first.values():
+        days = (rec["receipt_date"] - rec["order_date"]).days
+        all_days.append(days)
+        if rec["supplier"]:
+            by_supplier[rec["supplier"]].append(days)
+    return {
+        "per_supplier": {
+            sup: {"median_days": round(_median(v), 1), "samples": len(v)}
+            for sup, v in by_supplier.items()
+        },
+        "overall_median_days": round(_median(all_days), 1) if all_days else None,
+        "samples": len(all_days),
+    }
+
+
+def purchase_orders(data: dict, today: date) -> dict:
+    """Offene Bestellungen mit erwartetem Wareneingang.
+
+    Erwarteter Termin = Bestelldatum + Median-Lieferzeit des Lieferanten; ohne
+    Historie für diesen Lieferanten greift der Median über alle Lieferanten, ohne
+    jede Historie der Wunschtermin der Bestellung (schedule_date). Bestellungen,
+    deren erwarteter Termin überschritten ist, fallen aus dem Zeitplan und landen
+    zusätzlich in follow_up („nachzuhaken"). „On Hold" bleibt sichtbar, wird aber
+    nicht angemahnt — die Bestellung ist bewusst pausiert.
+    """
+    lead = supplier_lead_times(data)
+    per_supplier = lead["per_supplier"]
+    overall = lead["overall_median_days"]
+
+    rows = []
+    for po in data.get("open_purchase_orders") or []:
+        order_date = _to_date(po.get("transaction_date"))
+        schedule = _to_date(po.get("schedule_date"))
+        stat = per_supplier.get(po.get("supplier") or "")
+        lead_days = stat["median_days"] if stat else overall
+        source = "supplier" if stat else ("overall" if overall is not None else None)
+
+        if order_date is not None and lead_days is not None:
+            expected = order_date + timedelta(days=int(round(lead_days)))
+        else:
+            expected, source = schedule, ("schedule" if schedule else None)
+
+        late = expected is not None and expected < today
+        rows.append({
+            "name": po.get("name"),
+            "supplier": po.get("supplier_name") or po.get("supplier") or "",
+            "status": po.get("status"),
+            "on_hold": (po.get("status") or "") == "On Hold",
+            "order_date": order_date.isoformat() if order_date else None,
+            "schedule_date": schedule.isoformat() if schedule else None,
+            "expected_date": expected.isoformat() if expected else None,
+            "expected_source": source,
+            "lead_days": lead_days,
+            "lead_samples": stat["samples"] if stat else 0,
+            "net_open": round(float(po.get("net_open") or 0), 2),
+            "positions": int(po.get("positions") or 0),
+            "items": po.get("items") or [],
+            "days_late": (today - expected).days if late else 0,
+            "days_until": (expected - today).days if expected is not None and not late else None,
+        })
+
+    # Ohne erwarteten Termin ans Ende (nichts zu planen), sonst nach Termin.
+    rows.sort(key=lambda r: (r["expected_date"] is None, r["expected_date"] or "", r["name"] or ""))
+    follow_up = [r for r in rows if r["days_late"] > 0 and not r["on_hold"]]
+    follow_up.sort(key=lambda r: -r["days_late"])
+
+    due_today = [r for r in rows if r["expected_date"] == today.isoformat()]
+    items_today = []
+    for r in due_today:
+        for it in r["items"]:
+            items_today.append({
+                "item_name": it.get("item_name") or it.get("item_code"),
+                "open_qty": it.get("open_qty"),
+                "purchase_order": r["name"],
+            })
+    return {
+        "open": rows,
+        "follow_up": follow_up,
+        "open_count": len(rows),
+        "open_net": round(sum(r["net_open"] for r in rows), 2),
+        "follow_up_count": len(follow_up),
+        "follow_up_net": round(sum(r["net_open"] for r in follow_up), 2),
+        "expected_today": {
+            "orders": len(due_today),
+            "positions": sum(r["positions"] for r in due_today),
+            "net": round(sum(r["net_open"] for r in due_today), 2),
+            "items": items_today,
+        },
+        "lead_times": lead,
+    }
 
 
 def top_purchases(data: dict, limit: int = 5) -> list[dict]:
@@ -654,12 +781,10 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
     )
     if open_ages:
         n = len(open_ages)
-        mid = n // 2
-        median_age = open_ages[mid] if n % 2 else (open_ages[mid - 1] + open_ages[mid]) / 2
         throughput = {
             "open_count": n,
             "avg_open_age_days": round(sum(open_ages) / n, 1),
-            "median_open_age_days": round(median_age, 1),
+            "median_open_age_days": round(_median(open_ages), 1),
             "max_open_age_days": open_ages[-1],
         }
     else:
@@ -687,6 +812,7 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
             if (d := _pdate(inv)) and d.year == today.year and d <= today
         ), 2),
         "todo": todo_orders(data, today),
+        "purchasing": purchase_orders(data, today),
         "profit_history": profit_history(data, config, today),
         "forecast": fc.to_dict(),
         "daily_series": daily_series,

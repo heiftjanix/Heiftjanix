@@ -183,6 +183,92 @@ def _fetch_erpnext(config: dict) -> dict:
         ignore_permissions=True,
     )
 
+    # Einkauf: offene Bestellungen (noch nicht vollständig eingegangen) — Basis für
+    # den erwarteten Wareneingang und die „nachzuhaken"-Liste.
+    pos = frappe.get_all(
+        "Purchase Order",
+        filters=[["docstatus", "=", 1],
+                 ["status", "not in", ["Closed", "Cancelled", "Completed", "Delivered"]],
+                 ["per_received", "<", 100]],
+        fields=["name", "supplier", "supplier_name", "transaction_date", "schedule_date",
+                "base_net_total", "per_received", "status"],
+        limit_page_length=0,
+        ignore_permissions=True,
+    )
+    po_items: dict[str, list[dict]] = {}
+    if pos:
+        for row in frappe.get_all(
+            "Purchase Order Item",
+            filters=[["parent", "in", [p["name"] for p in pos]]],
+            fields=["parent", "item_code", "item_name", "qty", "received_qty"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        ):
+            # nur noch ausstehende Positionen — bereits gelieferte erwartet niemand mehr.
+            open_qty = float(row.get("qty") or 0) - float(row.get("received_qty") or 0)
+            if open_qty <= 0:
+                continue
+            po_items.setdefault(row["parent"], []).append({
+                "item_code": row.get("item_code"),
+                "item_name": row.get("item_name") or row.get("item_code"),
+                "open_qty": round(open_qty, 2),
+            })
+    open_purchase_orders = []
+    for p in pos:
+        items = po_items.get(p["name"], [])
+        net_open = float(p.get("base_net_total") or 0) * (1.0 - float(p.get("per_received") or 0) / 100.0)
+        open_purchase_orders.append({
+            "name": p["name"],
+            "supplier": p.get("supplier"),
+            "supplier_name": p.get("supplier_name"),
+            "status": p.get("status"),
+            "transaction_date": str(p["transaction_date"]) if p.get("transaction_date") else None,
+            "schedule_date": str(p["schedule_date"]) if p.get("schedule_date") else None,
+            "net_total": round(float(p.get("base_net_total") or 0), 2),
+            "net_open": round(net_open, 2),
+            "per_received": float(p.get("per_received") or 0),
+            "positions": len(items),
+            # Deckel gegen aufgeblähten Cache-Eintrag; die Anzahl steht in positions.
+            "items": items[:20],
+        })
+
+    # Lieferzeit-Historie je Lieferant: Wareneingangspositionen mit Bestellbezug
+    # ergeben (Bestelldatum -> Wareneingangsdatum). Basis sind die oben schon
+    # geladenen Wareneingänge (ab Vorjahresanfang); die Median-Bildung und die
+    # „erster Wareneingang je Bestellung"-Regel stecken in metrics.py.
+    po_receipt_pairs = []
+    if purchase_receipts:
+        pr_dates = {r["name"]: str(r.get("posting_date") or "") for r in purchase_receipts}
+        links = frappe.get_all(
+            "Purchase Receipt Item",
+            filters=[["parent", "in", list(pr_dates)], ["purchase_order", "!=", ""]],
+            fields=["parent", "purchase_order"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        )
+        pairs = sorted({(r["parent"], r["purchase_order"]) for r in links if r.get("purchase_order")})
+        po_meta: dict[str, dict] = {}
+        ref_names = sorted({po for _, po in pairs})
+        if ref_names:
+            for row in frappe.get_all(
+                "Purchase Order",
+                filters=[["name", "in", ref_names]],
+                fields=["name", "supplier", "transaction_date"],
+                limit_page_length=0,
+                ignore_permissions=True,
+            ):
+                po_meta[row["name"]] = row
+        for pr_name, po_name in pairs:
+            meta = po_meta.get(po_name)
+            if not meta or not meta.get("transaction_date"):
+                continue
+            po_receipt_pairs.append({
+                "purchase_order": po_name,
+                "supplier": meta.get("supplier"),
+                "order_date": str(meta["transaction_date"]),
+                "receipt_date": pr_dates.get(pr_name),
+            })
+
     # Top-Produkte: Rechnungspositionen (Sales Invoice Item) nur für den
     # laufenden Monat — eigene, engere Abfrage statt aus `invoices` (mehrere
     # Monate) herausgefiltert, um kein posting_date-Format raten zu müssen.
@@ -271,6 +357,8 @@ def _fetch_erpnext(config: dict) -> dict:
         "invoices": invoices,
         "to_bill_delivery_notes": dns,
         "open_sales_orders": open_sales_orders,
+        "open_purchase_orders": open_purchase_orders,
+        "po_receipt_pairs": po_receipt_pairs,
         "purchase_receipts": purchase_receipts,
         "invoice_items": invoice_items,
         "purchase_receipt_items": purchase_receipt_items,

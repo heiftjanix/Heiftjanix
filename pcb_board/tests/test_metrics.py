@@ -305,6 +305,133 @@ class TestBuildMetrics(unittest.TestCase):
         # Fixtures: 12000 + 8000 (Juli) + 90000 (Juni) — alles 2026
         self.assertAlmostEqual(metrics["ytd_revenue"], 110000, delta=0.01)
 
+    def _purchasing_data(self):
+        """Lieferzeit-Historie: LF-A liefert in 5/7/9 Tagen (Median 7), LF-B in 30.
+        Bei BE-ALT zwei Wareneingänge — nur der erste zählt."""
+        data = self._data()
+        data["po_receipt_pairs"] = [
+            {"purchase_order": "BE-H1", "supplier": "LF-A", "order_date": "2026-05-01",
+             "receipt_date": "2026-05-06"},                                  # 5 T.
+            {"purchase_order": "BE-H2", "supplier": "LF-A", "order_date": "2026-05-10",
+             "receipt_date": "2026-05-17"},                                  # 7 T.
+            {"purchase_order": "BE-H3", "supplier": "LF-A", "order_date": "2026-06-01",
+             "receipt_date": "2026-06-10"},                                  # 9 T.
+            {"purchase_order": "BE-ALT", "supplier": "LF-A", "order_date": "2026-04-01",
+             "receipt_date": "2026-04-08"},                                  # erster WE: 7 T.
+            {"purchase_order": "BE-ALT", "supplier": "LF-A", "order_date": "2026-04-01",
+             "receipt_date": "2026-06-30"},                                  # Teillieferung -> ignoriert
+            {"purchase_order": "BE-H4", "supplier": "LF-B", "order_date": "2026-05-01",
+             "receipt_date": "2026-05-31"},                                  # 30 T.
+        ]
+        data["open_purchase_orders"] = [
+            # LF-A, Median 7 T. -> erwartet 2026-07-10 -> 5 Tage überfällig
+            {"name": "BE-SPAET", "supplier": "LF-A", "supplier_name": "Lieferant A",
+             "status": "To Receive and Bill", "transaction_date": "2026-07-03",
+             "base_net_total": 4000, "net_open": 4000, "per_received": 0, "positions": 2,
+             "items": [{"item_name": "Platine A", "open_qty": 10},
+                       {"item_name": "Widerstand", "open_qty": 500}]},
+            # LF-A, bestellt 2026-07-08 -> erwartet 2026-07-15 = heute
+            {"name": "BE-HEUTE", "supplier": "LF-A", "supplier_name": "Lieferant A",
+             "status": "To Receive", "transaction_date": "2026-07-08",
+             "base_net_total": 900, "net_open": 900, "per_received": 0, "positions": 1,
+             "items": [{"item_name": "Stecker", "open_qty": 20}]},
+            # LF-B, Median 30 T. -> erwartet 2026-08-09 -> künftig
+            {"name": "BE-KUENFTIG", "supplier": "LF-B", "supplier_name": "Lieferant B",
+             "status": "To Receive", "transaction_date": "2026-07-10",
+             "base_net_total": 2000, "net_open": 2000, "per_received": 0, "positions": 1,
+             "items": [{"item_name": "Gehäuse", "open_qty": 5}]},
+            # unbekannter Lieferant -> Median über alle (7 T.) -> 2026-07-08, überfällig
+            {"name": "BE-NEULF", "supplier": "LF-NEU", "supplier_name": "Lieferant Neu",
+             "status": "To Receive", "transaction_date": "2026-07-01",
+             "base_net_total": 500, "net_open": 500, "per_received": 0, "positions": 1,
+             "items": []},
+            # pausiert -> sichtbar, aber nicht anmahnen
+            {"name": "BE-HOLD", "supplier": "LF-A", "supplier_name": "Lieferant A",
+             "status": "On Hold", "transaction_date": "2026-06-01",
+             "base_net_total": 700, "net_open": 700, "per_received": 0, "positions": 1,
+             "items": []},
+        ]
+        return data
+
+    def test_supplier_lead_times_median_per_supplier(self):
+        lt = m.supplier_lead_times(self._purchasing_data())
+        self.assertEqual(lt["per_supplier"]["LF-A"]["median_days"], 7.0)
+        self.assertEqual(lt["per_supplier"]["LF-A"]["samples"], 4)   # BE-ALT nur einmal
+        self.assertEqual(lt["per_supplier"]["LF-B"]["median_days"], 30.0)
+        self.assertEqual(lt["samples"], 5)
+        self.assertEqual(lt["overall_median_days"], 7.0)
+
+    def test_supplier_lead_times_ignores_receipt_before_order(self):
+        data = self._data()
+        data["po_receipt_pairs"] = [
+            {"purchase_order": "BE-X", "supplier": "LF-A", "order_date": "2026-06-10",
+             "receipt_date": "2026-06-01"},
+            {"purchase_order": "BE-Y", "supplier": "LF-A", "order_date": None,
+             "receipt_date": "2026-06-05"},
+        ]
+        lt = m.supplier_lead_times(data)
+        self.assertEqual(lt["samples"], 0)
+        self.assertIsNone(lt["overall_median_days"])
+
+    def test_purchase_orders_expected_date_and_follow_up(self):
+        p = m.build_metrics(self._purchasing_data(), CONFIG, date(2026, 7, 15))["purchasing"]
+        by_name = {r["name"]: r for r in p["open"]}
+        self.assertEqual(by_name["BE-SPAET"]["expected_date"], "2026-07-10")
+        self.assertEqual(by_name["BE-SPAET"]["days_late"], 5)
+        self.assertEqual(by_name["BE-SPAET"]["expected_source"], "supplier")
+        self.assertEqual(by_name["BE-HEUTE"]["expected_date"], "2026-07-15")
+        self.assertEqual(by_name["BE-HEUTE"]["days_until"], 0)
+        self.assertEqual(by_name["BE-KUENFTIG"]["expected_date"], "2026-08-09")
+        self.assertEqual(by_name["BE-KUENFTIG"]["days_until"], 25)
+        # unbekannter Lieferant fällt auf den Gesamt-Median zurück
+        self.assertEqual(by_name["BE-NEULF"]["expected_source"], "overall")
+        self.assertEqual(by_name["BE-NEULF"]["expected_date"], "2026-07-08")
+        # nachzuhaken: nur überfällige, „On Hold" nicht — längste Verspätung zuerst
+        self.assertEqual([r["name"] for r in p["follow_up"]], ["BE-NEULF", "BE-SPAET"])
+        self.assertAlmostEqual(p["follow_up_net"], 4500, delta=0.01)
+        self.assertEqual(p["open_count"], 5)
+        self.assertAlmostEqual(p["open_net"], 8100, delta=0.01)
+        # nach erwartetem Termin sortiert (BE-HOLD: 01.06. + 7 T. = frühester Termin)
+        self.assertEqual([r["name"] for r in p["open"]],
+                         ["BE-HOLD", "BE-NEULF", "BE-SPAET", "BE-HEUTE", "BE-KUENFTIG"])
+        self.assertTrue(by_name["BE-HOLD"]["on_hold"])
+        self.assertGreater(by_name["BE-HOLD"]["days_late"], 0)   # überfällig, aber kein Nachhaken
+
+    def test_purchase_orders_expected_today_tile(self):
+        et = m.build_metrics(self._purchasing_data(), CONFIG,
+                             date(2026, 7, 15))["purchasing"]["expected_today"]
+        self.assertEqual((et["orders"], et["positions"]), (1, 1))
+        self.assertAlmostEqual(et["net"], 900, delta=0.01)
+        self.assertEqual([i["item_name"] for i in et["items"]], ["Stecker"])
+        self.assertEqual(et["items"][0]["purchase_order"], "BE-HEUTE")
+
+    def test_purchase_orders_without_history_use_schedule_date(self):
+        data = self._data()
+        data["po_receipt_pairs"] = []
+        data["open_purchase_orders"] = [
+            {"name": "BE-1", "supplier": "LF-A", "supplier_name": "Lieferant A",
+             "status": "To Receive", "transaction_date": "2026-07-01",
+             "schedule_date": "2026-07-12", "net_open": 100, "positions": 1, "items": []},
+            {"name": "BE-2", "supplier": "LF-A", "supplier_name": "Lieferant A",
+             "status": "To Receive", "transaction_date": "2026-07-01",
+             "schedule_date": None, "net_open": 100, "positions": 1, "items": []},
+        ]
+        p = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]
+        by_name = {r["name"]: r for r in p["open"]}
+        self.assertEqual(by_name["BE-1"]["expected_source"], "schedule")
+        self.assertEqual(by_name["BE-1"]["days_late"], 3)
+        self.assertEqual([r["name"] for r in p["follow_up"]], ["BE-1"])
+        # ohne jeden Termin: nichts erwartet, nichts anzumahnen
+        self.assertIsNone(by_name["BE-2"]["expected_date"])
+        self.assertEqual(by_name["BE-2"]["days_late"], 0)
+        self.assertIsNone(by_name["BE-2"]["expected_source"])
+
+    def test_purchasing_empty_without_purchase_data(self):
+        p = m.build_metrics(self._data(), CONFIG, date(2026, 7, 15))["purchasing"]
+        self.assertEqual((p["open_count"], p["follow_up_count"]), (0, 0))
+        self.assertEqual(p["expected_today"]["positions"], 0)
+        self.assertIsNone(p["lead_times"]["overall_median_days"])
+
     def test_mail_summary_counts_and_sort(self):
         data = self._data()
         data["mail"] = {"window_hours": 24, "items": [

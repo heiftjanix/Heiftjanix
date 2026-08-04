@@ -380,7 +380,8 @@ PCBBoard.prototype.renderAll = function () {
 // Materialwirtschaft = frühere Tabs „ToDo" (Liefertermine) + „Abrechnung"
 // (ausgehende Pakete/Lieferscheine), zusammengefasst auf je eine Kachel.
 PCBBoard.prototype.materialTabHtml = function (m) {
-	return this.deliveryDatesHtml(m) + this.outgoingPackagesHtml(m);
+	return this.deliveryDatesHtml(m) + this.outgoingPackagesHtml(m) +
+		this.purchaseOrdersHtml(m) + this.followUpHtml(m);
 };
 
 // GuV = frühere Tabs „Umsatz" + „Kosten".
@@ -457,6 +458,151 @@ PCBBoard.prototype.deliveryDatesHtml = function (m) {
 	return '<section class="card"><div class="sec-h"><h2>📅 Liefertermine: diese Woche oder überfällig</h2>' +
 		'<span class="muted">Handelsware & Aufträge nicht übersehen</span></div>' +
 		reliability + table + '</section>';
+};
+
+// Aktuelle Bestellungen mit erwartetem Wareneingang (Bestelldatum + Median-
+// Lieferzeit des Lieferanten). Überschrittene Termine werden rot markiert.
+PCBBoard.prototype.poLink = function (name) {
+	return '<a href="/app/purchase-order/' + encodeURIComponent(name) + '" target="_blank">' +
+		this.esc(name) + '</a>';
+};
+
+PCBBoard.prototype.poStatusBadge = function (r) {
+	if (r.on_hold) {
+		return '<span class="muted">pausiert (On Hold)</span>';
+	}
+	if (r.days_late > 0) {
+		return '<span class="dot-hi">' + r.days_late + ' Tag(e) überfällig</span>';
+	}
+	if (r.days_until === 0) {
+		return '<span class="pill rel">heute erwartet</span>';
+	}
+	if (r.days_until > 0) {
+		return '<span class="pill info">in ' + r.days_until + ' Tag(en)</span>';
+	}
+	return '<span class="muted">kein Termin berechenbar</span>';
+};
+
+// Woraus der erwartete Termin stammt — sonst bleibt die Zahl eine Behauptung.
+PCBBoard.prototype.leadCell = function (r) {
+	if (r.expected_source === 'schedule') {
+		return '<span class="muted" title="Keine Lieferzeit-Historie — Wunschtermin der Bestellung">' +
+			'Wunschtermin</span>';
+	}
+	if (r.lead_days == null) {
+		return '<span class="muted">—</span>';
+	}
+	var days = String(r.lead_days).replace('.', ',') + ' T.';
+	if (r.expected_source === 'supplier') {
+		return days + ' <span class="muted" style="font-size:.76rem" title="Median aus ' +
+			r.lead_samples + ' Vorgang/Vorgängen dieses Lieferanten">(' + r.lead_samples + ')</span>';
+	}
+	return days + ' <span class="muted" style="font-size:.76rem" ' +
+		'title="Keine Historie für diesen Lieferanten — Median über alle Lieferanten">(Ø alle)</span>';
+};
+
+PCBBoard.prototype.purchaseOrdersHtml = function (m) {
+	var self = this;
+	// Fehlt der Block komplett, ist der gecachte Stand älter als dieses Feature —
+	// dann keine leere Erfolgsmeldung zeigen, sondern auf den Refresh verweisen.
+	if (!m.purchasing) {
+		return '<section class="card"><div class="sec-h"><h2>🛒 Aktuelle Bestellungen &amp; erwarteter Wareneingang</h2></div>' +
+			'<p class="muted">Die Bestelldaten kommen mit dem nächsten Datenabruf — ' +
+			'auf „⟳ Live aktualisieren" klicken.</p></section>';
+	}
+	var p = m.purchasing;
+	var rows = p.open || [];
+	var et = p.expected_today || {};
+	var lt = p.lead_times || {};
+
+	var body = rows.map(function (r) {
+		var late = r.days_late > 0 && !r.on_hold;
+		return '<tr' + (late ? ' class="late"' : '') + '><td>' + self.poLink(r.name) + '</td>' +
+			'<td>' + self.esc(r.supplier) + '</td>' +
+			'<td>' + (r.order_date ? self.esc(frappe.datetime.str_to_user(r.order_date)) : '—') + '</td>' +
+			'<td class="num">' + self.leadCell(r) + '</td>' +
+			'<td class="exp">' + (r.expected_date
+				? self.esc(frappe.datetime.str_to_user(r.expected_date)) : '—') + '</td>' +
+			'<td class="num">' + r.positions + '</td>' +
+			'<td class="num">' + self.eur(r.net_open) + '</td>' +
+			'<td>' + self.poStatusBadge(r) + '</td></tr>';
+	}).join('');
+	var table = rows.length
+		? '<table class="tbl"><thead><tr><th>Bestellung</th><th>Lieferant</th><th>Bestellt am</th>' +
+			'<th class="num">Ø Lieferzeit</th><th>Erwartet am</th><th class="num">Positionen</th>' +
+			'<th class="num">Offen (netto)</th><th>Status</th></tr></thead><tbody>' + body +
+			'</tbody><tfoot><tr><td colspan="5">Summe (' + rows.length + ')</td>' +
+			'<td class="num">' + rows.reduce(function (a, r) { return a + (r.positions || 0); }, 0) + '</td>' +
+			'<td class="num">' + self.eur(p.open_net) + '</td><td></td></tr></tfoot></table>'
+		: '<p class="muted">Keine offenen Bestellungen. ✅</p>';
+
+	// Kachel „heute erwartet": Artikel stehen im Vordergrund, nicht der Betrag.
+	var names = (et.items || []).map(function (i) {
+		return self.esc(i.item_name || '') + (i.open_qty != null
+			? ' <span class="muted">×' + String(i.open_qty).replace('.', ',') + '</span>' : '');
+	});
+	var namesLine = names.length
+		? names.slice(0, 3).join(' · ') + (names.length > 3 ? ' · +' + (names.length - 3) + ' weitere' : '')
+		: 'heute wird nichts erwartet';
+	var todayTile =
+		'<div class="tile"><p class="k">Heute erwartete Artikel</p>' +
+		'<div class="v" style="color:' + (et.positions ? 'var(--series-1)' : 'var(--text-primary)') + '">' +
+		(et.positions || 0) + '</div>' +
+		'<div class="m">' + (et.orders ? 'aus ' + et.orders + ' Bestellung(en) · ' + self.eur(et.net) +
+			'<br>' + namesLine : namesLine) + '</div></div>';
+
+	var tiles =
+		'<div class="tiles" style="margin-bottom:12px">' + todayTile +
+		'<div class="tile"><p class="k">Offene Bestellungen</p>' +
+		'<div class="v">' + (p.open_count || 0) + '</div>' +
+		'<div class="m">' + self.eur(p.open_net) + ' noch nicht eingegangen</div></div>' +
+		'<div class="tile"><p class="k">Nachzuhaken</p>' +
+		'<div class="v" style="color:' + (p.follow_up_count ? 'var(--critical)' : 'var(--good)') + '">' +
+		(p.follow_up_count || 0) + '</div>' +
+		'<div class="m">' + (p.follow_up_count
+			? self.eur(p.follow_up_net) + ' · Wareneingang überfällig'
+			: 'alle Bestellungen im Zeitplan') + '</div></div>' +
+		'<div class="tile"><p class="k">Ø Lieferzeit (alle Lieferanten)</p>' +
+		'<div class="v">' + (lt.overall_median_days != null
+			? String(lt.overall_median_days).replace('.', ',') + ' Tage' : '—') + '</div>' +
+		'<div class="m">' + (lt.samples
+			? 'Median aus ' + lt.samples + ' Vorgang/Vorgängen (Bestellung → Wareneingang)'
+			: 'noch keine Bestellung mit Wareneingang verknüpft') + '</div></div>' +
+		'</div>';
+
+	return '<section class="card"><div class="sec-h"><h2>🛒 Aktuelle Bestellungen &amp; erwarteter Wareneingang</h2>' +
+		'<span class="muted">Termin je Lieferant aus der eigenen Lieferzeit-Historie</span></div>' +
+		tiles + table +
+		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Erwartet am = Bestelldatum + ' +
+		'Median-Lieferzeit dieses Lieferanten (Bestellung → erster Wareneingang). Ohne eigene ' +
+		'Historie greift der Median über alle Lieferanten, ohne jede Historie der Wunschtermin ' +
+		'der Bestellung.</p></section>';
+};
+
+// Eigene Rubrik: alles, was aus dem Zeitplan gefallen ist.
+PCBBoard.prototype.followUpHtml = function (m) {
+	var self = this;
+	var rows = ((m.purchasing || {}).follow_up) || [];
+	if (!rows.length) {
+		return '';
+	}
+	var body = rows.map(function (r) {
+		return '<tr class="late"><td>' + self.poLink(r.name) + '</td>' +
+			'<td>' + self.esc(r.supplier) + '</td>' +
+			'<td>' + (r.order_date ? self.esc(frappe.datetime.str_to_user(r.order_date)) : '—') + '</td>' +
+			'<td class="exp">' + (r.expected_date
+				? self.esc(frappe.datetime.str_to_user(r.expected_date)) : '—') + '</td>' +
+			'<td class="num"><span class="dot-hi">' + r.days_late + ' Tag(e)</span></td>' +
+			'<td class="num">' + r.positions + '</td>' +
+			'<td class="num">' + self.eur(r.net_open) + '</td></tr>';
+	}).join('');
+	return '<section class="card"><div class="sec-h"><h2>📣 Nachzuhaken</h2>' +
+		'<span class="muted">erwarteter Wareneingang überschritten — beim Lieferanten nachfragen</span></div>' +
+		'<table class="tbl"><thead><tr><th>Bestellung</th><th>Lieferant</th><th>Bestellt am</th>' +
+		'<th>Erwartet am</th><th class="num">Überfällig</th><th class="num">Positionen</th>' +
+		'<th class="num">Offen (netto)</th></tr></thead><tbody>' + body +
+		'</tbody><tfoot><tr><td colspan="6">Summe (' + rows.length + ')</td>' +
+		'<td class="num">' + self.eur((m.purchasing || {}).follow_up_net) + '</td></tr></tfoot></table></section>';
 };
 
 PCBBoard.prototype.costsTabHtml = function (m) {
@@ -1358,6 +1504,8 @@ var PCB_BOARD_CSS =
 	'.tbl th{color:var(--text-secondary);font-weight:600}.tbl .num{text-align:right;font-variant-numeric:tabular-nums}' +
 	'.tbl a{color:var(--blue-500,#2490ef);text-decoration:none;font-weight:600}.tbl a:hover{text-decoration:underline}' +
 	'.tbl tfoot td{font-weight:650;border-top:2px solid var(--baseline)}' +
+	'.tbl tr.late{background:color-mix(in srgb,var(--critical) 8%,transparent)}' +
+	'.tbl tr.late .exp{color:var(--critical);font-weight:700}' +
 	'.pcb-root .muted{color:var(--muted)}.pcb-root .foot{color:var(--muted);font-size:.78rem;margin-top:18px}' +
 	// Bewusst kein vollflächiges Overlay: der Refresh-Status ist global (alle Nutzer
 	// sehen denselben Stand), aber niemand soll deshalb blockiert werden — nur ein

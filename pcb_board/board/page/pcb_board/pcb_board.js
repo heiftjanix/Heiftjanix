@@ -983,14 +983,15 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 				: '')],
 	]);
 
-	// Umsatz Vorjahr — dieselben Zeiträume in gleicher Reihenfolge.
+	// Umsatz Vorjahr — Monat zuerst, dann die Jahres-Zeiträume; gleiche
+	// Zeilenfolge wie im laufenden Jahr, damit sich beide Felder vergleichen lassen.
 	var revPrevCard = '';
 	if (py.full_year_total || py.total) {
 		revPrevCard = vcard('Umsatz ' + self.esc(pyYear), [
+			[self.esc(pyMonthLbl), self.eur(py.total)],
 			['Jahresanfang bis heute <i class="vhint" title="Vorjahr bis zum selben Kalendertag — fairer Vergleich">' +
 				'(bis zum selben Tag)</i>', self.eur(py.ytd_same_day)],
 			['komplettes Jahr', self.eur(py.full_year_total)],
-			[self.esc(pyMonthLbl), self.eur(py.total)],
 		]);
 	}
 
@@ -1332,6 +1333,7 @@ var PCB_BOARD_CSS =
 	'.pcb-root figcaption.bar2{margin-top:26px}' +
 	'.vcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px;margin-top:16px}' +
 	'.vcards .card{margin-top:0}' +
+	'.vcard figcaption{text-align:center}' +
 	'.vcard .vrow{display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:7px 0;border-bottom:1px solid var(--border)}' +
 	'.vcard .vrow:last-child{border-bottom:0;padding-bottom:0}' +
 	'.vcard .vk{font-size:.84rem;color:var(--text-secondary)}' +

@@ -432,6 +432,176 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertEqual(p["expected_today"]["positions"], 0)
         self.assertIsNone(p["lead_times"]["overall_median_days"])
 
+    def test_mail_dedupe_shared_mailbox_across_users(self):
+        # Dasselbe geteilte Postfach wird von zwei verbundenen Nutzern gelesen —
+        # die Mail darf nur einmal erscheinen.
+        items = [
+            {"mailbox": "bestellung@x.de", "mailbox_email": "bestellung@x.de",
+             "internet_message_id": "<a@x>", "subject": "Bestellung"},
+            {"mailbox": "bestellung@x.de", "mailbox_email": "Bestellung@X.de",
+             "internet_message_id": "<a@x>", "subject": "Bestellung"},
+            # gleiche Mail in einem ANDEREN Postfach: bleibt (liegt dort auch)
+            {"mailbox": "anfrage@x.de", "mailbox_email": "anfrage@x.de",
+             "internet_message_id": "<a@x>", "subject": "Bestellung"},
+            # eigenes Postfach zweier Nutzer, gleiche ID -> zwei echte Vorgänge
+            {"mailbox": "anna@x.de", "internet_message_id": "<b@x>", "subject": "CC"},
+            {"mailbox": "ben@x.de", "internet_message_id": "<b@x>", "subject": "CC"},
+            # ohne ID nicht anfassen
+            {"mailbox": "bestellung@x.de", "subject": "ohne ID"},
+            {"mailbox": "bestellung@x.de", "subject": "ohne ID"},
+        ]
+        out = m.dedupe_mail_items(items)
+        self.assertEqual(len(out), 6)
+        boxes = [(i.get("mailbox"), i.get("internet_message_id")) for i in out]
+        self.assertEqual(boxes.count(("bestellung@x.de", "<a@x>")), 1)
+        self.assertEqual(boxes.count(("anfrage@x.de", "<a@x>")), 1)
+        self.assertEqual(boxes.count(("bestellung@x.de", None)), 2)
+
+    def test_mail_summary_counts_deduped(self):
+        data = self._data()
+        dup = {"mailbox": "bestellung@x.de", "mailbox_email": "bestellung@x.de",
+               "internet_message_id": "<a@x>", "category": "relevant", "priority": "high",
+               "subject": "Doppelt"}
+        data["mail"] = {"window_hours": 24, "items": [dict(dup), dict(dup), dict(dup)]}
+        mail = m.build_metrics(data, CONFIG, date(2026, 7, 15))["mail"]
+        self.assertEqual((mail["total"], mail["relevant"], mail["high_priority"]), (1, 1, 1))
+        self.assertEqual(mail["mailboxes"][0]["total"], 1)
+
+    def _wo_data(self):
+        """Zwei Bestellungen, zwei Fertigungsaufträge.
+        FA-1 (Start 20.07.) fehlen A (2 Stk, kein Bestand) und B (1 Stk, kein Bestand):
+        A kommt mit BE-1 (erwartet 10.07.), B mit BE-2 (erwartet 22.07.) -> BE-2 ist
+        die letzte fehlende Lieferung. FA-2 (Start 25.07.) braucht C, das nirgends
+        bestellt ist -> bleibt blockiert."""
+        data = self._data()
+        data["po_receipt_pairs"] = []
+        data["open_purchase_orders"] = [
+            {"name": "BE-1", "supplier": "LF-A", "supplier_name": "Lieferant A",
+             "status": "To Receive", "transaction_date": "2026-07-01",
+             "schedule_date": "2026-07-10", "net_open": 1000, "positions": 1,
+             "items": [{"item_code": "A", "item_name": "Artikel A", "open_qty": 2}]},
+            {"name": "BE-2", "supplier": "LF-A", "supplier_name": "Lieferant A",
+             "status": "To Receive", "transaction_date": "2026-07-02",
+             "schedule_date": "2026-07-22", "net_open": 500, "positions": 1,
+             "items": [{"item_code": "B", "item_name": "Artikel B", "open_qty": 1}]},
+        ]
+        data["work_orders"] = [
+            {"name": "FA-1", "item_name": "Baugruppe 1", "qty": 1, "status": "Not Started",
+             "sales_order": "AB-1", "planned_start_date": "2026-07-20",
+             "expected_delivery_date": "2026-07-30",
+             "required_items": [
+                 {"item_code": "A", "item_name": "Artikel A", "required_qty": 2,
+                  "transferred_qty": 0, "available_qty": 0},
+                 {"item_code": "B", "item_name": "Artikel B", "required_qty": 1,
+                  "transferred_qty": 0, "available_qty": 0},
+             ]},
+            {"name": "FA-2", "item_name": "Baugruppe 2", "qty": 1, "status": "Not Started",
+             "sales_order": "AB-2", "planned_start_date": "2026-07-25",
+             "expected_delivery_date": "2026-08-05",
+             "required_items": [
+                 {"item_code": "C", "item_name": "Artikel C", "required_qty": 5,
+                  "transferred_qty": 0, "available_qty": 1},
+             ]},
+        ]
+        return data
+
+    def test_work_orders_last_delivery_unblocks(self):
+        p = m.build_metrics(self._wo_data(), CONFIG, date(2026, 7, 15))["purchasing"]
+        by_name = {r["name"]: r for r in p["open"]}
+        # beide Bestellungen liefern für FA-1, aber nur die SPÄTERE macht ihn komplett
+        self.assertEqual(by_name["BE-1"]["unblocks"], [])
+        self.assertEqual(by_name["BE-2"]["unblocks"], ["FA-1"])
+        self.assertEqual(by_name["BE-1"]["work_orders_count"], 1)
+        wos_be1 = by_name["BE-1"]["items"][0]["work_orders"]
+        self.assertEqual([w["name"] for w in wos_be1], ["FA-1"])
+        self.assertFalse(wos_be1[0]["is_last"])
+        self.assertTrue(by_name["BE-2"]["items"][0]["work_orders"][0]["is_last"])
+
+        wo = {w["name"]: w for w in p["work_orders"]}
+        self.assertEqual(wo["FA-1"]["complete_on"], "2026-07-22")
+        self.assertEqual(wo["FA-1"]["complete_po"], "BE-2")
+        self.assertEqual(wo["FA-1"]["missing_items"], [])
+        # FA-2: 5 gebraucht, 1 am Lager, nichts bestellt -> 4 fehlen, kein Termin
+        self.assertIsNone(wo["FA-2"]["complete_on"])
+        self.assertEqual(wo["FA-2"]["missing_items"][0]["short_qty"], 4)
+        self.assertEqual((p["wo_waiting_count"], p["wo_unblockable_count"],
+                          p["wo_need_order_count"]), (2, 1, 1))
+
+    def test_work_orders_scarce_stock_allocated_once(self):
+        """Zwei Aufträge brauchen denselben Artikel, geliefert wird nur für einen:
+        der früher startende Auftrag bekommt die Menge, der zweite bleibt blockiert."""
+        data = self._data()
+        data["po_receipt_pairs"] = []
+        data["open_purchase_orders"] = [
+            {"name": "BE-1", "supplier": "LF-A", "supplier_name": "Lieferant A",
+             "status": "To Receive", "transaction_date": "2026-07-01",
+             "schedule_date": "2026-07-20", "net_open": 100, "positions": 1,
+             "items": [{"item_code": "A", "item_name": "Artikel A", "open_qty": 10}]},
+        ]
+        common = {"item_name": "Baugruppe", "qty": 1, "status": "Not Started",
+                  "required_items": [{"item_code": "A", "item_name": "Artikel A",
+                                      "required_qty": 10, "transferred_qty": 0,
+                                      "available_qty": 0}]}
+        data["work_orders"] = [
+            dict(common, name="FA-FRUEH", planned_start_date="2026-07-21"),
+            dict(common, name="FA-SPAET", planned_start_date="2026-07-28"),
+        ]
+        p = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]
+        wo = {w["name"]: w for w in p["work_orders"]}
+        self.assertEqual(wo["FA-FRUEH"]["complete_po"], "BE-1")
+        self.assertIsNone(wo["FA-SPAET"]["complete_po"])
+        self.assertEqual(wo["FA-SPAET"]["missing_items"][0]["short_qty"], 10)
+        # die Bestellung macht nur den früheren Auftrag komplett
+        self.assertEqual(p["open"][0]["unblocks"], ["FA-FRUEH"])
+
+    def test_work_orders_partially_covered_is_not_marked_as_last(self):
+        """Die Bestellung deckt einen Artikel des Auftrags, ein zweiter ist gar nicht
+        bestellt: der Auftrag wird dadurch NICHT bearbeitbar — kein 🔓, aber der
+        Bezug bleibt sichtbar (⌛ im Board)."""
+        data = self._data()
+        data["po_receipt_pairs"] = []
+        data["open_purchase_orders"] = [
+            {"name": "BE-1", "supplier": "LF-A", "supplier_name": "Lieferant A",
+             "status": "To Receive", "transaction_date": "2026-07-01",
+             "schedule_date": "2026-07-20", "net_open": 100, "positions": 1,
+             "items": [{"item_code": "A", "item_name": "Artikel A", "open_qty": 5}]},
+        ]
+        data["work_orders"] = [
+            {"name": "FA-1", "item_name": "Baugruppe", "qty": 1, "status": "Not Started",
+             "planned_start_date": "2026-07-25",
+             "required_items": [
+                 {"item_code": "A", "item_name": "Artikel A", "required_qty": 5,
+                  "transferred_qty": 0, "available_qty": 0},
+                 {"item_code": "Z", "item_name": "Artikel Z", "required_qty": 2,
+                  "transferred_qty": 0, "available_qty": 0},
+             ]},
+        ]
+        p = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]
+        row = p["open"][0]
+        self.assertEqual(row["unblocks"], [])                      # kein 🔓
+        self.assertEqual(row["work_orders_count"], 1)              # Bezug sichtbar
+        link = row["items"][0]["work_orders"][0]
+        self.assertFalse(link["is_last"])
+        self.assertEqual(link["still_missing"], 1)                 # -> ⌛
+        self.assertIsNone(p["work_orders"][0]["complete_on"])
+
+    def test_work_orders_covered_from_stock_needs_no_delivery(self):
+        data = self._data()
+        data["po_receipt_pairs"] = []
+        data["open_purchase_orders"] = []
+        data["work_orders"] = [
+            {"name": "FA-OK", "item_name": "Baugruppe", "qty": 1, "status": "Not Started",
+             "planned_start_date": "2026-07-20",
+             "required_items": [{"item_code": "A", "item_name": "Artikel A",
+                                 "required_qty": 3, "transferred_qty": 1,
+                                 "available_qty": 5}]},
+        ]
+        p = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]
+        wo = p["work_orders"][0]
+        self.assertTrue(wo["from_stock_only"])
+        self.assertFalse(wo["waiting"])
+        self.assertEqual(p["wo_waiting_count"], 0)
+
     def test_mail_summary_counts_and_sort(self):
         data = self._data()
         data["mail"] = {"window_hours": 24, "items": [

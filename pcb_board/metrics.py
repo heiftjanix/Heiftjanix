@@ -141,9 +141,37 @@ def _prev_month(y: int, m: int) -> tuple[int, int]:
     return (y - 1, 12) if m == 1 else (y, m - 1)
 
 
+def dedupe_mail_items(items: list[dict] | None) -> list[dict]:
+    """Dieselbe Mail einmal je Postfach — nicht einmal je verbundenem Nutzer.
+
+    Jeder verbundene Nutzer liest sein EIGENES Postfach und zusätzlich ALLE
+    geteilten Postfächer (bestellung@, anfrage@, …). Eine Mail in einem geteilten
+    Postfach kam damit einmal pro Token zurück: bei drei verbundenen Nutzern stand
+    sie dreimal im Board und wurde dreimal triagiert.
+
+    Schlüssel ist Postfach + Message-ID. Die gleiche Mail in ZWEI verschiedenen
+    Postfächern bleibt erhalten — sie liegt dort auch wirklich zweimal und muss in
+    beiden bearbeitet werden. Einträge ohne jede ID bleiben unangetastet.
+    """
+    seen = set()
+    out = []
+    for i in items or []:
+        mailbox = str(i.get("mailbox_email") or i.get("mailbox") or "").strip().lower()
+        mid = str(i.get("internet_message_id") or i.get("graph_id") or "").strip()
+        if not mid:
+            out.append(i)
+            continue
+        key = (mailbox, mid)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(i)
+    return out
+
+
 def mail_summary(mail: dict | None) -> dict:
     mail = mail or {}
-    items = mail.get("items", []) or []
+    items = dedupe_mail_items(mail.get("items", []))
 
     def is_rel(i):
         return i.get("category") == "relevant"
@@ -310,6 +338,134 @@ def supplier_lead_times(data: dict) -> dict:
     }
 
 
+def work_order_material(data: dict, po_rows: list[dict]) -> dict:
+    """Ordnet den erwarteten Wareneingängen die Fertigungsaufträge zu, für die das
+    Material gedacht ist, und bestimmt je Auftrag die LETZTE nötige Lieferung — ab
+    ihr ist der Auftrag material-komplett und kann bearbeitet werden.
+
+    Bestand und Zulieferung werden dabei nur EINMAL verplant: die Aufträge werden
+    nach Bedarfstermin abgearbeitet (frühester zuerst) und verbrauchen aus einem
+    gemeinsamen Topf. Ohne diese Reihenfolge würde dieselbe knappe Menge mehreren
+    Aufträgen gleichzeitig als Deckung gutgeschrieben, und das Board würde zwei
+    Aufträge als „wird frei" melden, obwohl das Material nur für einen reicht.
+
+    Annahme: ein Bestandstopf je Artikel (die Aufträge melden denselben Bestand des
+    Quelllagers). Reservierungen anderer Vorgänge sind darin nicht abgebildet.
+    """
+    # Zulieferung je Artikel, nach erwartetem Termin — ohne Termin ans Ende.
+    incoming: dict[str, list[dict]] = defaultdict(list)
+    for row in po_rows:
+        for it in row.get("items") or []:
+            code = it.get("item_code")
+            if not code:
+                continue
+            incoming[code].append({
+                "po": row.get("name"),
+                "expected_date": row.get("expected_date"),
+                "qty": float(it.get("open_qty") or 0),
+            })
+    for lst in incoming.values():
+        lst.sort(key=lambda r: (r["expected_date"] is None, r["expected_date"] or "", r["po"] or ""))
+
+    stock: dict[str, float] = {}
+    for wo in data.get("work_orders") or []:
+        for it in wo.get("required_items") or []:
+            code = it.get("item_code")
+            if code:
+                stock[code] = max(stock.get(code, 0.0), float(it.get("available_qty") or 0))
+
+    def need_date(wo: dict) -> str:
+        return wo.get("planned_start_date") or wo.get("expected_delivery_date") or "9999-12-31"
+
+    wos = sorted(data.get("work_orders") or [],
+                 key=lambda w: (need_date(w), w.get("name") or ""))
+
+    by_po: dict[str, dict] = {}
+    out = []
+    for wo in wos:
+        links = []          # (po, item_code, expected_date) — was dieser Auftrag zieht
+        missing = []        # Artikel ohne jede Deckung (Bestand + Bestellungen)
+        from_stock_only = True
+        for it in wo.get("required_items") or []:
+            code = it.get("item_code")
+            need = float(it.get("required_qty") or 0) - float(it.get("transferred_qty") or 0)
+            if not code or need <= 0:
+                continue
+            take = min(need, max(stock.get(code, 0.0), 0.0))
+            stock[code] = stock.get(code, 0.0) - take
+            need -= take
+            if need <= 1e-9:
+                continue
+            from_stock_only = False
+            for inc in incoming.get(code, []):
+                if inc["qty"] <= 1e-9:
+                    continue
+                use = min(need, inc["qty"])
+                inc["qty"] -= use
+                need -= use
+                links.append({"po": inc["po"], "item_code": code,
+                              "expected_date": inc["expected_date"]})
+                if need <= 1e-9:
+                    break
+            if need > 1e-9:
+                missing.append({"item_code": code,
+                                "item_name": it.get("item_name") or code,
+                                "short_qty": round(need, 2)})
+
+        # Material-komplett nur, wenn nichts fehlt UND jede genutzte Lieferung
+        # einen Termin hat — ohne Termin ist kein „ab wann" nennbar.
+        complete = not missing
+        dates = [l["expected_date"] for l in links]
+        undated = any(d is None for d in dates)
+        complete_on = max(dates) if (complete and dates and not undated) else None
+        complete_po = None
+        if complete_on is not None:
+            # die späteste nötige Lieferung schließt den Auftrag ab
+            for l in links:
+                if l["expected_date"] == complete_on:
+                    complete_po = l["po"]
+
+        for l in links:
+            entry = {
+                "name": wo.get("name"),
+                "item_name": wo.get("item_name"),
+                "qty": wo.get("qty"),
+                "status": wo.get("status"),
+                "sales_order": wo.get("sales_order"),
+                "need_date": wo.get("planned_start_date") or wo.get("expected_delivery_date"),
+                "is_last": bool(complete_po) and l["po"] == complete_po,
+                "still_missing": len(missing),
+            }
+            per_item = by_po.setdefault(l["po"], {}).setdefault(l["item_code"], [])
+            if not any(e["name"] == entry["name"] for e in per_item):
+                per_item.append(entry)
+
+        out.append({
+            "name": wo.get("name"),
+            "item_name": wo.get("item_name"),
+            "qty": wo.get("qty"),
+            "status": wo.get("status"),
+            "sales_order": wo.get("sales_order"),
+            "need_date": wo.get("planned_start_date") or wo.get("expected_delivery_date"),
+            "waiting": bool(links) or bool(missing),
+            "from_stock_only": from_stock_only,
+            "complete_on": complete_on,
+            "complete_po": complete_po,
+            "missing_items": missing,
+        })
+
+    waiting = [w for w in out if w["waiting"]]
+    return {
+        "by_po": by_po,
+        "work_orders": out,
+        "waiting_count": len(waiting),
+        # wird durch erwartete Lieferungen komplett …
+        "unblockable_count": len([w for w in waiting if not w["missing_items"]]),
+        # … versus: dafür muss erst noch bestellt werden
+        "need_order_count": len([w for w in waiting if w["missing_items"]]),
+    }
+
+
 def purchase_orders(data: dict, today: date) -> dict:
     """Offene Bestellungen mit erwartetem Wareneingang.
 
@@ -358,6 +514,23 @@ def purchase_orders(data: dict, today: date) -> dict:
 
     # Ohne erwarteten Termin ans Ende (nichts zu planen), sonst nach Termin.
     rows.sort(key=lambda r: (r["expected_date"] is None, r["expected_date"] or "", r["name"] or ""))
+
+    # Fertigungsbezug: welcher Artikel wird für welchen Auftrag gebraucht und
+    # welche Bestellung macht einen Auftrag material-komplett.
+    wom = work_order_material(data, rows)
+    for r in rows:
+        links = wom["by_po"].get(r["name"]) or {}
+        unblocks, names = [], set()
+        for it in r["items"]:
+            entries = links.get(it.get("item_code")) or []
+            it["work_orders"] = entries
+            for e in entries:
+                names.add(e["name"])
+                if e["is_last"] and e["name"] not in unblocks:
+                    unblocks.append(e["name"])
+        r["work_orders_count"] = len(names)
+        r["unblocks"] = unblocks
+
     follow_up = [r for r in rows if r["days_late"] > 0 and not r["on_hold"]]
     follow_up.sort(key=lambda r: -r["days_late"])
 
@@ -384,6 +557,10 @@ def purchase_orders(data: dict, today: date) -> dict:
             "items": items_today,
         },
         "lead_times": lead,
+        "work_orders": wom["work_orders"],
+        "wo_waiting_count": wom["waiting_count"],
+        "wo_unblockable_count": wom["unblockable_count"],
+        "wo_need_order_count": wom["need_order_count"],
     }
 
 

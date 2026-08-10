@@ -22,6 +22,7 @@ function PCBBoard(page) {
 	this.q = '';
 	this.metrics = null;
 	this._openMids = {};
+	this._openPos = {};
 
 	this.injectStyle();
 	this.$root.html(this.shellHtml());
@@ -375,6 +376,7 @@ PCBBoard.prototype.renderAll = function () {
 	this.$root.find('#pcb-tab-material').html(this.materialTabHtml(m));
 	this.$root.find('#pcb-tab-guv').html(this.guvTabHtml(m));
 	this.bindMailInteractions();
+	this.bindMaterialInteractions();
 };
 
 // Materialwirtschaft = frühere Tabs „ToDo" (Liefertermine) + „Abrechnung"
@@ -501,6 +503,81 @@ PCBBoard.prototype.leadCell = function (r) {
 		'title="Keine Historie für diesen Lieferanten — Median über alle Lieferanten">(Ø alle)</span>';
 };
 
+// Aufgeklappte Bestellungen bleiben über einen Hintergrund-Refresh hinweg offen
+// (gleiche Logik wie bei den Mail-Vorschauen).
+PCBBoard.prototype.bindMaterialInteractions = function () {
+	var self = this;
+	this.$root.find('#pcb-tab-material .po-toggle').on('click', function (e) {
+		e.stopPropagation();
+		var $tr = $(this).closest('tr');
+		var po = $tr.data('po');
+		var $detail = self.$root.find('#pcb-tab-material [data-po-detail="' + po + '"]');
+		var open = !!$detail.prop('hidden');
+		$detail.prop('hidden', !open);
+		$(this).find('.chev').text(open ? '▴' : '▾');
+		if (open) self._openPos[po] = true;
+		else delete self._openPos[po];
+	});
+};
+
+PCBBoard.prototype.woLink = function (name) {
+	return '<a href="/app/work-order/' + encodeURIComponent(name) + '" target="_blank">' +
+		this.esc(name) + '</a>';
+};
+
+// Spalte „Für Fertigung": Anzahl betroffener Aufträge + Hinweis, wenn diese
+// Bestellung die letzte fehlende Lieferung für mindestens einen Auftrag ist.
+PCBBoard.prototype.woCell = function (r, open) {
+	var n = r.work_orders_count || 0;
+	if (!n) {
+		return '<span class="muted">—</span>';
+	}
+	var unlock = (r.unblocks || []).length
+		? ' <span class="pill unlock" title="Mit dieser Lieferung ist der Auftrag material-komplett: ' +
+			this.esc((r.unblocks || []).join(', ')) + '">🔓 letzte Lieferung</span>'
+		: '';
+	return '<button class="po-toggle" type="button">' + n + ' FA <span class="chev">' +
+		(open ? '▴' : '▾') + '</span></button>' + unlock;
+};
+
+// Detailzeile: je Artikel der Bestellung die Fertigungsaufträge, für die er
+// gedacht ist; 🔓 markiert den Auftrag, der mit dieser Lieferung startklar wird.
+PCBBoard.prototype.poDetailRow = function (r, open) {
+	var self = this;
+	if (!(r.work_orders_count || 0)) {
+		return '';
+	}
+	var lines = (r.items || []).map(function (it) {
+		var wos = it.work_orders || [];
+		var right;
+		if (!wos.length) {
+			right = '<span class="muted">kein Fertigungsbedarf zugeordnet</span>';
+		} else {
+			right = wos.map(function (w) {
+				var title = (w.item_name || '') + (w.qty ? ' · ' + String(w.qty).replace('.', ',') + ' Stk.' : '') +
+					(w.status ? ' · ' + w.status : '') +
+					(w.need_date ? ' · Start ' + frappe.datetime.str_to_user(w.need_date) : '');
+				var tag = w.is_last
+					? ' <span class="unlock-tag" title="letzte fehlende Lieferung — danach ist der Auftrag material-komplett">🔓</span>'
+					: (w.still_missing
+						? ' <span class="muted" title="Diesem Auftrag fehlt zusätzlich Material, das noch nicht bestellt ist">⌛</span>'
+						: '');
+				return '<span class="wo-chip" title="' + self.esc(title) + '">' + self.woLink(w.name) + tag +
+					(w.sales_order ? ' <span class="muted">(' + self.esc(w.sales_order) + ')</span>' : '') +
+					'</span>';
+			}).join(' ');
+		}
+		return '<div class="po-item"><span class="pi-name">' + self.esc(it.item_name || it.item_code || '') +
+			(it.open_qty != null ? ' <span class="muted">×' + String(it.open_qty).replace('.', ',') + '</span>' : '') +
+			'</span><span class="pi-wos">' + right + '</span></div>';
+	}).join('');
+	return '<tr class="po-detail" data-po-detail="' + this.esc(r.name) + '"' + (open ? '' : ' hidden') +
+		'><td colspan="9"><div class="po-items">' + lines + '</div>' +
+		'<p class="muted" style="font-size:.78rem;margin:6px 0 0">🔓 = mit dieser Lieferung ist der ' +
+		'Auftrag material-komplett · ⌛ = dem Auftrag fehlt zusätzlich Material, das noch nicht ' +
+		'bestellt ist</p></td></tr>';
+};
+
 PCBBoard.prototype.purchaseOrdersHtml = function (m) {
 	var self = this;
 	// Fehlt der Block komplett, ist der gecachte Stand älter als dieses Feature —
@@ -517,22 +594,27 @@ PCBBoard.prototype.purchaseOrdersHtml = function (m) {
 
 	var body = rows.map(function (r) {
 		var late = r.days_late > 0 && !r.on_hold;
-		return '<tr' + (late ? ' class="late"' : '') + '><td>' + self.poLink(r.name) + '</td>' +
+		var open = !!self._openPos[r.name];
+		return '<tr' + (late ? ' class="late"' : '') + ' data-po="' + self.esc(r.name) + '">' +
+			'<td>' + self.poLink(r.name) + '</td>' +
 			'<td>' + self.esc(r.supplier) + '</td>' +
 			'<td>' + (r.order_date ? self.esc(frappe.datetime.str_to_user(r.order_date)) : '—') + '</td>' +
 			'<td class="num">' + self.leadCell(r) + '</td>' +
 			'<td class="exp">' + (r.expected_date
 				? self.esc(frappe.datetime.str_to_user(r.expected_date)) : '—') + '</td>' +
 			'<td class="num">' + r.positions + '</td>' +
+			'<td>' + self.woCell(r, open) + '</td>' +
 			'<td class="num">' + self.eur(r.net_open) + '</td>' +
-			'<td>' + self.poStatusBadge(r) + '</td></tr>';
+			'<td>' + self.poStatusBadge(r) + '</td></tr>' +
+			self.poDetailRow(r, open);
 	}).join('');
 	var table = rows.length
-		? '<table class="tbl"><thead><tr><th>Bestellung</th><th>Lieferant</th><th>Bestellt am</th>' +
+		? '<table class="tbl po-tbl"><thead><tr><th>Bestellung</th><th>Lieferant</th><th>Bestellt am</th>' +
 			'<th class="num">Ø Lieferzeit</th><th>Erwartet am</th><th class="num">Positionen</th>' +
-			'<th class="num">Offen (netto)</th><th>Status</th></tr></thead><tbody>' + body +
+			'<th>Für Fertigung</th><th class="num">Offen (netto)</th><th>Status</th></tr></thead><tbody>' + body +
 			'</tbody><tfoot><tr><td colspan="5">Summe (' + rows.length + ')</td>' +
 			'<td class="num">' + rows.reduce(function (a, r) { return a + (r.positions || 0); }, 0) + '</td>' +
+			'<td colspan="1"></td>' +
 			'<td class="num">' + self.eur(p.open_net) + '</td><td></td></tr></tfoot></table>'
 		: '<p class="muted">Keine offenen Bestellungen. ✅</p>';
 
@@ -562,6 +644,13 @@ PCBBoard.prototype.purchaseOrdersHtml = function (m) {
 		'<div class="m">' + (p.follow_up_count
 			? self.eur(p.follow_up_net) + ' · Wareneingang überfällig'
 			: 'alle Bestellungen im Zeitplan') + '</div></div>' +
+		'<div class="tile"><p class="k">Fertigung wartet auf Material</p>' +
+		'<div class="v" style="color:' + (p.wo_waiting_count ? 'var(--warning)' : 'var(--good)') + '">' +
+		(p.wo_waiting_count || 0) + '</div>' +
+		'<div class="m">' + (p.wo_waiting_count
+			? (p.wo_unblockable_count || 0) + ' wird durch erwartete Lieferungen komplett · ' +
+				(p.wo_need_order_count || 0) + ' braucht noch Bestellungen'
+			: 'kein Fertigungsauftrag wartet auf Material') + '</div></div>' +
 		'<div class="tile"><p class="k">Ø Lieferzeit (alle Lieferanten)</p>' +
 		'<div class="v">' + (lt.overall_median_days != null
 			? String(lt.overall_median_days).replace('.', ',') + ' Tage' : '—') + '</div>' +
@@ -587,6 +676,21 @@ PCBBoard.prototype.followUpHtml = function (m) {
 		return '';
 	}
 	var body = rows.map(function (r) {
+		// Blockierte Fertigung ist das stärkste Argument fürs Nachfassen — daher
+		// hier direkt sichtbar, ohne Aufklappen.
+		var blocks = '<span class="muted">—</span>';
+		if (r.work_orders_count) {
+			var last = (r.unblocks || []);
+			var all = [];
+			(r.items || []).forEach(function (it) {
+				(it.work_orders || []).forEach(function (w) {
+					if (all.indexOf(w.name) < 0) all.push(w.name);
+				});
+			});
+			blocks = all.slice(0, 3).map(function (n) {
+				return self.woLink(n) + (last.indexOf(n) >= 0 ? ' 🔓' : '');
+			}).join(', ') + (all.length > 3 ? ' <span class="muted">+' + (all.length - 3) + '</span>' : '');
+		}
 		return '<tr class="late"><td>' + self.poLink(r.name) + '</td>' +
 			'<td>' + self.esc(r.supplier) + '</td>' +
 			'<td>' + (r.order_date ? self.esc(frappe.datetime.str_to_user(r.order_date)) : '—') + '</td>' +
@@ -594,15 +698,18 @@ PCBBoard.prototype.followUpHtml = function (m) {
 				? self.esc(frappe.datetime.str_to_user(r.expected_date)) : '—') + '</td>' +
 			'<td class="num"><span class="dot-hi">' + r.days_late + ' Tag(e)</span></td>' +
 			'<td class="num">' + r.positions + '</td>' +
+			'<td>' + blocks + '</td>' +
 			'<td class="num">' + self.eur(r.net_open) + '</td></tr>';
 	}).join('');
 	return '<section class="card"><div class="sec-h"><h2>📣 Nachzuhaken</h2>' +
 		'<span class="muted">erwarteter Wareneingang überschritten — beim Lieferanten nachfragen</span></div>' +
 		'<table class="tbl"><thead><tr><th>Bestellung</th><th>Lieferant</th><th>Bestellt am</th>' +
 		'<th>Erwartet am</th><th class="num">Überfällig</th><th class="num">Positionen</th>' +
-		'<th class="num">Offen (netto)</th></tr></thead><tbody>' + body +
-		'</tbody><tfoot><tr><td colspan="6">Summe (' + rows.length + ')</td>' +
-		'<td class="num">' + self.eur((m.purchasing || {}).follow_up_net) + '</td></tr></tfoot></table></section>';
+		'<th>Blockiert Fertigung</th><th class="num">Offen (netto)</th></tr></thead><tbody>' + body +
+		'</tbody><tfoot><tr><td colspan="7">Summe (' + rows.length + ')</td>' +
+		'<td class="num">' + self.eur((m.purchasing || {}).follow_up_net) + '</td></tr></tfoot></table>' +
+		'<p class="muted" style="font-size:.78rem;margin:8px 0 0">🔓 = diese Lieferung ist die letzte ' +
+		'fehlende für den Auftrag.</p></section>';
 };
 
 PCBBoard.prototype.costsTabHtml = function (m) {
@@ -1506,6 +1613,17 @@ var PCB_BOARD_CSS =
 	'.tbl tfoot td{font-weight:650;border-top:2px solid var(--baseline)}' +
 	'.tbl tr.late{background:color-mix(in srgb,var(--critical) 8%,transparent)}' +
 	'.tbl tr.late .exp{color:var(--critical);font-weight:700}' +
+	'.po-toggle{border:1px solid var(--border);background:var(--plane);color:var(--text-secondary);' +
+	'border-radius:999px;padding:2px 10px;font-size:.76rem;font-weight:650;cursor:pointer;white-space:nowrap}' +
+	'.po-toggle:hover{border-color:var(--brand-teal);color:var(--brand-teal)}' +
+	'.pill.unlock{background:var(--series-2);color:#fff;margin-left:4px}' +
+	'.unlock-tag{font-size:.9rem}' +
+	'.po-detail td{background:var(--plane)}' +
+	'.po-items{display:flex;flex-direction:column;gap:6px}' +
+	'.po-item{display:flex;gap:12px;flex-wrap:wrap;align-items:baseline;justify-content:space-between}' +
+	'.pi-name{font-weight:650;font-size:.86rem}' +
+	'.pi-wos{display:flex;gap:8px;flex-wrap:wrap;font-size:.84rem}' +
+	'.wo-chip{background:var(--surface-1);border:1px solid var(--border);border-radius:6px;padding:1px 7px;white-space:nowrap}' +
 	'.pcb-root .muted{color:var(--muted)}.pcb-root .foot{color:var(--muted);font-size:.78rem;margin-top:18px}' +
 	// Bewusst kein vollflächiges Overlay: der Refresh-Status ist global (alle Nutzer
 	// sehen denselben Stand), aber niemand soll deshalb blockiert werden — nur ein

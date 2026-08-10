@@ -232,6 +232,56 @@ def _fetch_erpnext(config: dict) -> dict:
             "items": items[:20],
         })
 
+    # Fertigungsaufträge mit offenem Materialbedarf — dafür ist die bestellte Ware
+    # gedacht. available_qty_at_source_warehouse ist ERPNexts eigene Bestandszahl
+    # aus dem Auftrag (deckungsgleich mit Bin.actual_qty des Quelllagers), damit im
+    # Board dieselbe Menge steht wie im Fertigungsauftrag selbst.
+    wos = frappe.get_all(
+        "Work Order",
+        filters=[["docstatus", "=", 1],
+                 ["status", "not in", ["Completed", "Cancelled", "Stopped", "Closed"]]],
+        fields=["name", "production_item", "item_name", "qty", "status", "sales_order",
+                "planned_start_date", "expected_delivery_date"],
+        limit_page_length=0,
+        ignore_permissions=True,
+    )
+    wo_required: dict[str, list[dict]] = {}
+    if wos:
+        for row in frappe.get_all(
+            "Work Order Item",
+            filters=[["parent", "in", [w["name"] for w in wos]]],
+            fields=["parent", "item_code", "item_name", "required_qty", "transferred_qty",
+                    "available_qty_at_source_warehouse"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        ):
+            # Bereits in die Fertigung umgelagerte Mengen fehlen nicht mehr.
+            required = float(row.get("required_qty") or 0)
+            transferred = float(row.get("transferred_qty") or 0)
+            if required - transferred <= 0:
+                continue
+            wo_required.setdefault(row["parent"], []).append({
+                "item_code": row.get("item_code"),
+                "item_name": row.get("item_name") or row.get("item_code"),
+                "required_qty": required,
+                "transferred_qty": transferred,
+                "available_qty": float(row.get("available_qty_at_source_warehouse") or 0),
+            })
+    work_orders = []
+    for w in wos:
+        work_orders.append({
+            "name": w["name"],
+            "production_item": w.get("production_item"),
+            "item_name": w.get("item_name") or w.get("production_item"),
+            "qty": float(w.get("qty") or 0),
+            "status": w.get("status"),
+            "sales_order": w.get("sales_order"),
+            "planned_start_date": str(w["planned_start_date"])[:10] if w.get("planned_start_date") else None,
+            "expected_delivery_date": (
+                str(w["expected_delivery_date"])[:10] if w.get("expected_delivery_date") else None),
+            "required_items": wo_required.get(w["name"], []),
+        })
+
     # Lieferzeit-Historie je Lieferant: Wareneingangspositionen mit Bestellbezug
     # ergeben (Bestelldatum -> Wareneingangsdatum). Basis sind die oben schon
     # geladenen Wareneingänge (ab Vorjahresanfang); die Median-Bildung und die
@@ -359,6 +409,7 @@ def _fetch_erpnext(config: dict) -> dict:
         "open_sales_orders": open_sales_orders,
         "open_purchase_orders": open_purchase_orders,
         "po_receipt_pairs": po_receipt_pairs,
+        "work_orders": work_orders,
         "purchase_receipts": purchase_receipts,
         "invoice_items": invoice_items,
         "purchase_receipt_items": purchase_receipt_items,
@@ -402,6 +453,9 @@ def _fetch_mail(config: dict, anthropic_api_key: str | None) -> list[dict]:
         except Exception as exc:  # noqa: BLE001 — ein Postfach darf den Refresh nicht abschießen
             sys.stderr.write(f"[pcb_board] Postfach-Abruf für {row.user} fehlgeschlagen: {exc}\n")
 
+    # VOR der Triage entdoppeln: geteilte Postfächer kommen einmal pro verbundenem
+    # Nutzer zurück — sonst zahlt jede Dublette auch noch einen Claude-Aufruf.
+    all_items = m.dedupe_mail_items(all_items)
     return triage.triage_all(all_items, model=config["anthropic_model"], api_key=anthropic_api_key)
 
 

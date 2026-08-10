@@ -82,7 +82,12 @@ def fetch_all_mailboxes(token: str, own_email: str, extra_mailboxes: list[str],
                          window_hours: int) -> list[dict]:
     """Eigenes Postfach + alle konfigurierten geteilten Postfächer."""
     items = fetch_mailbox(token, None, own_email, window_hours)
+    own = (own_email or "").strip().lower()
     for mb in extra_mailboxes:
+        # Steht das eigene Postfach auch in der Liste der geteilten, käme jede Mail
+        # daraus zweimal: einmal über /me, einmal über /users/<adresse>.
+        if (mb or "").strip().lower() == own:
+            continue
         try:
             items.extend(fetch_mailbox(token, mb, mb, window_hours))
         except requests.HTTPError as exc:

@@ -256,6 +256,7 @@ def todo_orders(data: dict, today: date, work_orders: list[dict] | None = None) 
         if so:
             by_so[so].append({
                 "name": wo.get("name"),
+                "item_code": wo.get("production_item"),
                 "item_name": wo.get("item_name"),
                 "qty": wo.get("qty"),
                 "status": wo.get("status"),
@@ -477,11 +478,11 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
                     "po": l["po"],
                     "supplier": l.get("supplier") or "",
                     "expected_date": l["expected_date"],
-                    "item_names": [l.get("item_name")],
+                    "items": [{"item_code": l["item_code"], "item_name": l.get("item_name")}],
                     "is_last": bool(complete_po) and l["po"] == complete_po,
                 })
-            elif l.get("item_name") not in hit["item_names"]:
-                hit["item_names"].append(l.get("item_name"))
+            elif not any(i["item_code"] == l["item_code"] for i in hit["items"]):
+                hit["items"].append({"item_code": l["item_code"], "item_name": l.get("item_name")})
         awaiting.sort(key=lambda a: (a["expected_date"] is None, a["expected_date"] or "", a["po"] or ""))
 
         waiting = bool(links) or bool(missing)
@@ -589,6 +590,7 @@ def purchase_orders(data: dict, today: date) -> dict:
     for r in due_today:
         for it in r["items"]:
             items_today.append({
+                "item_code": it.get("item_code"),
                 "item_name": it.get("item_name") or it.get("item_code"),
                 "open_qty": it.get("open_qty"),
                 "purchase_order": r["name"],

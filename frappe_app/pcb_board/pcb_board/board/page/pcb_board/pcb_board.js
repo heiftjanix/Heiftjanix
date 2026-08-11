@@ -428,7 +428,8 @@ PCBBoard.prototype.soWorkOrdersCell = function (r) {
 			return (a.supplier || a.po) + (a.expected_date
 				? ' bis ' + frappe.datetime.str_to_user(a.expected_date) : '');
 		}).join(', ');
-		var title = st.text + (waiting ? ' — warten auf: ' + waiting : '');
+		var title = (w.item_code ? w.item_code + ' · ' : '') + st.text +
+			(waiting ? ' — warten auf: ' + waiting : '');
 		return '<span class="wo-chip" title="' + self.esc(title) + '">' + self.woLink(w.name) +
 			' <span style="color:' + st.color + '">' + st.icon + '</span></span>';
 	}).join(' ') + '</span>';
@@ -615,7 +616,8 @@ PCBBoard.prototype.poDetailRow = function (r, open) {
 					'</span>';
 			}).join(' ');
 		}
-		return '<div class="po-item"><span class="pi-name">' + self.esc(it.item_name || it.item_code || '') +
+		return '<div class="po-item"><span class="pi-name" title="' +
+			self.esc(it.item_name || '') + '">' + self.esc(it.item_code || it.item_name || '') +
 			(it.open_qty != null ? ' <span class="muted">×' + String(it.open_qty).replace('.', ',') + '</span>' : '') +
 			'</span><span class="pi-wos">' + right + '</span></div>';
 	}).join('');
@@ -667,8 +669,10 @@ PCBBoard.prototype.purchaseOrdersHtml = function (m) {
 		: '<p class="muted">Keine offenen Bestellungen. ✅</p>';
 
 	// Kachel „heute erwartet": Artikel stehen im Vordergrund, nicht der Betrag.
+	// Gelistet wird der Item-Code, der Klartextname steckt im Tooltip.
 	var names = (et.items || []).map(function (i) {
-		return self.esc(i.item_name || '') + (i.open_qty != null
+		return '<span title="' + self.esc(i.item_name || '') + '">' +
+			self.esc(i.item_code || i.item_name || '') + '</span>' + (i.open_qty != null
 			? ' <span class="muted">×' + String(i.open_qty).replace('.', ',') + '</span>' : '');
 	});
 	var namesLine = names.length
@@ -744,9 +748,12 @@ PCBBoard.prototype.productionOrdersHtml = function (m) {
 			waitCell = '<span class="muted">—</span>';
 		} else {
 			var parts = (w.awaiting || []).map(function (a) {
+				// Tooltip: Item-Code samt Klartextname der erwarteten Artikel.
+				var what = (a.items || []).map(function (i) {
+					return (i.item_code || '') + (i.item_name ? ' (' + i.item_name + ')' : '');
+				}).join(', ');
 				return '<span class="wo-chip"' +
-					(a.item_names && a.item_names.length
-						? ' title="' + self.esc(a.item_names.join(', ')) + '"' : '') + '>' +
+					(what ? ' title="' + self.esc(what) + '"' : '') + '>' +
 					'<b>' + self.esc(a.supplier || '?') + '</b> ' + self.poLink(a.po) +
 					(a.expected_date
 						? ' <span class="muted">' + self.esc(frappe.datetime.str_to_user(a.expected_date)) +
@@ -755,15 +762,17 @@ PCBBoard.prototype.productionOrdersHtml = function (m) {
 					'</span>';
 			});
 			(w.missing_items || []).forEach(function (it) {
-				parts.push('<span class="wo-chip missing" title="nicht bestellt — fehlende Menge ' +
-					self.esc(String(it.short_qty)) + '">' + self.esc(it.item_name || it.item_code) +
+				parts.push('<span class="wo-chip missing" title="' + self.esc(it.item_name || '') +
+					' — nicht bestellt, fehlende Menge ' + self.esc(String(it.short_qty)) + '">' +
+					self.esc(it.item_code || it.item_name) +
 					' <span class="muted">✗ nicht bestellt</span></span>');
 			});
 			waitCell = '<span class="pi-wos">' + (parts.join(' ') || '<span class="muted">—</span>') + '</span>';
 		}
 		return '<tr' + (w.missing_count || (w.missing_items || []).length ? ' class="late"' : '') + '>' +
 			'<td>' + self.woLink(w.name) + '</td>' +
-			'<td>' + self.esc(w.item_name || w.production_item || '') + '</td>' +
+			'<td title="' + self.esc(w.item_name || '') + '">' +
+			self.esc(w.production_item || w.item_name || '') + '</td>' +
 			'<td class="num">' + (w.qty != null ? String(w.qty).replace('.', ',') : '—') + '</td>' +
 			'<td>' + self.esc(w.status || '') + '</td>' +
 			'<td>' + (w.need_date ? self.esc(frappe.datetime.str_to_user(w.need_date)) : '—') + '</td>' +

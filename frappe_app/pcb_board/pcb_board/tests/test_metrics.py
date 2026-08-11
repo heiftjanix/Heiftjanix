@@ -328,18 +328,18 @@ class TestBuildMetrics(unittest.TestCase):
             {"name": "BE-SPAET", "supplier": "LF-A", "supplier_name": "Lieferant A",
              "status": "To Receive and Bill", "transaction_date": "2026-07-03",
              "base_net_total": 4000, "net_open": 4000, "per_received": 0, "positions": 2,
-             "items": [{"item_name": "Platine A", "open_qty": 10},
-                       {"item_name": "Widerstand", "open_qty": 500}]},
+             "items": [{"item_code": "PL-A", "item_name": "Platine A", "open_qty": 10},
+                       {"item_code": "R-500", "item_name": "Widerstand", "open_qty": 500}]},
             # LF-A, bestellt 2026-07-08 -> erwartet 2026-07-15 = heute
             {"name": "BE-HEUTE", "supplier": "LF-A", "supplier_name": "Lieferant A",
              "status": "To Receive", "transaction_date": "2026-07-08",
              "base_net_total": 900, "net_open": 900, "per_received": 0, "positions": 1,
-             "items": [{"item_name": "Stecker", "open_qty": 20}]},
+             "items": [{"item_code": "ST-20", "item_name": "Stecker", "open_qty": 20}]},
             # LF-B, Median 30 T. -> erwartet 2026-08-09 -> künftig
             {"name": "BE-KUENFTIG", "supplier": "LF-B", "supplier_name": "Lieferant B",
              "status": "To Receive", "transaction_date": "2026-07-10",
              "base_net_total": 2000, "net_open": 2000, "per_received": 0, "positions": 1,
-             "items": [{"item_name": "Gehäuse", "open_qty": 5}]},
+             "items": [{"item_code": "GH-5", "item_name": "Gehäuse", "open_qty": 5}]},
             # unbekannter Lieferant -> Median über alle (7 T.) -> 2026-07-08, überfällig
             {"name": "BE-NEULF", "supplier": "LF-NEU", "supplier_name": "Lieferant Neu",
              "status": "To Receive", "transaction_date": "2026-07-01",
@@ -402,6 +402,7 @@ class TestBuildMetrics(unittest.TestCase):
                              date(2026, 7, 15))["purchasing"]["expected_today"]
         self.assertEqual((et["orders"], et["positions"]), (1, 1))
         self.assertAlmostEqual(et["net"], 900, delta=0.01)
+        self.assertEqual([i["item_code"] for i in et["items"]], ["ST-20"])
         self.assertEqual([i["item_name"] for i in et["items"]], ["Stecker"])
         self.assertEqual(et["items"][0]["purchase_order"], "BE-HEUTE")
 
@@ -592,7 +593,8 @@ class TestBuildMetrics(unittest.TestCase):
         # zwei Bestellungen, nach erwartetem Termin sortiert, mit Lieferant und Artikel
         self.assertEqual([a["po"] for a in aw], ["BE-1", "BE-2"])
         self.assertEqual([a["supplier"] for a in aw], ["Lieferant A", "Lieferant A"])
-        self.assertEqual(aw[0]["item_names"], ["Artikel A"])
+        self.assertEqual([i["item_code"] for i in aw[0]["items"]], ["A"])
+        self.assertEqual([i["item_name"] for i in aw[0]["items"]], ["Artikel A"])
         self.assertEqual(aw[1]["expected_date"], "2026-07-22")
         self.assertFalse(aw[0]["is_last"])
         self.assertTrue(aw[1]["is_last"])

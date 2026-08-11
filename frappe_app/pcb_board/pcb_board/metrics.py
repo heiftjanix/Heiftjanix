@@ -241,10 +241,30 @@ def top_products(data: dict, limit: int = 5) -> list[dict]:
     return ranked[:limit]
 
 
-def todo_orders(data: dict, today: date) -> dict:
+def todo_orders(data: dict, today: date, work_orders: list[dict] | None = None) -> dict:
     """Offene Aufträge nach Liefertermin: überfällig (heute oder überschritten)
     und diese Woche fällig (Rest der laufenden Kalenderwoche, Mo–So). Aufträge
-    ohne Liefertermin oder ohne offenen Restwert werden übersprungen."""
+    ohne Liefertermin oder ohne offenen Restwert werden übersprungen.
+
+    work_orders (aus work_order_material): hängt je Auftrag die verknüpften
+    Produktionsaufträge samt Materialstand an — damit im Board sichtbar ist, ob
+    ein Liefertermin überhaupt gehalten werden kann.
+    """
+    by_so: dict[str, list[dict]] = defaultdict(list)
+    for wo in work_orders or []:
+        so = wo.get("sales_order")
+        if so:
+            by_so[so].append({
+                "name": wo.get("name"),
+                "item_name": wo.get("item_name"),
+                "qty": wo.get("qty"),
+                "status": wo.get("status"),
+                "material_ok": bool(wo.get("material_ok")),
+                "complete_on": wo.get("complete_on"),
+                "missing_count": len(wo.get("missing_items") or []),
+                "awaiting": wo.get("awaiting") or [],
+            })
+
     week_end = today - timedelta(days=today.weekday()) + timedelta(days=6)
     overdue, due_this_week = [], []
     for so in data.get("open_sales_orders", []) or []:
@@ -258,12 +278,15 @@ def todo_orders(data: dict, today: date) -> dict:
         net_open = float(so.get("net_open", 0) or 0)
         if net_open <= 0:
             continue
+        wos = by_so.get(so.get("name")) or []
         item = {
             "name": so.get("name"),
             "customer": so.get("customer_name") or so.get("customer"),
             "delivery_date": d.isoformat(),
             "net_open": round(net_open, 2),
             "days_overdue": (today - d).days,
+            "work_orders": wos,
+            "material_ok": bool(wos) and all(w["material_ok"] for w in wos),
         }
         if d <= today:
             overdue.append(item)
@@ -361,7 +384,9 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
                 continue
             incoming[code].append({
                 "po": row.get("name"),
+                "supplier": row.get("supplier"),
                 "expected_date": row.get("expected_date"),
+                "item_name": it.get("item_name") or code,
                 "qty": float(it.get("open_qty") or 0),
             })
     for lst in incoming.values():
@@ -404,6 +429,8 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
                 inc["qty"] -= use
                 need -= use
                 links.append({"po": inc["po"], "item_code": code,
+                              "supplier": inc.get("supplier"),
+                              "item_name": inc.get("item_name") or code,
                               "expected_date": inc["expected_date"]})
                 if need <= 1e-9:
                     break
@@ -440,17 +467,40 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
             if not any(e["name"] == entry["name"] for e in per_item):
                 per_item.append(entry)
 
+        # Auf welche Lieferanten wartet dieser Auftrag — je Bestellung einmal,
+        # mit den Artikeln, die von dort noch kommen.
+        awaiting = []
+        for l in links:
+            hit = next((a for a in awaiting if a["po"] == l["po"]), None)
+            if hit is None:
+                awaiting.append({
+                    "po": l["po"],
+                    "supplier": l.get("supplier") or "",
+                    "expected_date": l["expected_date"],
+                    "item_names": [l.get("item_name")],
+                    "is_last": bool(complete_po) and l["po"] == complete_po,
+                })
+            elif l.get("item_name") not in hit["item_names"]:
+                hit["item_names"].append(l.get("item_name"))
+        awaiting.sort(key=lambda a: (a["expected_date"] is None, a["expected_date"] or "", a["po"] or ""))
+
+        waiting = bool(links) or bool(missing)
         out.append({
             "name": wo.get("name"),
             "item_name": wo.get("item_name"),
+            "production_item": wo.get("production_item"),
             "qty": wo.get("qty"),
             "status": wo.get("status"),
             "sales_order": wo.get("sales_order"),
             "need_date": wo.get("planned_start_date") or wo.get("expected_delivery_date"),
-            "waiting": bool(links) or bool(missing),
+            "waiting": waiting,
+            # Material vollständig = nichts mehr zu beschaffen (Bestand reicht bzw.
+            # ist bereits in die Fertigung umgelagert).
+            "material_ok": not waiting,
             "from_stock_only": from_stock_only,
             "complete_on": complete_on,
             "complete_po": complete_po,
+            "awaiting": awaiting,
             "missing_items": missing,
         })
 
@@ -968,6 +1018,10 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
         throughput = {"open_count": 0, "avg_open_age_days": 0.0,
                       "median_open_age_days": 0.0, "max_open_age_days": 0}
 
+    # Vor todo_orders: liefert den Materialstand der Produktionsaufträge, den die
+    # Liefertermin-Liste je Auftrag mit anzeigt.
+    purchasing = purchase_orders(data, today)
+
     return {
         "as_of": today.isoformat(),
         "company": config["company"],
@@ -988,8 +1042,8 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
             _net(inv) for inv in invoices
             if (d := _pdate(inv)) and d.year == today.year and d <= today
         ), 2),
-        "todo": todo_orders(data, today),
-        "purchasing": purchase_orders(data, today),
+        "purchasing": purchasing,
+        "todo": todo_orders(data, today, purchasing.get("work_orders")),
         "profit_history": profit_history(data, config, today),
         "forecast": fc.to_dict(),
         "daily_series": daily_series,

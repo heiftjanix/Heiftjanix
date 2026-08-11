@@ -383,12 +383,55 @@ PCBBoard.prototype.renderAll = function () {
 // (ausgehende Pakete/Lieferscheine), zusammengefasst auf je eine Kachel.
 PCBBoard.prototype.materialTabHtml = function (m) {
 	return this.deliveryDatesHtml(m) + this.outgoingPackagesHtml(m) +
-		this.purchaseOrdersHtml(m) + this.followUpHtml(m);
+		this.purchaseOrdersHtml(m) + this.productionOrdersHtml(m);
 };
 
 // GuV = frühere Tabs „Umsatz" + „Kosten".
 PCBBoard.prototype.guvTabHtml = function (m) {
 	return this.revenueTabHtml(m) + this.costsTabHtml(m);
+};
+
+// Materialstand eines Produktionsauftrags als Symbol + Klartext:
+// ✅ vollständig · 🚚 im Zulauf (mit Termin) · ⛔ nicht bestellt.
+PCBBoard.prototype.woMaterialState = function (w) {
+	if (w.material_ok) {
+		return { icon: '✅', text: 'Material vollständig', color: 'var(--good)' };
+	}
+	// Liefertermin-Liste liefert missing_count, die Auftragsliste missing_items.
+	var missing = w.missing_count != null ? w.missing_count : (w.missing_items || []).length;
+	if (missing) {
+		return {
+			icon: '⛔',
+			text: missing + ' Artikel nicht bestellt',
+			color: 'var(--critical)',
+		};
+	}
+	return {
+		icon: '🚚',
+		text: w.complete_on
+			? 'komplett ab ' + frappe.datetime.str_to_user(w.complete_on)
+			: 'im Zulauf',
+		color: 'var(--series-3)',
+	};
+};
+
+// Spalte „Produktionsauftrag" in der Liefertermin-Liste.
+PCBBoard.prototype.soWorkOrdersCell = function (r) {
+	var self = this;
+	var wos = r.work_orders || [];
+	if (!wos.length) {
+		return '<span class="muted" title="Kein Produktionsauftrag verknüpft — z. B. Handelsware">—</span>';
+	}
+	return '<span class="wo-list">' + wos.map(function (w) {
+		var st = self.woMaterialState(w);
+		var waiting = (w.awaiting || []).map(function (a) {
+			return (a.supplier || a.po) + (a.expected_date
+				? ' bis ' + frappe.datetime.str_to_user(a.expected_date) : '');
+		}).join(', ');
+		var title = st.text + (waiting ? ' — warten auf: ' + waiting : '');
+		return '<span class="wo-chip" title="' + self.esc(title) + '">' + self.woLink(w.name) +
+			' <span style="color:' + st.color + '">' + st.icon + '</span></span>';
+	}).join(' ') + '</span>';
 };
 
 PCBBoard.prototype.deliveryDatesHtml = function (m) {
@@ -414,11 +457,16 @@ PCBBoard.prototype.deliveryDatesHtml = function (m) {
 		return '<tr><td>' + soLink(r.name) + '</td><td>' + self.esc(r.customer || '') + '</td>' +
 			'<td>' + self.esc(frappe.datetime.str_to_user(r.delivery_date)) + '</td>' +
 			'<td>' + badge + '</td>' +
+			'<td>' + self.soWorkOrdersCell(r) + '</td>' +
 			'<td class="num">' + self.eur(r.net_open) + '</td></tr>';
 	}).join('');
 	var table = rows.length
 		? '<table class="tbl"><thead><tr><th>Auftrag</th><th>Kunde</th><th>Liefertermin</th>' +
-			'<th>Status</th><th class="num">Offen (netto)</th></tr></thead><tbody>' + body + '</tbody></table>'
+			'<th>Status</th><th>Produktionsauftrag</th><th class="num">Offen (netto)</th></tr></thead>' +
+			'<tbody>' + body + '</tbody></table>' +
+			'<p class="muted" style="font-size:.78rem;margin:8px 0 0">✅ hinter dem Produktionsauftrag = ' +
+			'Material vollständig (Bestand reicht bzw. ist bereits umgelagert). 🚚 = Material noch im ' +
+			'Zulauf, ⛔ = es fehlt Material, das noch nicht bestellt ist.</p>'
 		: '<p class="muted">Nichts diese Woche oder überfällig — alles im Plan. ✅</p>';
 
 	// Liefertreue-Analyse: Ø Verzug (Tage) + Trend vs. Vorwoche (aus KPI-Snapshot).
@@ -638,11 +686,11 @@ PCBBoard.prototype.purchaseOrdersHtml = function (m) {
 		'<div class="tile"><p class="k">Offene Bestellungen</p>' +
 		'<div class="v">' + (p.open_count || 0) + '</div>' +
 		'<div class="m">' + self.eur(p.open_net) + ' noch nicht eingegangen</div></div>' +
-		'<div class="tile"><p class="k">Nachzuhaken</p>' +
+		'<div class="tile"><p class="k">Wareneingang überfällig</p>' +
 		'<div class="v" style="color:' + (p.follow_up_count ? 'var(--critical)' : 'var(--good)') + '">' +
 		(p.follow_up_count || 0) + '</div>' +
 		'<div class="m">' + (p.follow_up_count
-			? self.eur(p.follow_up_net) + ' · Wareneingang überfällig'
+			? self.eur(p.follow_up_net) + ' · in der Liste rot markiert — nachfassen'
 			: 'alle Bestellungen im Zeitplan') + '</div></div>' +
 		'<div class="tile"><p class="k">Fertigung wartet auf Material</p>' +
 		'<div class="v" style="color:' + (p.wo_waiting_count ? 'var(--warning)' : 'var(--good)') + '">' +
@@ -668,48 +716,81 @@ PCBBoard.prototype.purchaseOrdersHtml = function (m) {
 		'der Bestellung.</p></section>';
 };
 
-// Eigene Rubrik: alles, was aus dem Zeitplan gefallen ist.
-PCBBoard.prototype.followUpHtml = function (m) {
+// Alle Produktionsaufträge mit ihrem Materialstand. Ersetzt die frühere Rubrik
+// „Nachzuhaken": überfällige Bestellungen sind in der Bestellliste rot markiert,
+// hier steht die Wirkung — welcher Auftrag deshalb nicht laufen kann.
+PCBBoard.prototype.productionOrdersHtml = function (m) {
 	var self = this;
-	var rows = ((m.purchasing || {}).follow_up) || [];
-	if (!rows.length) {
+	var p = m.purchasing || {};
+	var rows = (p.work_orders || []).slice();
+	if (!m.purchasing) {
 		return '';
 	}
-	var body = rows.map(function (r) {
-		// Blockierte Fertigung ist das stärkste Argument fürs Nachfassen — daher
-		// hier direkt sichtbar, ohne Aufklappen.
-		var blocks = '<span class="muted">—</span>';
-		if (r.work_orders_count) {
-			var last = (r.unblocks || []);
-			var all = [];
-			(r.items || []).forEach(function (it) {
-				(it.work_orders || []).forEach(function (w) {
-					if (all.indexOf(w.name) < 0) all.push(w.name);
-				});
+	if (!rows.length) {
+		return '<section class="card"><div class="sec-h"><h2>🏭 Produktionsaufträge &amp; Materialstand</h2></div>' +
+			'<p class="muted">Kein offener Produktionsauftrag.</p></section>';
+	}
+	// Chronologisch nach Bedarfstermin — Planungsreihenfolge; ohne Termin ans Ende.
+	rows.sort(function (a, z) {
+		var da = a.need_date || '9999-12-31', dz = z.need_date || '9999-12-31';
+		return da < dz ? -1 : (da > dz ? 1 : String(a.name).localeCompare(String(z.name)));
+	});
+
+	var body = rows.map(function (w) {
+		var st = self.woMaterialState(w);
+		// Auf wen wird gewartet: Lieferant (Bestellung, Termin) je offener Zulauf.
+		var waitCell;
+		if (w.material_ok) {
+			waitCell = '<span class="muted">—</span>';
+		} else {
+			var parts = (w.awaiting || []).map(function (a) {
+				return '<span class="wo-chip"' +
+					(a.item_names && a.item_names.length
+						? ' title="' + self.esc(a.item_names.join(', ')) + '"' : '') + '>' +
+					'<b>' + self.esc(a.supplier || '?') + '</b> ' + self.poLink(a.po) +
+					(a.expected_date
+						? ' <span class="muted">' + self.esc(frappe.datetime.str_to_user(a.expected_date)) +
+							'</span>' : '') +
+					(a.is_last ? ' <span title="letzte fehlende Lieferung">🔓</span>' : '') +
+					'</span>';
 			});
-			blocks = all.slice(0, 3).map(function (n) {
-				return self.woLink(n) + (last.indexOf(n) >= 0 ? ' 🔓' : '');
-			}).join(', ') + (all.length > 3 ? ' <span class="muted">+' + (all.length - 3) + '</span>' : '');
+			(w.missing_items || []).forEach(function (it) {
+				parts.push('<span class="wo-chip missing" title="nicht bestellt — fehlende Menge ' +
+					self.esc(String(it.short_qty)) + '">' + self.esc(it.item_name || it.item_code) +
+					' <span class="muted">✗ nicht bestellt</span></span>');
+			});
+			waitCell = '<span class="pi-wos">' + (parts.join(' ') || '<span class="muted">—</span>') + '</span>';
 		}
-		return '<tr class="late"><td>' + self.poLink(r.name) + '</td>' +
-			'<td>' + self.esc(r.supplier) + '</td>' +
-			'<td>' + (r.order_date ? self.esc(frappe.datetime.str_to_user(r.order_date)) : '—') + '</td>' +
-			'<td class="exp">' + (r.expected_date
-				? self.esc(frappe.datetime.str_to_user(r.expected_date)) : '—') + '</td>' +
-			'<td class="num"><span class="dot-hi">' + r.days_late + ' Tag(e)</span></td>' +
-			'<td class="num">' + r.positions + '</td>' +
-			'<td>' + blocks + '</td>' +
-			'<td class="num">' + self.eur(r.net_open) + '</td></tr>';
+		return '<tr' + (w.missing_count || (w.missing_items || []).length ? ' class="late"' : '') + '>' +
+			'<td>' + self.woLink(w.name) + '</td>' +
+			'<td>' + self.esc(w.item_name || w.production_item || '') + '</td>' +
+			'<td class="num">' + (w.qty != null ? String(w.qty).replace('.', ',') : '—') + '</td>' +
+			'<td>' + self.esc(w.status || '') + '</td>' +
+			'<td>' + (w.need_date ? self.esc(frappe.datetime.str_to_user(w.need_date)) : '—') + '</td>' +
+			'<td>' + (w.sales_order
+				? '<a href="/app/sales-order/' + encodeURIComponent(w.sales_order) + '" target="_blank">' +
+					self.esc(w.sales_order) + '</a>'
+				: '<span class="muted">—</span>') + '</td>' +
+			'<td><span style="color:' + st.color + ';font-weight:650">' + st.icon + ' ' +
+			self.esc(st.text) + '</span></td>' +
+			'<td>' + waitCell + '</td></tr>';
 	}).join('');
-	return '<section class="card"><div class="sec-h"><h2>📣 Nachzuhaken</h2>' +
-		'<span class="muted">erwarteter Wareneingang überschritten — beim Lieferanten nachfragen</span></div>' +
-		'<table class="tbl"><thead><tr><th>Bestellung</th><th>Lieferant</th><th>Bestellt am</th>' +
-		'<th>Erwartet am</th><th class="num">Überfällig</th><th class="num">Positionen</th>' +
-		'<th>Blockiert Fertigung</th><th class="num">Offen (netto)</th></tr></thead><tbody>' + body +
-		'</tbody><tfoot><tr><td colspan="7">Summe (' + rows.length + ')</td>' +
-		'<td class="num">' + self.eur((m.purchasing || {}).follow_up_net) + '</td></tr></tfoot></table>' +
-		'<p class="muted" style="font-size:.78rem;margin:8px 0 0">🔓 = diese Lieferung ist die letzte ' +
-		'fehlende für den Auftrag.</p></section>';
+
+	var ok = rows.filter(function (w) { return w.material_ok; }).length;
+	var incoming = rows.filter(function (w) { return !w.material_ok && !(w.missing_items || []).length; }).length;
+	var missing = rows.length - ok - incoming;
+	var summary = ok + ' vollständig · ' + incoming + ' im Zulauf · ' + missing + ' nicht bestellt';
+
+	return '<section class="card"><div class="sec-h"><h2>🏭 Produktionsaufträge &amp; Materialstand</h2>' +
+		'<span class="muted">' + summary + '</span></div>' +
+		'<table class="tbl"><thead><tr><th>Produktionsauftrag</th><th>Artikel</th>' +
+		'<th class="num">Menge</th><th>Status</th><th>Bedarf ab</th><th>Kundenauftrag</th>' +
+		'<th>Material</th><th>Warten auf (Lieferant / Bestellung / erwartet)</th></tr></thead>' +
+		'<tbody>' + body + '</tbody></table>' +
+		'<p class="muted" style="font-size:.78rem;margin:8px 0 0">Materialbedarf = Sollmenge minus ' +
+		'bereits umgelagerte Menge, gedeckt aus dem Bestand des Quelllagers und den erwarteten ' +
+		'Wareneingängen. Bestand und Zulauf werden nur einmal verplant: bei knapper Menge bekommt ' +
+		'der Auftrag mit dem früheren Bedarfstermin den Vorrang.</p></section>';
 };
 
 PCBBoard.prototype.costsTabHtml = function (m) {
@@ -1624,6 +1705,8 @@ var PCB_BOARD_CSS =
 	'.pi-name{font-weight:650;font-size:.86rem}' +
 	'.pi-wos{display:flex;gap:8px;flex-wrap:wrap;font-size:.84rem}' +
 	'.wo-chip{background:var(--surface-1);border:1px solid var(--border);border-radius:6px;padding:1px 7px;white-space:nowrap}' +
+	'.wo-chip.missing{border-color:var(--critical);border-style:dashed}' +
+	'.wo-list{display:inline-flex;gap:6px;flex-wrap:wrap}' +
 	'.pcb-root .muted{color:var(--muted)}.pcb-root .foot{color:var(--muted);font-size:.78rem;margin-top:18px}' +
 	// Bewusst kein vollflächiges Overlay: der Refresh-Status ist global (alle Nutzer
 	// sehen denselben Stand), aber niemand soll deshalb blockiert werden — nur ein

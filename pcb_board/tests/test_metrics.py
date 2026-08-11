@@ -585,6 +585,76 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertEqual(link["still_missing"], 1)                 # -> ⌛
         self.assertIsNone(p["work_orders"][0]["complete_on"])
 
+    def test_work_orders_awaiting_lists_suppliers(self):
+        p = m.build_metrics(self._wo_data(), CONFIG, date(2026, 7, 15))["purchasing"]
+        wo = {w["name"]: w for w in p["work_orders"]}
+        aw = wo["FA-1"]["awaiting"]
+        # zwei Bestellungen, nach erwartetem Termin sortiert, mit Lieferant und Artikel
+        self.assertEqual([a["po"] for a in aw], ["BE-1", "BE-2"])
+        self.assertEqual([a["supplier"] for a in aw], ["Lieferant A", "Lieferant A"])
+        self.assertEqual(aw[0]["item_names"], ["Artikel A"])
+        self.assertEqual(aw[1]["expected_date"], "2026-07-22")
+        self.assertFalse(aw[0]["is_last"])
+        self.assertTrue(aw[1]["is_last"])
+        self.assertFalse(wo["FA-1"]["material_ok"])
+        # FA-2 wartet nicht auf eine Bestellung, ihm fehlt schlicht Material
+        self.assertEqual(wo["FA-2"]["awaiting"], [])
+        self.assertEqual(len(wo["FA-2"]["missing_items"]), 1)
+
+    def test_todo_orders_attach_work_orders_and_material_flag(self):
+        data = self._wo_data()
+        data["open_sales_orders"] = [
+            {"name": "AB-1", "customer_name": "Kunde 1", "delivery_date": "2026-07-16",
+             "net_open": 5000},
+            {"name": "AB-2", "customer_name": "Kunde 2", "delivery_date": "2026-07-17",
+             "net_open": 3000},
+            {"name": "AB-OHNE", "customer_name": "Handelsware", "delivery_date": "2026-07-17",
+             "net_open": 100},
+        ]
+        # FA-2 (blockiert) auf einen anderen Kundenauftrag umhängen, damit AB-2 hier
+        # den reinen ✅-Fall zeigt; der gemischte Fall steckt im nächsten Test.
+        data["work_orders"][1]["sales_order"] = "AB-9"
+        # FA-3 zu AB-2 ergänzen: Material vollständig aus dem Bestand
+        data["work_orders"].append({
+            "name": "FA-3", "item_name": "Baugruppe 3", "qty": 1, "status": "Not Started",
+            "sales_order": "AB-2", "planned_start_date": "2026-07-18",
+            "required_items": [{"item_code": "D", "item_name": "Artikel D",
+                                "required_qty": 2, "transferred_qty": 0, "available_qty": 9}],
+        })
+        todo = m.build_metrics(data, CONFIG, date(2026, 7, 15))["todo"]
+        by_name = {r["name"]: r for r in todo["due_this_week"]}
+        self.assertEqual([w["name"] for w in by_name["AB-1"]["work_orders"]], ["FA-1"])
+        self.assertFalse(by_name["AB-1"]["material_ok"])          # wartet auf BE-1/BE-2
+        self.assertEqual(by_name["AB-1"]["work_orders"][0]["missing_count"], 0)
+        self.assertEqual([a["supplier"] for a in by_name["AB-1"]["work_orders"][0]["awaiting"]],
+                         ["Lieferant A", "Lieferant A"])
+        self.assertEqual([w["name"] for w in by_name["AB-2"]["work_orders"]], ["FA-3"])
+        self.assertTrue(by_name["AB-2"]["material_ok"])            # ✅ aus Bestand gedeckt
+        # ohne verknüpften Produktionsauftrag (Handelsware): kein Häkchen
+        self.assertEqual(by_name["AB-OHNE"]["work_orders"], [])
+        self.assertFalse(by_name["AB-OHNE"]["material_ok"])
+
+    def test_todo_orders_material_ok_needs_all_work_orders_complete(self):
+        data = self._wo_data()
+        data["open_sales_orders"] = [
+            {"name": "AB-1", "customer_name": "Kunde 1", "delivery_date": "2026-07-16",
+             "net_open": 5000},
+        ]
+        # zweiter Auftrag zum selben Kundenauftrag, vollständig — einer wartet noch,
+        # also darf der Kundenauftrag KEIN Häkchen bekommen.
+        data["work_orders"].append({
+            "name": "FA-1B", "item_name": "Baugruppe 1b", "qty": 1, "status": "Not Started",
+            "sales_order": "AB-1", "planned_start_date": "2026-07-19",
+            "required_items": [{"item_code": "D", "item_name": "Artikel D",
+                                "required_qty": 1, "transferred_qty": 0, "available_qty": 4}],
+        })
+        todo = m.build_metrics(data, CONFIG, date(2026, 7, 15))["todo"]
+        row = todo["due_this_week"][0]
+        self.assertEqual(sorted(w["name"] for w in row["work_orders"]), ["FA-1", "FA-1B"])
+        self.assertFalse(row["material_ok"])
+        self.assertEqual([w["material_ok"] for w in row["work_orders"]
+                          if w["name"] == "FA-1B"], [True])
+
     def test_work_orders_covered_from_stock_needs_no_delivery(self):
         data = self._data()
         data["po_receipt_pairs"] = []

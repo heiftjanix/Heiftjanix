@@ -108,6 +108,23 @@ def scheduled_mail_sync() -> None:
         frappe.log_error(title="PCB Board Mail-Sync fehlgeschlagen", message=frappe.get_traceback())
 
 
+def _optional(label: str, fn, default):
+    """Zusatzdaten dürfen den Refresh nicht kippen.
+
+    Kernzahlen (Umsatz, Lieferscheine, Aufträge, Wareneingänge) müssen stimmen —
+    schlägt dort etwas fehl, ist ein Abbruch richtig. Ergänzende Blöcke wie
+    Fertigung, Einkaufstool oder der Jahres-Deckungsbeitrag sollen dagegen nur den
+    eigenen Abschnitt kosten und nicht das ganze Board: sie landen im Fehlerlog,
+    der Rest läuft weiter.
+    """
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001
+        frappe.log_error(title=f"PCB Board: {label} übersprungen",
+                         message=frappe.get_traceback())
+        return default
+
+
 def _fetch_erpnext(config: dict) -> dict:
     today = date.today()
     y, mo = today.year, today.month
@@ -232,113 +249,119 @@ def _fetch_erpnext(config: dict) -> dict:
             "items": items[:20],
         })
 
-    # Fertigungsaufträge mit offenem Materialbedarf — dafür ist die bestellte Ware
-    # gedacht. available_qty_at_source_warehouse ist ERPNexts eigene Bestandszahl
-    # aus dem Auftrag (deckungsgleich mit Bin.actual_qty des Quelllagers), damit im
-    # Board dieselbe Menge steht wie im Fertigungsauftrag selbst.
-    wos = frappe.get_all(
-        "Work Order",
-        filters=[["docstatus", "=", 1],
-                 ["status", "not in", ["Completed", "Cancelled", "Stopped", "Closed"]]],
-        fields=["name", "production_item", "item_name", "qty", "status", "sales_order",
-                "planned_start_date", "expected_delivery_date"],
-        limit_page_length=0,
-        ignore_permissions=True,
-    )
-    wo_required: dict[str, list[dict]] = {}
-    wo_beistellung: dict[str, int] = {}
-    if wos:
-        for row in frappe.get_all(
-            "Work Order Item",
-            filters=[["parent", "in", [w["name"] for w in wos]]],
-            fields=["parent", "item_code", "item_name", "required_qty", "transferred_qty",
-                    "available_qty_at_source_warehouse", "is_customer_provided_item"],
-            limit_page_length=0,
-            ignore_permissions=True,
-        ):
-            # Bereits in die Fertigung umgelagerte Mengen fehlen nicht mehr.
-            required = float(row.get("required_qty") or 0)
-            transferred = float(row.get("transferred_qty") or 0)
-            if required - transferred <= 0:
-                continue
-            # Beistellung (Kunde liefert bei, Kennzeichen aus der Stückliste): nicht
-            # unsere Beschaffung — taucht deshalb nicht als fehlendes Material auf.
-            if int(row.get("is_customer_provided_item") or 0):
-                wo_beistellung[row["parent"]] = wo_beistellung.get(row["parent"], 0) + 1
-                continue
-            wo_required.setdefault(row["parent"], []).append({
-                "item_code": row.get("item_code"),
-                "item_name": row.get("item_name") or row.get("item_code"),
-                "required_qty": required,
-                "transferred_qty": transferred,
-                "available_qty": float(row.get("available_qty_at_source_warehouse") or 0),
-            })
-
-    # EKT-Nummern aus dem Einkaufstool (kundeneigener DocType): fehlt ein Artikel
-    # und ist nichts bestellt, liegt dafür oft schon eine Anfrage im Einkaufstool.
-    # Zuordnung über components.item_id (= Item-Code); custom_projekte nennt
-    # zusätzlich die Fertigungsaufträge, für die eingekauft wird.
-    # Die Existenzprüfung hält das Board auf Instanzen ohne Einkaufstool lauffähig.
-    ekt_components = []
-    req_codes = sorted({it["item_code"] for rows in wo_required.values()
-                        for it in rows if it.get("item_code")})
-    if req_codes and frappe.db.exists("DocType", "Einkaufstool Component"):
-        rows = frappe.get_all(
-            "Einkaufstool Component",
-            filters=[["parenttype", "=", "Einkaufstool"], ["item_id", "in", req_codes]],
-            fields=["parent", "item_id", "custom_projekte", "required_quantity"],
+    def _fetch_production() -> tuple[list[dict], list[dict]]:
+        """Fertigungsaufträge, Materialbedarf und EKT-Nummern — optionaler Block."""
+        # Fertigungsaufträge mit offenem Materialbedarf — dafür ist die bestellte Ware
+        # gedacht. available_qty_at_source_warehouse ist ERPNexts eigene Bestandszahl
+        # aus dem Auftrag (deckungsgleich mit Bin.actual_qty des Quelllagers), damit im
+        # Board dieselbe Menge steht wie im Fertigungsauftrag selbst.
+        wos = frappe.get_all(
+            "Work Order",
+            filters=[["docstatus", "=", 1],
+                     ["status", "not in", ["Completed", "Cancelled", "Stopped", "Closed"]]],
+            fields=["name", "production_item", "item_name", "qty", "status", "sales_order",
+                    "planned_start_date", "expected_delivery_date"],
             limit_page_length=0,
             ignore_permissions=True,
         )
-        ekt_created: dict[str, str] = {}
-        if rows:
-            for e in frappe.get_all(
-                "Einkaufstool",
-                filters=[["name", "in", sorted({r["parent"] for r in rows})]],
-                fields=["name", "creation"],
+        wo_required: dict[str, list[dict]] = {}
+        wo_beistellung: dict[str, int] = {}
+        if wos:
+            for row in frappe.get_all(
+                "Work Order Item",
+                filters=[["parent", "in", [w["name"] for w in wos]]],
+                fields=["parent", "item_code", "item_name", "required_qty", "transferred_qty",
+                        "available_qty_at_source_warehouse", "is_customer_provided_item"],
                 limit_page_length=0,
                 ignore_permissions=True,
             ):
-                ekt_created[e["name"]] = str(e.get("creation") or "")[:10]
-        for r in rows:
-            ekt_components.append({
-                "ekt": r["parent"],
-                "item_code": r["item_id"],
-                "work_orders_text": r.get("custom_projekte") or "",
-                "required_quantity": float(r.get("required_quantity") or 0),
-                "created": ekt_created.get(r["parent"]),
-            })
+                # Bereits in die Fertigung umgelagerte Mengen fehlen nicht mehr.
+                required = float(row.get("required_qty") or 0)
+                transferred = float(row.get("transferred_qty") or 0)
+                if required - transferred <= 0:
+                    continue
+                # Beistellung (Kunde liefert bei, Kennzeichen aus der Stückliste): nicht
+                # unsere Beschaffung — taucht deshalb nicht als fehlendes Material auf.
+                if int(row.get("is_customer_provided_item") or 0):
+                    wo_beistellung[row["parent"]] = wo_beistellung.get(row["parent"], 0) + 1
+                    continue
+                wo_required.setdefault(row["parent"], []).append({
+                    "item_code": row.get("item_code"),
+                    "item_name": row.get("item_name") or row.get("item_code"),
+                    "required_qty": required,
+                    "transferred_qty": transferred,
+                    "available_qty": float(row.get("available_qty_at_source_warehouse") or 0),
+                })
 
-    # Wunschtermin des Kunden = Liefertermin der zugehörigen AB (auch bereits
-    # abgerechnete Aufträge, die stehen nicht in open_sales_orders).
-    so_names = sorted({w["sales_order"] for w in wos if w.get("sales_order")})
-    so_due: dict[str, str] = {}
-    if so_names:
-        for row in frappe.get_all(
-            "Sales Order",
-            filters=[["name", "in", so_names]],
-            fields=["name", "delivery_date"],
-            limit_page_length=0,
-            ignore_permissions=True,
-        ):
-            if row.get("delivery_date"):
-                so_due[row["name"]] = str(row["delivery_date"])[:10]
-    work_orders = []
-    for w in wos:
-        work_orders.append({
-            "name": w["name"],
-            "production_item": w.get("production_item"),
-            "item_name": w.get("item_name") or w.get("production_item"),
-            "qty": float(w.get("qty") or 0),
-            "status": w.get("status"),
-            "sales_order": w.get("sales_order"),
-            "planned_start_date": str(w["planned_start_date"])[:10] if w.get("planned_start_date") else None,
-            "expected_delivery_date": (
-                str(w["expected_delivery_date"])[:10] if w.get("expected_delivery_date") else None),
-            "customer_due_date": so_due.get(w.get("sales_order")),
-            "beistellung_count": wo_beistellung.get(w["name"], 0),
-            "required_items": wo_required.get(w["name"], []),
-        })
+        # EKT-Nummern aus dem Einkaufstool (kundeneigener DocType): fehlt ein Artikel
+        # und ist nichts bestellt, liegt dafür oft schon eine Anfrage im Einkaufstool.
+        # Zuordnung über components.item_id (= Item-Code); custom_projekte nennt
+        # zusätzlich die Fertigungsaufträge, für die eingekauft wird.
+        # Die Existenzprüfung hält das Board auf Instanzen ohne Einkaufstool lauffähig.
+        ekt_components = []
+        req_codes = sorted({it["item_code"] for rows in wo_required.values()
+                            for it in rows if it.get("item_code")})
+        if req_codes and frappe.db.exists("DocType", "Einkaufstool Component"):
+            rows = frappe.get_all(
+                "Einkaufstool Component",
+                filters=[["parenttype", "=", "Einkaufstool"], ["item_id", "in", req_codes]],
+                fields=["parent", "item_id", "custom_projekte", "required_quantity"],
+                limit_page_length=0,
+                ignore_permissions=True,
+            )
+            ekt_created: dict[str, str] = {}
+            if rows:
+                for e in frappe.get_all(
+                    "Einkaufstool",
+                    filters=[["name", "in", sorted({r["parent"] for r in rows})]],
+                    fields=["name", "creation"],
+                    limit_page_length=0,
+                    ignore_permissions=True,
+                ):
+                    ekt_created[e["name"]] = str(e.get("creation") or "")[:10]
+            for r in rows:
+                ekt_components.append({
+                    "ekt": r["parent"],
+                    "item_code": r["item_id"],
+                    "work_orders_text": r.get("custom_projekte") or "",
+                    "required_quantity": float(r.get("required_quantity") or 0),
+                    "created": ekt_created.get(r["parent"]),
+                })
+
+        # Wunschtermin des Kunden = Liefertermin der zugehörigen AB (auch bereits
+        # abgerechnete Aufträge, die stehen nicht in open_sales_orders).
+        so_names = sorted({w["sales_order"] for w in wos if w.get("sales_order")})
+        so_due: dict[str, str] = {}
+        if so_names:
+            for row in frappe.get_all(
+                "Sales Order",
+                filters=[["name", "in", so_names]],
+                fields=["name", "delivery_date"],
+                limit_page_length=0,
+                ignore_permissions=True,
+            ):
+                if row.get("delivery_date"):
+                    so_due[row["name"]] = str(row["delivery_date"])[:10]
+        work_orders = []
+        for w in wos:
+            work_orders.append({
+                "name": w["name"],
+                "production_item": w.get("production_item"),
+                "item_name": w.get("item_name") or w.get("production_item"),
+                "qty": float(w.get("qty") or 0),
+                "status": w.get("status"),
+                "sales_order": w.get("sales_order"),
+                "planned_start_date": str(w["planned_start_date"])[:10] if w.get("planned_start_date") else None,
+                "expected_delivery_date": (
+                    str(w["expected_delivery_date"])[:10] if w.get("expected_delivery_date") else None),
+                "customer_due_date": so_due.get(w.get("sales_order")),
+                "beistellung_count": wo_beistellung.get(w["name"], 0),
+                "required_items": wo_required.get(w["name"], []),
+            })
+        return work_orders, ekt_components
+
+    work_orders, ekt_components = _optional(
+        "Fertigungs-/Einkaufstool-Daten", _fetch_production, ([], []))
 
     # Lieferzeit-Historie je Lieferant: Wareneingangspositionen mit Bestellbezug
     # ergeben (Bestelldatum -> Wareneingangsdatum). Basis sind die oben schon
@@ -381,16 +404,18 @@ def _fetch_erpnext(config: dict) -> dict:
     # laufenden Monat — eigene, engere Abfrage statt aus `invoices` (mehrere
     # Monate) herausgefiltert, um kein posting_date-Format raten zu müssen.
     month_start = date(today.year, today.month, 1).isoformat()
-    month_invoices = frappe.get_all(
-        "Sales Invoice",
-        filters=[["posting_date", ">=", month_start], ["docstatus", "=", 1]],
-        fields=["name"],
-        limit_page_length=0,
-        ignore_permissions=True,
-    )
-    invoice_items = []
-    if month_invoices:
-        invoice_items = frappe.get_all(
+
+    def _fetch_month_items() -> list[dict]:
+        month_invoices = frappe.get_all(
+            "Sales Invoice",
+            filters=[["posting_date", ">=", month_start], ["docstatus", "=", 1]],
+            fields=["name"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        )
+        if not month_invoices:
+            return []
+        return frappe.get_all(
             "Sales Invoice Item",
             filters=[["parent", "in", [inv["name"] for inv in month_invoices]]],
             fields=["item_code", "item_name", "base_net_amount", "qty"],
@@ -398,29 +423,50 @@ def _fetch_erpnext(config: dict) -> dict:
             ignore_permissions=True,
         )
 
-    # Deckungsbeitrag im Jahresvergleich: Rechnungspositionen je Artikel, schon in
-    # der Datenbank summiert (group_by) — Einzelzeilen wären für zwei komplette
-    # Jahre Zehntausende und würden den Cache-Eintrag aufblähen. item_name mit im
-    # group_by: doppelte Codes mit abweichendem Namen fasst metrics.py wieder
-    # zusammen, ONLY_FULL_GROUP_BY bleibt aber zufrieden.
+    invoice_items = _optional("Monats-Artikelumsätze", _fetch_month_items, [])
+
+    # Deckungsbeitrag im Jahresvergleich: Rechnungspositionen je Artikel summiert.
+    # Bewusst OHNE SQL-Aggregat im fields-Parameter — diese Frappe-Version lehnt
+    # "sum(x) as y" als Zeichenkette ab ("SQL-Funktionen sind in SELECT nicht als
+    # Zeichenketten erlaubt"). Stattdessen dieselbe schlichte Abfrage wie überall
+    # sonst, in Blöcken, und die Summe in Python. Gecacht wird nur das Ergebnis je
+    # Artikel, nicht die Einzelzeilen.
     def _items_per_item(names: list[str]) -> list[dict]:
-        if not names:
-            return []
-        return frappe.get_all(
-            "Sales Invoice Item",
-            filters=[["parent", "in", names]],
-            fields=["item_code", "item_name", "sum(base_net_amount) as net_total",
-                    "sum(qty) as qty"],
-            group_by="item_code, item_name",
-            limit_page_length=0,
-            ignore_permissions=True,
+        totals: dict[str, dict] = {}
+        for start in range(0, len(names), 500):
+            for row in frappe.get_all(
+                "Sales Invoice Item",
+                filters=[["parent", "in", names[start:start + 500]]],
+                fields=["item_code", "item_name", "base_net_amount", "qty"],
+                limit_page_length=0,
+                ignore_permissions=True,
+            ):
+                code = row.get("item_code")
+                if not code:
+                    continue
+                entry = totals.setdefault(code, {
+                    "item_code": code,
+                    "item_name": row.get("item_name") or code,
+                    "net_total": 0.0,
+                    "qty": 0.0,
+                })
+                entry["net_total"] += float(row.get("base_net_amount") or 0)
+                entry["qty"] += float(row.get("qty") or 0)
+        for entry in totals.values():
+            entry["net_total"] = round(entry["net_total"], 2)
+            entry["qty"] = round(entry["qty"], 4)
+        return list(totals.values())
+
+    def _fetch_year_items() -> tuple[list[dict], list[dict]]:
+        year_start = date(today.year, 1, 1).isoformat()
+        return (
+            _items_per_item([i["name"] for i in invoices
+                             if str(i.get("posting_date") or "") >= year_start]),
+            _items_per_item([i["name"] for i in prev_year_invoices]),
         )
 
-    year_start = date(today.year, 1, 1).isoformat()
-    invoice_items_year = _items_per_item(
-        [i["name"] for i in invoices if str(i.get("posting_date") or "") >= year_start]
-    )
-    invoice_items_prev_year = _items_per_item([i["name"] for i in prev_year_invoices])
+    invoice_items_year, invoice_items_prev_year = _optional(
+        "Jahres-Artikelumsätze", _fetch_year_items, ([], []))
 
     # Deckungsbeitrag: letzter Einkaufspreis je verkauftem Artikel (Wareneinsatz-
     # Schätzung); für Eigenfertigung ohne Einkaufspreis dient der Wert der
@@ -438,10 +484,10 @@ def _fetch_erpnext(config: dict) -> dict:
         | set(_top_codes(invoice_items_year))
         | set(_top_codes(invoice_items_prev_year))
     )
-    item_purchase_rates = []
-    item_bom_costs = []
-    if item_codes:
-        item_purchase_rates = frappe.get_all(
+    def _fetch_unit_costs() -> tuple[list[dict], list[dict]]:
+        if not item_codes:
+            return [], []
+        rates = frappe.get_all(
             "Item",
             filters=[["name", "in", item_codes]],
             fields=["name", "item_code", "last_purchase_rate"],
@@ -456,10 +502,15 @@ def _fetch_erpnext(config: dict) -> dict:
             limit_page_length=0,
             ignore_permissions=True,
         )
+        bom_costs = []
         for b in boms:
             qty = float(b.get("quantity") or 1) or 1.0
             cost = float(b.get("base_total_cost") or b.get("total_cost") or 0)
-            item_bom_costs.append({"item_code": b["item"], "cost_per_unit": cost / qty})
+            bom_costs.append({"item_code": b["item"], "cost_per_unit": cost / qty})
+        return rates, bom_costs
+
+    item_purchase_rates, item_bom_costs = _optional(
+        "Stückkosten-Stammdaten", _fetch_unit_costs, ([], []))
 
     # Top-Einkäufe: Wareneingangspositionen nur für den laufenden Monat — die
     # Belegnamen stehen schon in purchase_receipts (Cutoff reicht weiter zurück).

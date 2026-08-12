@@ -433,6 +433,78 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertEqual(p["expected_today"]["positions"], 0)
         self.assertIsNone(p["lead_times"]["overall_median_days"])
 
+    def _margin_data(self):
+        """Vier Artikel mit EK: A gut, B knapp, C Verlust, D grosser Verlust.
+        E ohne EK/Stückliste — nicht bewertbar."""
+        data = self._data()
+        data["invoice_items"] = [
+            {"item_code": "A", "item_name": "Artikel A", "base_net_amount": 1000, "qty": 10},
+            {"item_code": "B", "item_name": "Artikel B", "base_net_amount": 500, "qty": 10},
+            {"item_code": "C", "item_name": "Artikel C", "base_net_amount": 100, "qty": 10},
+            {"item_code": "D", "item_name": "Artikel D", "base_net_amount": 900, "qty": 100},
+            {"item_code": "E", "item_name": "Artikel E", "base_net_amount": 700, "qty": 5},
+        ]
+        data["item_purchase_rates"] = [
+            {"item_code": "A", "last_purchase_rate": 40},    # DB +600
+            {"item_code": "B", "last_purchase_rate": 48},    # DB  +20
+            {"item_code": "C", "last_purchase_rate": 15},    # DB -50
+            {"item_code": "D", "last_purchase_rate": 12},    # DB -300
+        ]
+        return data
+
+    def test_product_flops_worst_absolute_margin_first(self):
+        flops = m.build_metrics(self._margin_data(), CONFIG, date(2026, 7, 15))["product_flops"]
+        self.assertEqual([p["item_code"] for p in flops], ["D", "C", "B", "A"])
+        self.assertAlmostEqual(flops[0]["margin"], -300, delta=0.01)
+        self.assertAlmostEqual(flops[1]["margin"], -50, delta=0.01)
+        # nicht bewertbare Artikel (kein EK, keine Stückliste) bleiben aussen vor
+        self.assertNotIn("E", [p["item_code"] for p in flops])
+
+    def test_product_flops_limited_to_five(self):
+        data = self._margin_data()
+        data["invoice_items"] = [
+            {"item_code": "I%d" % i, "item_name": "Artikel %d" % i,
+             "base_net_amount": 100, "qty": 10} for i in range(8)
+        ]
+        data["item_purchase_rates"] = [
+            {"item_code": "I%d" % i, "last_purchase_rate": 20 + i} for i in range(8)
+        ]
+        flops = m.build_metrics(data, CONFIG, date(2026, 7, 15))["product_flops"]
+        self.assertEqual(len(flops), 5)
+        # groesster Verlust zuerst: hoechster EK = I7
+        self.assertEqual(flops[0]["item_code"], "I7")
+
+    def test_product_margins_year_compares_with_prev_year(self):
+        data = self._margin_data()
+        # vorsummierte Zeilen, wie refresh.py sie liefert (net_total statt base_net_amount)
+        data["invoice_items_year"] = [
+            {"item_code": "A", "item_name": "Artikel A", "net_total": 2000, "qty": 20},
+            {"item_code": "B", "item_name": "Artikel B", "net_total": 1000, "qty": 20},
+            {"item_code": "C", "item_name": "Artikel C", "net_total": 300, "qty": 30},
+        ]
+        data["invoice_items_prev_year"] = [
+            {"item_code": "A", "item_name": "Artikel A", "net_total": 1500, "qty": 15},
+            {"item_code": "C", "item_name": "Artikel C", "net_total": 400, "qty": 40},
+        ]
+        d = m.build_metrics(data, CONFIG, date(2026, 7, 15))["product_margins_year"]
+        self.assertEqual((d["year"], d["prev_year"]), (2026, 2025))
+        # DB 2026: A 2000-800=1200, B 1000-960=40, C 300-450=-150 -> nach DB sortiert
+        self.assertEqual([r["item_code"] for r in d["rows"]], ["A", "B", "C"])
+        a = d["rows"][0]
+        self.assertAlmostEqual(a["margin"], 1200, delta=0.01)
+        self.assertAlmostEqual(a["prev_margin"], 900, delta=0.01)   # 1500-600
+        self.assertAlmostEqual(a["delta_margin"], 300, delta=0.01)
+        self.assertAlmostEqual(a["prev_revenue"], 1500, delta=0.01)
+        # B gab es im Vorjahr nicht -> kein Vorjahreswert, keine Veraenderung
+        b = d["rows"][1]
+        self.assertIsNone(b["prev_margin"])
+        self.assertIsNone(b["delta_margin"])
+
+    def test_product_margins_year_empty_without_year_items(self):
+        d = m.build_metrics(self._data(), CONFIG, date(2026, 7, 15))["product_margins_year"]
+        self.assertEqual(d["rows"], [])
+        self.assertEqual(d["prev_year"], 2025)
+
     def test_mail_dedupe_shared_mailbox_across_users(self):
         # Dasselbe geteilte Postfach wird von zwei verbundenen Nutzern gelesen —
         # die Mail darf nur einmal erscheinen.

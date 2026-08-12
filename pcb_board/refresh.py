@@ -274,6 +274,41 @@ def _fetch_erpnext(config: dict) -> dict:
                 "available_qty": float(row.get("available_qty_at_source_warehouse") or 0),
             })
 
+    # EKT-Nummern aus dem Einkaufstool (kundeneigener DocType): fehlt ein Artikel
+    # und ist nichts bestellt, liegt dafür oft schon eine Anfrage im Einkaufstool.
+    # Zuordnung über components.item_id (= Item-Code); custom_projekte nennt
+    # zusätzlich die Fertigungsaufträge, für die eingekauft wird.
+    # Die Existenzprüfung hält das Board auf Instanzen ohne Einkaufstool lauffähig.
+    ekt_components = []
+    req_codes = sorted({it["item_code"] for rows in wo_required.values()
+                        for it in rows if it.get("item_code")})
+    if req_codes and frappe.db.exists("DocType", "Einkaufstool Component"):
+        rows = frappe.get_all(
+            "Einkaufstool Component",
+            filters=[["parenttype", "=", "Einkaufstool"], ["item_id", "in", req_codes]],
+            fields=["parent", "item_id", "custom_projekte", "required_quantity"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        )
+        ekt_created: dict[str, str] = {}
+        if rows:
+            for e in frappe.get_all(
+                "Einkaufstool",
+                filters=[["name", "in", sorted({r["parent"] for r in rows})]],
+                fields=["name", "creation"],
+                limit_page_length=0,
+                ignore_permissions=True,
+            ):
+                ekt_created[e["name"]] = str(e.get("creation") or "")[:10]
+        for r in rows:
+            ekt_components.append({
+                "ekt": r["parent"],
+                "item_code": r["item_id"],
+                "work_orders_text": r.get("custom_projekte") or "",
+                "required_quantity": float(r.get("required_quantity") or 0),
+                "created": ekt_created.get(r["parent"]),
+            })
+
     # Wunschtermin des Kunden = Liefertermin der zugehörigen AB (auch bereits
     # abgerechnete Aufträge, die stehen nicht in open_sales_orders).
     so_names = sorted({w["sales_order"] for w in wos if w.get("sales_order")})
@@ -433,6 +468,7 @@ def _fetch_erpnext(config: dict) -> dict:
         "open_purchase_orders": open_purchase_orders,
         "po_receipt_pairs": po_receipt_pairs,
         "work_orders": work_orders,
+        "ekt_components": ekt_components,
         "purchase_receipts": purchase_receipts,
         "invoice_items": invoice_items,
         "purchase_receipt_items": purchase_receipt_items,

@@ -246,12 +246,13 @@ def _fetch_erpnext(config: dict) -> dict:
         ignore_permissions=True,
     )
     wo_required: dict[str, list[dict]] = {}
+    wo_beistellung: dict[str, int] = {}
     if wos:
         for row in frappe.get_all(
             "Work Order Item",
             filters=[["parent", "in", [w["name"] for w in wos]]],
             fields=["parent", "item_code", "item_name", "required_qty", "transferred_qty",
-                    "available_qty_at_source_warehouse"],
+                    "available_qty_at_source_warehouse", "is_customer_provided_item"],
             limit_page_length=0,
             ignore_permissions=True,
         ):
@@ -260,6 +261,11 @@ def _fetch_erpnext(config: dict) -> dict:
             transferred = float(row.get("transferred_qty") or 0)
             if required - transferred <= 0:
                 continue
+            # Beistellung (Kunde liefert bei, Kennzeichen aus der Stückliste): nicht
+            # unsere Beschaffung — taucht deshalb nicht als fehlendes Material auf.
+            if int(row.get("is_customer_provided_item") or 0):
+                wo_beistellung[row["parent"]] = wo_beistellung.get(row["parent"], 0) + 1
+                continue
             wo_required.setdefault(row["parent"], []).append({
                 "item_code": row.get("item_code"),
                 "item_name": row.get("item_name") or row.get("item_code"),
@@ -267,6 +273,21 @@ def _fetch_erpnext(config: dict) -> dict:
                 "transferred_qty": transferred,
                 "available_qty": float(row.get("available_qty_at_source_warehouse") or 0),
             })
+
+    # Wunschtermin des Kunden = Liefertermin der zugehörigen AB (auch bereits
+    # abgerechnete Aufträge, die stehen nicht in open_sales_orders).
+    so_names = sorted({w["sales_order"] for w in wos if w.get("sales_order")})
+    so_due: dict[str, str] = {}
+    if so_names:
+        for row in frappe.get_all(
+            "Sales Order",
+            filters=[["name", "in", so_names]],
+            fields=["name", "delivery_date"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        ):
+            if row.get("delivery_date"):
+                so_due[row["name"]] = str(row["delivery_date"])[:10]
     work_orders = []
     for w in wos:
         work_orders.append({
@@ -279,6 +300,8 @@ def _fetch_erpnext(config: dict) -> dict:
             "planned_start_date": str(w["planned_start_date"])[:10] if w.get("planned_start_date") else None,
             "expected_delivery_date": (
                 str(w["expected_delivery_date"])[:10] if w.get("expected_delivery_date") else None),
+            "customer_due_date": so_due.get(w.get("sales_order")),
+            "beistellung_count": wo_beistellung.get(w["name"], 0),
             "required_items": wo_required.get(w["name"], []),
         })
 
@@ -601,3 +624,24 @@ def attach_assignments(view: dict) -> None:
         i["assigned_to"] = assigned_to
         i["assigned_to_name"] = names[assigned_to]
         i["assignment_status"] = row["status"]
+
+
+def attach_work_order_notes(view: dict) -> None:
+    """Hängt die vom Team gepflegten Notizen (korrigierter Liefertermin, Bemerkung)
+    an die Produktionsaufträge der aktuellen Ansicht. Wird beim Lesen aufgerufen,
+    nicht beim Refresh — eine Eingabe steht damit sofort im Board."""
+    wos = ((view.get("purchasing") or {}).get("work_orders")) or []
+    if not wos:
+        return
+    rows = frappe.get_all(
+        "PCB Board Work Order Note",
+        fields=["work_order", "revised_date", "remark", "updated_by"],
+        limit_page_length=0,
+        ignore_permissions=True,
+    )
+    by_wo = {r["work_order"]: r for r in rows}
+    for wo in wos:
+        row = by_wo.get(wo.get("name"))
+        wo["note_date"] = str(row["revised_date"]) if (row and row.get("revised_date")) else None
+        wo["note_remark"] = (row or {}).get("remark")
+        wo["note_by"] = (row or {}).get("updated_by")

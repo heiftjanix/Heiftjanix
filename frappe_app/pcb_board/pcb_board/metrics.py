@@ -362,6 +362,18 @@ def supplier_lead_times(data: dict) -> dict:
     }
 
 
+def _pick_ekt(rows: list[dict] | None, wo_name: str | None) -> dict | None:
+    """Passende Einkaufstool-Anfrage (EKT) zu einem fehlenden Artikel: bevorzugt
+    die, in der dieser Fertigungsauftrag ausdrücklich genannt ist, sonst die
+    neueste — eine alte Anfrage sagt weniger über den aktuellen Stand."""
+    if not rows:
+        return None
+    named = [r for r in rows if wo_name and wo_name in (r.get("work_orders_text") or "")]
+    pool = named or rows
+    best = sorted(pool, key=lambda r: (r.get("created") or "", r.get("ekt") or ""))[-1]
+    return dict(best, match="work_order" if named else "item")
+
+
 def work_order_material(data: dict, po_rows: list[dict]) -> dict:
     """Ordnet den erwarteten Wareneingängen die Fertigungsaufträge zu, für die das
     Material gedacht ist, und bestimmt je Auftrag die LETZTE nötige Lieferung — ab
@@ -392,6 +404,13 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
             })
     for lst in incoming.values():
         lst.sort(key=lambda r: (r["expected_date"] is None, r["expected_date"] or "", r["po"] or ""))
+
+    # Einkaufstool-Anfragen je Artikel — greifen bei fehlendem, nicht bestelltem
+    # Material als Hinweis „liegt schon im Einkauf".
+    ekt_by_item: dict[str, list[dict]] = defaultdict(list)
+    for row in data.get("ekt_components") or []:
+        if row.get("item_code"):
+            ekt_by_item[row["item_code"]].append(row)
 
     stock: dict[str, float] = {}
     for wo in data.get("work_orders") or []:
@@ -436,9 +455,13 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
                 if need <= 1e-9:
                     break
             if need > 1e-9:
+                ekt = _pick_ekt(ekt_by_item.get(code), wo.get("name"))
                 missing.append({"item_code": code,
                                 "item_name": it.get("item_name") or code,
-                                "short_qty": round(need, 2)})
+                                "short_qty": round(need, 2),
+                                "ekt": ekt["ekt"] if ekt else None,
+                                "ekt_created": ekt.get("created") if ekt else None,
+                                "ekt_match": ekt.get("match") if ekt else None})
 
         # Material-komplett nur, wenn nichts fehlt UND jede genutzte Lieferung
         # einen Termin hat — ohne Termin ist kein „ab wann" nennbar.

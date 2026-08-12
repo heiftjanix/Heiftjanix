@@ -684,6 +684,48 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertTrue(all(w["customer_due_date"] is None for w in wos))
         self.assertTrue(all(w["beistellung_count"] == 0 for w in wos))
 
+    def test_missing_items_carry_ekt_number(self):
+        """Fehlender Artikel ohne Bestellung: die EKT-Nummer der passenden
+        Einkaufstool-Anfrage kommt mit. Bevorzugt wird die Anfrage, in der der
+        Fertigungsauftrag ausdrücklich steht — sonst die neueste."""
+        data = self._wo_data()
+        data["ekt_components"] = [
+            {"ekt": "EKT-0100", "item_code": "C", "work_orders_text": "P-99999 (X)",
+             "required_quantity": 10, "created": "2026-07-01"},
+            {"ekt": "EKT-0169", "item_code": "C", "work_orders_text": "FA-2 (BG.1), P-50256 (BG.2)",
+             "required_quantity": 4, "created": "2026-06-01"},
+            {"ekt": "EKT-0170", "item_code": "C", "work_orders_text": "",
+             "required_quantity": 4, "created": "2026-08-01"},
+        ]
+        wo = {w["name"]: w for w in
+              m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"]}
+        miss = wo["FA-2"]["missing_items"][0]
+        # FA-2 steht in EKT-0169 -> gewinnt trotz aelterem Datum
+        self.assertEqual(miss["ekt"], "EKT-0169")
+        self.assertEqual(miss["ekt_match"], "work_order")
+        self.assertEqual(miss["ekt_created"], "2026-06-01")
+
+    def test_missing_items_ekt_falls_back_to_newest(self):
+        data = self._wo_data()
+        data["ekt_components"] = [
+            {"ekt": "EKT-0100", "item_code": "C", "work_orders_text": "P-1 (X)",
+             "required_quantity": 10, "created": "2026-07-01"},
+            {"ekt": "EKT-0170", "item_code": "C", "work_orders_text": "P-2 (Y)",
+             "required_quantity": 4, "created": "2026-08-01"},
+        ]
+        wo = {w["name"]: w for w in
+              m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"]}
+        miss = wo["FA-2"]["missing_items"][0]
+        self.assertEqual(miss["ekt"], "EKT-0170")
+        self.assertEqual(miss["ekt_match"], "item")
+
+    def test_missing_items_without_ekt_stay_none(self):
+        wo = {w["name"]: w for w in
+              m.build_metrics(self._wo_data(), CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"]}
+        miss = wo["FA-2"]["missing_items"][0]
+        self.assertIsNone(miss["ekt"])
+        self.assertIsNone(miss["ekt_match"])
+
     def test_work_orders_covered_from_stock_needs_no_delivery(self):
         data = self._data()
         data["po_receipt_pairs"] = []

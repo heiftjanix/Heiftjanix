@@ -767,6 +767,21 @@ PCBBoard.prototype.prodSortValue = function (w, key) {
 	}
 };
 
+// Liegt der fehlende Artikel schon im Einkaufstool, die EKT-Nummer verlinken —
+// dann muss niemand rätseln, ob der Einkauf davon weiß.
+PCBBoard.prototype.ektTag = function (it) {
+	if (!it.ekt) {
+		return ' <span class="muted" title="Keine Anfrage im Einkaufstool gefunden">· keine EKT</span>';
+	}
+	var title = 'Einkaufstool-Anfrage ' + it.ekt +
+		(it.ekt_created ? ' vom ' + frappe.datetime.str_to_user(it.ekt_created) : '') +
+		(it.ekt_match === 'work_order'
+			? ' — dieser Fertigungsauftrag ist dort ausdrücklich genannt'
+			: ' — Anfrage für diesen Artikel (neueste)');
+	return ' · <a class="ekt-link" href="/app/einkaufstool/' + encodeURIComponent(it.ekt) +
+		'" target="_blank" title="' + this.esc(title) + '">' + this.esc(it.ekt) + '</a>';
+};
+
 PCBBoard.prototype.prodRows = function (m) {
 	var self = this;
 	var rows = (((m || this.metrics || {}).purchasing || {}).work_orders || []).slice();
@@ -782,7 +797,9 @@ PCBBoard.prototype.prodRows = function (m) {
 			.concat((w.awaiting || []).map(function (a) {
 				return [a.supplier, a.po].concat((a.items || []).map(function (i) { return i.item_code; })).join(' ');
 			}))
-			.concat((w.missing_items || []).map(function (i) { return i.item_code + ' ' + i.item_name; }))
+			.concat((w.missing_items || []).map(function (i) {
+				return [i.item_code, i.item_name, i.ekt].join(' ');
+			}))
 			.join(' ').toLowerCase();
 		return hay.indexOf(q) >= 0;
 	});
@@ -842,7 +859,7 @@ PCBBoard.prototype.prodTableHtml = function (m) {
 				parts.push('<span class="wo-chip missing" title="' + self.esc(it.item_name || '') +
 					' — nicht bestellt, fehlende Menge ' + self.esc(String(it.short_qty)) + '">' +
 					self.esc(it.item_code || it.item_name) +
-					' <span class="muted">✗ nicht bestellt</span></span>');
+					' <span class="muted">✗ nicht bestellt</span>' + self.ektTag(it) + '</span>');
 			});
 			waitCell = '<span class="pi-wos">' + (parts.join(' ') || '<span class="muted">—</span>') + '</span>';
 		}
@@ -912,7 +929,8 @@ PCBBoard.prototype.productionOrdersHtml = function (m) {
 		'<p class="muted" style="font-size:.78rem;margin:8px 0 0">Materialbedarf = Sollmenge minus ' +
 		'bereits umgelagerte Menge, gedeckt aus dem Bestand des Quelllagers und den erwarteten ' +
 		'Wareneingängen. Als Beistellung gekennzeichnete Positionen (Kunde liefert bei) bleiben ' +
-		'außen vor. Bestand und Zulauf werden nur einmal verplant: bei knapper Menge bekommt ' +
+		'außen vor. Fehlt ein Artikel und ist nichts bestellt, steht die EKT-Nummer der ' +
+		'passenden Einkaufstool-Anfrage daneben. Bestand und Zulauf werden nur einmal verplant: bei knapper Menge bekommt ' +
 		'der Auftrag mit dem früheren Bedarfstermin den Vorrang. Spalte „Bemerkung": frei ' +
 		'pflegbar, ändert nichts am ERPNext-Beleg.</p></section>';
 };
@@ -1897,6 +1915,7 @@ var PCB_BOARD_CSS =
 	'.note-btn{border:1px dashed var(--border);background:transparent;color:var(--text-primary);' +
 	'border-radius:8px;padding:3px 8px;font-size:.8rem;cursor:pointer;text-align:left;max-width:220px}' +
 	'.note-btn:hover{border-color:var(--brand-teal);border-style:solid}' +
+	'.ekt-link{font-weight:650;white-space:nowrap}' +
 	'.note-date{font-weight:650;color:var(--brand-teal);white-space:nowrap}' +
 	'.note-txt{display:block;color:var(--text-secondary);font-size:.78rem;white-space:normal}' +
 	'.pcb-root .muted{color:var(--muted)}.pcb-root .foot{color:var(--muted);font-size:.78rem;margin-top:18px}' +

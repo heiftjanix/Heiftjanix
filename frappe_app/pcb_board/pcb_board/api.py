@@ -37,6 +37,9 @@ def get_board_metrics():
     token_doc = frappe.db.exists("PCB Board Mail Token", frappe.session.user)
     view["outlook_connected"] = bool(token_doc)
     rf.attach_assignments(view)
+    # Notizen live dazulesen (nicht aus dem Refresh-Cache): ein gerade gesetzter
+    # korrigierter Termin soll sofort stehen, nicht erst nach dem nächsten Abruf.
+    rf.attach_work_order_notes(view)
     return {"metrics": view, "status": rf.get_status()}
 
 
@@ -106,6 +109,37 @@ def list_assignments():
         limit_page_length=0,
         ignore_permissions=True,
     )
+
+
+@frappe.whitelist()
+def set_work_order_note(work_order: str, revised_date: str | None = None,
+                        remark: str | None = None):
+    """Korrigierter Liefertermin + Bemerkung zu einem Produktionsauftrag.
+    Beides leer = Notiz löschen. Ändert nichts am ERPNext-Beleg selbst."""
+    work_order = (work_order or "").strip()
+    if not work_order:
+        frappe.throw("work_order ist erforderlich.")
+    revised_date = (revised_date or "").strip() or None
+    remark = (remark or "").strip() or None
+    exists = frappe.db.exists("PCB Board Work Order Note", work_order)
+    if not revised_date and not remark:
+        if exists:
+            frappe.delete_doc("PCB Board Work Order Note", work_order, ignore_permissions=True)
+            frappe.db.commit()
+        return {"ok": True, "work_order": work_order, "revised_date": None, "remark": None}
+    if exists:
+        doc = frappe.get_doc("PCB Board Work Order Note", work_order)
+    else:
+        doc = frappe.new_doc("PCB Board Work Order Note")
+        doc.work_order = work_order
+    doc.revised_date = revised_date
+    doc.remark = remark
+    doc.updated_by = frappe.session.user
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    return {"ok": True, "work_order": work_order,
+            "revised_date": str(doc.revised_date) if doc.revised_date else None,
+            "remark": doc.remark}
 
 
 @frappe.whitelist()

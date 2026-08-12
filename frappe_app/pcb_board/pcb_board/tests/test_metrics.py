@@ -657,6 +657,33 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertEqual([w["material_ok"] for w in row["work_orders"]
                           if w["name"] == "FA-1B"], [True])
 
+    def test_work_orders_customer_due_date_and_beistellung_passthrough(self):
+        data = self._wo_data()
+        # refresh.py filtert Beistellungen aus required_items heraus und zählt sie
+        # nur — hier ist der Auftrag deshalb material-komplett, obwohl eine
+        # Beistellung offen ist.
+        data["work_orders"] = [{
+            "name": "FA-B", "item_name": "Baugruppe B", "production_item": "BG.0001",
+            "qty": 3, "status": "Not Started", "sales_order": "AB-7",
+            "planned_start_date": "2026-07-20", "customer_due_date": "2026-08-14",
+            "beistellung_count": 2,
+            "required_items": [{"item_code": "A", "item_name": "Artikel A",
+                                "required_qty": 1, "transferred_qty": 0, "available_qty": 5}],
+        }]
+        wo = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"][0]
+        self.assertEqual(wo["customer_due_date"], "2026-08-14")
+        self.assertEqual(wo["beistellung_count"], 2)
+        self.assertTrue(wo["material_ok"])
+        self.assertEqual(wo["missing_items"], [])
+
+    def test_work_orders_customer_due_date_missing_stays_none(self):
+        data = self._wo_data()
+        for wo in data["work_orders"]:
+            wo.pop("customer_due_date", None)
+        wos = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"]
+        self.assertTrue(all(w["customer_due_date"] is None for w in wos))
+        self.assertTrue(all(w["beistellung_count"] == 0 for w in wos))
+
     def test_work_orders_covered_from_stock_needs_no_delivery(self):
         data = self._data()
         data["po_receipt_pairs"] = []

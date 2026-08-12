@@ -23,6 +23,10 @@ function PCBBoard(page) {
 	this.metrics = null;
 	this._openMids = {};
 	this._openPos = {};
+	// Sortierung/Filter der Produktionsauftragsliste — überlebt Neurendern.
+	this._woSort = { key: 'customer_due_date', dir: 1 };
+	this._woFilter = 'all';
+	this._woQuery = '';
 
 	this.injectStyle();
 	this.$root.html(this.shellHtml());
@@ -567,6 +571,19 @@ PCBBoard.prototype.bindMaterialInteractions = function () {
 		if (open) self._openPos[po] = true;
 		else delete self._openPos[po];
 	});
+
+	// Produktionsauftragsliste: Filter-Chips, Suche, Sortierung, Bemerkung.
+	this.$root.find('#pcb-prod .chip[data-wof]').on('click', function () {
+		self.$root.find('#pcb-prod .chip[data-wof]').removeClass('active');
+		$(this).addClass('active');
+		self._woFilter = $(this).data('wof');
+		self.renderProdTable();
+	});
+	this.$root.find('#pcb-wo-search').on('input', function () {
+		self._woQuery = $(this).val().trim();
+		self.renderProdTable();
+	});
+	this.bindProdTable();
 };
 
 PCBBoard.prototype.woLink = function (name) {
@@ -723,37 +740,97 @@ PCBBoard.prototype.purchaseOrdersHtml = function (m) {
 // Alle Produktionsaufträge mit ihrem Materialstand. Ersetzt die frühere Rubrik
 // „Nachzuhaken": überfällige Bestellungen sind in der Bestellliste rot markiert,
 // hier steht die Wirkung — welcher Auftrag deshalb nicht laufen kann.
-PCBBoard.prototype.productionOrdersHtml = function (m) {
+// Sortier- und filterbar; der Zustand liegt auf der Instanz, damit ein
+// Hintergrund-Refresh Sortierung und Filter nicht zurücksetzt.
+PCBBoard.PROD_COLS = [
+	{ key: 'name', label: 'Produktionsauftrag' },
+	{ key: 'item', label: 'Artikel' },
+	{ key: 'qty', label: 'Menge', cls: 'num' },
+	{ key: 'status', label: 'Status' },
+	{ key: 'customer_due_date', label: 'Wunschtermin Kunde' },
+	{ key: 'sales_order', label: 'Kundenauftrag' },
+	{ key: 'material', label: 'Material' },
+	{ key: 'awaiting', label: 'Warten auf (Item-Code / Lieferant / Bestellung / erwartet)', nosort: true },
+	{ key: 'note', label: 'Bemerkung' },
+];
+
+// Sortierwert je Spalte. Material sortiert nach Dringlichkeit (fehlend zuerst),
+// nicht alphabetisch — sonst stünde „im Zulauf" vor „nicht bestellt".
+PCBBoard.prototype.prodSortValue = function (w, key) {
+	switch (key) {
+		case 'item': return String(w.production_item || w.item_name || '').toLowerCase();
+		case 'qty': return Number(w.qty || 0);
+		case 'material': return (w.missing_items || []).length ? 0 : (w.material_ok ? 2 : 1);
+		case 'note': return String(w.note_date || w.note_remark || '').toLowerCase();
+		case 'customer_due_date': return w.customer_due_date || '9999-12-31';
+		default: return String(w[key] == null ? '' : w[key]).toLowerCase();
+	}
+};
+
+PCBBoard.prototype.prodRows = function (m) {
 	var self = this;
-	var p = m.purchasing || {};
-	var rows = (p.work_orders || []).slice();
-	if (!m.purchasing) {
-		return '';
-	}
-	if (!rows.length) {
-		return '<section class="card"><div class="sec-h"><h2>🏭 Produktionsaufträge &amp; Materialstand</h2></div>' +
-			'<p class="muted">Kein offener Produktionsauftrag.</p></section>';
-	}
-	// Chronologisch nach Bedarfstermin — Planungsreihenfolge; ohne Termin ans Ende.
-	rows.sort(function (a, z) {
-		var da = a.need_date || '9999-12-31', dz = z.need_date || '9999-12-31';
-		return da < dz ? -1 : (da > dz ? 1 : String(a.name).localeCompare(String(z.name)));
+	var rows = (((m || this.metrics || {}).purchasing || {}).work_orders || []).slice();
+	var f = this._woFilter || 'all';
+	var q = (this._woQuery || '').toLowerCase();
+	rows = rows.filter(function (w) {
+		var missing = (w.missing_items || []).length;
+		if (f === 'missing' && !missing) return false;
+		if (f === 'incoming' && (missing || w.material_ok)) return false;
+		if (f === 'ok' && !w.material_ok) return false;
+		if (!q) return true;
+		var hay = [w.name, w.production_item, w.item_name, w.sales_order, w.status, w.note_remark]
+			.concat((w.awaiting || []).map(function (a) {
+				return [a.supplier, a.po].concat((a.items || []).map(function (i) { return i.item_code; })).join(' ');
+			}))
+			.concat((w.missing_items || []).map(function (i) { return i.item_code + ' ' + i.item_name; }))
+			.join(' ').toLowerCase();
+		return hay.indexOf(q) >= 0;
 	});
+	var sort = this._woSort || { key: 'customer_due_date', dir: 1 };
+	rows.sort(function (a, z) {
+		var va = self.prodSortValue(a, sort.key), vz = self.prodSortValue(z, sort.key);
+		if (va < vz) return -sort.dir;
+		if (va > vz) return sort.dir;
+		return String(a.name).localeCompare(String(z.name));
+	});
+	return rows;
+};
+
+PCBBoard.prototype.prodTableHtml = function (m) {
+	var self = this;
+	var rows = this.prodRows(m);
+	var sort = this._woSort || { key: 'customer_due_date', dir: 1 };
+	var head = PCBBoard.PROD_COLS.map(function (c) {
+		if (c.nosort) {
+			return '<th' + (c.cls ? ' class="' + c.cls + '"' : '') + '>' + self.esc(c.label) + '</th>';
+		}
+		var active = sort.key === c.key;
+		return '<th class="sortable' + (c.cls ? ' ' + c.cls : '') + (active ? ' sorted' : '') +
+			'" data-sort="' + c.key + '" title="Nach dieser Spalte sortieren">' + self.esc(c.label) +
+			'<span class="sort-ind">' + (active ? (sort.dir > 0 ? '▲' : '▼') : '⇅') + '</span></th>';
+	}).join('');
+
+	if (!rows.length) {
+		return '<table class="tbl prod-tbl"><thead><tr>' + head + '</tr></thead><tbody>' +
+			'<tr><td colspan="' + PCBBoard.PROD_COLS.length + '" class="muted">' +
+			'Kein Produktionsauftrag passt zu Filter/Suche.</td></tr></tbody></table>';
+	}
 
 	var body = rows.map(function (w) {
 		var st = self.woMaterialState(w);
-		// Auf wen wird gewartet: Lieferant (Bestellung, Termin) je offener Zulauf.
+		var matTitle = st.text + (w.beistellung_count
+			? ' · ' + w.beistellung_count + ' Beistellung(en) nicht mitgezählt' : '');
+		// Auf wen wird gewartet: Item-Code, Lieferant, Bestellung, erwarteter Termin.
 		var waitCell;
 		if (w.material_ok) {
 			waitCell = '<span class="muted">—</span>';
 		} else {
 			var parts = (w.awaiting || []).map(function (a) {
-				// Tooltip: Item-Code samt Klartextname der erwarteten Artikel.
-				var what = (a.items || []).map(function (i) {
-					return (i.item_code || '') + (i.item_name ? ' (' + i.item_name + ')' : '');
+				var codes = (a.items || []).map(function (i) {
+					return '<span title="' + self.esc(i.item_name || '') + '">' +
+						self.esc(i.item_code || '') + '</span>';
 				}).join(', ');
-				return '<span class="wo-chip"' +
-					(what ? ' title="' + self.esc(what) + '"' : '') + '>' +
+				return '<span class="wo-chip">' + (codes ? codes + ' · ' : '') +
 					'<b>' + self.esc(a.supplier || '?') + '</b> ' + self.poLink(a.po) +
 					(a.expected_date
 						? ' <span class="muted">' + self.esc(frappe.datetime.str_to_user(a.expected_date)) +
@@ -769,37 +846,132 @@ PCBBoard.prototype.productionOrdersHtml = function (m) {
 			});
 			waitCell = '<span class="pi-wos">' + (parts.join(' ') || '<span class="muted">—</span>') + '</span>';
 		}
-		return '<tr' + (w.missing_count || (w.missing_items || []).length ? ' class="late"' : '') + '>' +
+		var note = '';
+		if (w.note_date) {
+			note += '<span class="note-date" title="vom Team korrigierter Liefertermin">📅 ' +
+				self.esc(frappe.datetime.str_to_user(w.note_date)) + '</span>';
+		}
+		if (w.note_remark) {
+			note += (note ? ' ' : '') + '<span class="note-txt">' + self.esc(w.note_remark) + '</span>';
+		}
+		return '<tr' + ((w.missing_items || []).length ? ' class="late"' : '') + '>' +
 			'<td>' + self.woLink(w.name) + '</td>' +
 			'<td title="' + self.esc(w.item_name || '') + '">' +
 			self.esc(w.production_item || w.item_name || '') + '</td>' +
 			'<td class="num">' + (w.qty != null ? String(w.qty).replace('.', ',') : '—') + '</td>' +
 			'<td>' + self.esc(w.status || '') + '</td>' +
-			'<td>' + (w.need_date ? self.esc(frappe.datetime.str_to_user(w.need_date)) : '—') + '</td>' +
+			'<td>' + (w.customer_due_date
+				? self.esc(frappe.datetime.str_to_user(w.customer_due_date))
+				: '<span class="muted" title="Kein Liefertermin an der AB hinterlegt">—</span>') + '</td>' +
 			'<td>' + (w.sales_order
 				? '<a href="/app/sales-order/' + encodeURIComponent(w.sales_order) + '" target="_blank">' +
 					self.esc(w.sales_order) + '</a>'
 				: '<span class="muted">—</span>') + '</td>' +
-			'<td><span style="color:' + st.color + ';font-weight:650">' + st.icon + ' ' +
-			self.esc(st.text) + '</span></td>' +
-			'<td>' + waitCell + '</td></tr>';
+			'<td><span style="color:' + st.color + ';font-weight:650" title="' + self.esc(matTitle) + '">' +
+			st.icon + ' ' + self.esc(st.text) + '</span></td>' +
+			'<td>' + waitCell + '</td>' +
+			'<td class="note-cell"><button class="note-btn" type="button" data-wo="' + self.esc(w.name) +
+			'" title="Liefertermin korrigieren / Bemerkung erfassen">' +
+			(note || '<span class="muted">✎ Bemerkung</span>') + '</button></td></tr>';
 	}).join('');
+	return '<table class="tbl prod-tbl"><thead><tr>' + head + '</tr></thead><tbody>' + body +
+		'</tbody></table>';
+};
 
-	var ok = rows.filter(function (w) { return w.material_ok; }).length;
-	var incoming = rows.filter(function (w) { return !w.material_ok && !(w.missing_items || []).length; }).length;
-	var missing = rows.length - ok - incoming;
-	var summary = ok + ' vollständig · ' + incoming + ' im Zulauf · ' + missing + ' nicht bestellt';
+PCBBoard.prototype.productionOrdersHtml = function (m) {
+	var self = this;
+	if (!m.purchasing) {
+		return '';
+	}
+	var all = (m.purchasing.work_orders || []);
+	if (!all.length) {
+		return '<section class="card"><div class="sec-h"><h2>🏭 Produktionsaufträge &amp; Materialstand</h2></div>' +
+			'<p class="muted">Kein offener Produktionsauftrag.</p></section>';
+	}
+	var ok = all.filter(function (w) { return w.material_ok; }).length;
+	var missing = all.filter(function (w) { return (w.missing_items || []).length; }).length;
+	var incoming = all.length - ok - missing;
+	var f = this._woFilter || 'all';
+	function chip(key, label) {
+		return '<button class="chip' + (f === key ? ' active' : '') + '" data-wof="' + key + '">' +
+			label + '</button>';
+	}
+	var controls =
+		'<div class="mailctl"><div class="chips" style="margin:0">' +
+		chip('all', 'Alle <span class="chip-n">' + all.length + '</span>') +
+		chip('missing', '⛔ nicht bestellt <span class="chip-n">' + missing + '</span>') +
+		chip('incoming', '🚚 im Zulauf <span class="chip-n">' + incoming + '</span>') +
+		chip('ok', '✅ vollständig <span class="chip-n">' + ok + '</span>') +
+		'</div><input type="search" id="pcb-wo-search" placeholder="Suche: Auftrag, Item-Code, Lieferant, AB, Bemerkung …" ' +
+		'value="' + this.esc(this._woQuery || '') + '"></div>';
 
-	return '<section class="card"><div class="sec-h"><h2>🏭 Produktionsaufträge &amp; Materialstand</h2>' +
-		'<span class="muted">' + summary + '</span></div>' +
-		'<table class="tbl"><thead><tr><th>Produktionsauftrag</th><th>Artikel</th>' +
-		'<th class="num">Menge</th><th>Status</th><th>Bedarf ab</th><th>Kundenauftrag</th>' +
-		'<th>Material</th><th>Warten auf (Lieferant / Bestellung / erwartet)</th></tr></thead>' +
-		'<tbody>' + body + '</tbody></table>' +
+	return '<section class="card" id="pcb-prod"><div class="sec-h"><h2>🏭 Produktionsaufträge &amp; Materialstand</h2>' +
+		'<span class="muted">' + ok + ' vollständig · ' + incoming + ' im Zulauf · ' +
+		missing + ' nicht bestellt</span></div>' + controls +
+		'<div id="pcb-prod-table">' + this.prodTableHtml(m) + '</div>' +
 		'<p class="muted" style="font-size:.78rem;margin:8px 0 0">Materialbedarf = Sollmenge minus ' +
 		'bereits umgelagerte Menge, gedeckt aus dem Bestand des Quelllagers und den erwarteten ' +
-		'Wareneingängen. Bestand und Zulauf werden nur einmal verplant: bei knapper Menge bekommt ' +
-		'der Auftrag mit dem früheren Bedarfstermin den Vorrang.</p></section>';
+		'Wareneingängen. Als Beistellung gekennzeichnete Positionen (Kunde liefert bei) bleiben ' +
+		'außen vor. Bestand und Zulauf werden nur einmal verplant: bei knapper Menge bekommt ' +
+		'der Auftrag mit dem früheren Bedarfstermin den Vorrang. Spalte „Bemerkung": frei ' +
+		'pflegbar, ändert nichts am ERPNext-Beleg.</p></section>';
+};
+
+// Nur die Tabelle neu zeichnen — Suchfeld behält Fokus und Cursorposition.
+PCBBoard.prototype.renderProdTable = function () {
+	this.$root.find('#pcb-prod-table').html(this.prodTableHtml(this.metrics));
+	this.bindProdTable();
+};
+
+PCBBoard.prototype.bindProdTable = function () {
+	var self = this;
+	var root = this.$root.find('#pcb-prod');
+	root.find('th.sortable').on('click', function () {
+		var key = $(this).data('sort');
+		var cur = self._woSort || { key: 'customer_due_date', dir: 1 };
+		self._woSort = { key: key, dir: cur.key === key ? -cur.dir : 1 };
+		self.renderProdTable();
+	});
+	root.find('.note-btn').on('click', function () {
+		self.openWorkOrderNote($(this).data('wo'));
+	});
+};
+
+PCBBoard.prototype.openWorkOrderNote = function (woName) {
+	var self = this;
+	var wos = ((this.metrics || {}).purchasing || {}).work_orders || [];
+	var wo = null;
+	wos.forEach(function (w) { if (w.name === woName) wo = w; });
+	if (!wo) return;
+	frappe.prompt(
+		[
+			{ fieldname: 'revised_date', fieldtype: 'Date', label: 'Korrigierter Liefertermin',
+			  default: wo.note_date || wo.customer_due_date || null,
+			  description: 'Wunschtermin Kunde laut AB: ' +
+				(wo.customer_due_date ? frappe.datetime.str_to_user(wo.customer_due_date) : '—') },
+			{ fieldname: 'remark', fieldtype: 'Small Text', label: 'Bemerkung',
+			  default: wo.note_remark || '' },
+		],
+		function (values) {
+			frappe.call({
+				method: 'pcb_board.api.set_work_order_note',
+				type: 'POST',
+				args: {
+					work_order: woName,
+					revised_date: values.revised_date || '',
+					remark: values.remark || '',
+				},
+			}).then(function (r) {
+				var res = (r && r.message) || {};
+				wo.note_date = res.revised_date || null;
+				wo.note_remark = res.remark || null;
+				self.toast(res.revised_date || res.remark ? 'Bemerkung gespeichert ✓' : 'Bemerkung entfernt');
+				self.renderProdTable();
+			});
+		},
+		'Produktionsauftrag ' + woName,
+		'Speichern'
+	);
 };
 
 PCBBoard.prototype.costsTabHtml = function (m) {
@@ -1716,6 +1888,17 @@ var PCB_BOARD_CSS =
 	'.wo-chip{background:var(--surface-1);border:1px solid var(--border);border-radius:6px;padding:1px 7px;white-space:nowrap}' +
 	'.wo-chip.missing{border-color:var(--critical);border-style:dashed}' +
 	'.wo-list{display:inline-flex;gap:6px;flex-wrap:wrap}' +
+	'.tbl th.sortable{cursor:pointer;user-select:none;white-space:nowrap}' +
+	'.tbl th.sortable:hover{color:var(--brand-teal)}' +
+	'.tbl th.sorted{color:var(--brand-teal)}' +
+	'.sort-ind{opacity:.55;margin-left:4px;font-size:.72rem}' +
+	'.tbl th.sorted .sort-ind{opacity:1}' +
+	'.prod-tbl{font-size:.86rem}.prod-tbl td{vertical-align:top}' +
+	'.note-btn{border:1px dashed var(--border);background:transparent;color:var(--text-primary);' +
+	'border-radius:8px;padding:3px 8px;font-size:.8rem;cursor:pointer;text-align:left;max-width:220px}' +
+	'.note-btn:hover{border-color:var(--brand-teal);border-style:solid}' +
+	'.note-date{font-weight:650;color:var(--brand-teal);white-space:nowrap}' +
+	'.note-txt{display:block;color:var(--text-secondary);font-size:.78rem;white-space:normal}' +
 	'.pcb-root .muted{color:var(--muted)}.pcb-root .foot{color:var(--muted);font-size:.78rem;margin-top:18px}' +
 	// Bewusst kein vollflächiges Overlay: der Refresh-Status ist global (alle Nutzer
 	// sehen denselben Stand), aber niemand soll deshalb blockiert werden — nur ein

@@ -494,6 +494,9 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
             "status": wo.get("status"),
             "sales_order": wo.get("sales_order"),
             "need_date": wo.get("planned_start_date") or wo.get("expected_delivery_date"),
+            # Wunschtermin des Kunden = Liefertermin der AB; ohne AB kein Termin.
+            "customer_due_date": wo.get("customer_due_date"),
+            "beistellung_count": int(wo.get("beistellung_count") or 0),
             "waiting": waiting,
             # Material vollständig = nichts mehr zu beschaffen (Bestand reicht bzw.
             # ist bereits in die Fertigung umgelagert).

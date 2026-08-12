@@ -1,0 +1,73 @@
+{
+  "doctype": "DocType",
+  "name": "PCB Board Work Order Note",
+  "module": "Board",
+  "custom": 0,
+  "istable": 0,
+  "issingle": 0,
+  "autoname": "field:work_order",
+  "editable_grid": 1,
+  "engine": "InnoDB",
+  "track_changes": 1,
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "actions": [],
+  "links": [],
+  "fields": [
+    {
+      "fieldname": "work_order",
+      "fieldtype": "Data",
+      "label": "Produktionsauftrag",
+      "reqd": 1,
+      "unique": 1,
+      "read_only": 1
+    },
+    {
+      "fieldname": "revised_date",
+      "fieldtype": "Date",
+      "label": "Korrigierter Liefertermin"
+    },
+    {
+      "fieldname": "column_break_note_1",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "remark",
+      "fieldtype": "Small Text",
+      "label": "Bemerkung"
+    },
+    {
+      "fieldname": "updated_by",
+      "fieldtype": "Link",
+      "options": "User",
+      "label": "Zuletzt geändert von",
+      "read_only": 1
+    }
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1,
+      "print": 1,
+      "email": 1,
+      "export": 1,
+      "share": 1,
+      "report": 1
+    },
+    {
+      "role": "All",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1,
+      "print": 0,
+      "email": 0,
+      "export": 0,
+      "share": 0,
+      "report": 0
+    }
+  ]
+}

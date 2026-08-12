@@ -137,11 +137,13 @@ PCBBoard.prototype.shellHtml = function () {
 		'<button class="active" data-tab="mail">📥 Posteingang</button>' +
 		'<button data-tab="material">📦 Materialwirtschaft</button>' +
 		'<button data-tab="guv">📊 GuV</button>' +
+		'<button data-tab="crm">🤝 CRM</button>' +
 		'<button data-tab="assign">👤 Zuweisungen</button>' +
 		'</div>' +
 		'<div class="tab-panel active" id="pcb-tab-mail"><p class="muted">Lade Daten …</p></div>' +
 		'<div class="tab-panel" id="pcb-tab-material"></div>' +
 		'<div class="tab-panel" id="pcb-tab-guv"></div>' +
+		'<div class="tab-panel" id="pcb-tab-crm"></div>' +
 		'<div class="tab-panel" id="pcb-tab-assign"><p class="muted">Lade Daten …</p></div>' +
 		'<p class="foot">Nur Vorschläge — es wird nichts automatisch gesendet oder gebucht. ' +
 		'Alle Beträge netto.</p>' +
@@ -379,6 +381,7 @@ PCBBoard.prototype.renderAll = function () {
 	this.$root.find('#pcb-tab-mail').html(this.mailTabHtml(m));
 	this.$root.find('#pcb-tab-material').html(this.materialTabHtml(m));
 	this.$root.find('#pcb-tab-guv').html(this.guvTabHtml(m));
+	this.$root.find('#pcb-tab-crm').html(this.crmTabHtml(m));
 	this.bindMailInteractions();
 	this.bindMaterialInteractions();
 };
@@ -437,6 +440,212 @@ PCBBoard.prototype.soWorkOrdersCell = function (r) {
 		return '<span class="wo-chip" title="' + self.esc(title) + '">' + self.woLink(w.name) +
 			' <span style="color:' + st.color + '">' + st.icon + '</span></span>';
 	}).join(' ') + '</span>';
+};
+
+// CRM = Angebote (offen, nachzufassen, Trefferquote) + Kundenentwicklung aus den
+// Rechnungsdaten + Leads/Opportunities. Alles lesend, nichts wird hier gepflegt.
+PCBBoard.prototype.quoteLink = function (name) {
+	return '<a href="/app/quotation/' + encodeURIComponent(name) + '" target="_blank">' +
+		this.esc(name) + '</a>';
+};
+
+PCBBoard.prototype.crmTabHtml = function (m) {
+	var self = this;
+	if (!m.crm) {
+		return '<section class="card"><div class="sec-h"><h2>🤝 CRM</h2></div>' +
+			'<p class="muted">Die CRM-Daten kommen mit dem nächsten Datenabruf — ' +
+			'auf „⟳ Live aktualisieren" klicken.</p></section>';
+	}
+	var q = m.crm.quotations || {};
+	var c = m.crm.customers || {};
+	var l = m.crm.leads || {};
+	var o = m.crm.opportunities || {};
+	var conv = q.conversion || {};
+	var convPrev = q.conversion_prev || {};
+
+	// --- Kachelzeile: der Zustand der Verkaufs-Pipeline auf einen Blick --------
+	var rateTxt = conv.rate == null ? '—' : self.pct(conv.rate);
+	var rateDelta = '';
+	if (conv.rate != null && convPrev.rate != null) {
+		var d = conv.rate - convPrev.rate;
+		var up = d >= 0;
+		rateDelta = ' <span style="color:' + (up ? 'var(--good)' : 'var(--critical)') +
+			';font-weight:650">' + (up ? '▲ +' : '▼ −') + Math.abs(Math.round(d * 100)) +
+			' %-Pkt.</span>';
+	}
+	var tiles =
+		'<div class="tiles" style="margin-bottom:12px">' +
+		'<div class="tile hero"><p class="k">Offene Angebote (netto)</p>' +
+		'<div class="v">' + self.eur(q.open_net) + '</div>' +
+		'<div class="m">' + (q.open_count || 0) + ' Angebot(e) beim Kunden' +
+		(q.draft_count ? ' · ' + q.draft_count + ' Entwurf/Entwürfe noch nicht raus' : '') +
+		'</div></div>' +
+		'<div class="tile"><p class="k">Nachfassen (läuft ab ≤ ' + (q.expiring_days || 14) + ' Tage)</p>' +
+		'<div class="v" style="color:' + (q.expiring_count ? 'var(--critical)' : 'var(--good)') + '">' +
+		(q.expiring_count || 0) + '</div>' +
+		'<div class="m">' + (q.expiring_count
+			? self.eur(q.expiring_net) + ' · davon ' + (q.overdue_count || 0) + ' bereits abgelaufen'
+			: 'kein Angebot läuft demnächst ab') + '</div></div>' +
+		'<div class="tile"><p class="k">Trefferquote ' + self.esc(String(conv.year || '')) + '</p>' +
+		'<div class="v">' + rateTxt + '</div>' +
+		'<div class="m">' + (conv.decided || 0) + ' entschieden: ' + (conv.won || 0) + ' gewonnen, ' +
+		(conv.lost || 0) + ' verloren, ' + (conv.expired || 0) + ' abgelaufen' + rateDelta + '</div></div>' +
+		'<div class="tile"><p class="k">Neu- &amp; reaktivierte Kunden</p>' +
+		'<div class="v" style="color:var(--good)">' + (c.new_count || 0) + '</div>' +
+		'<div class="m">Umsatz ' + self.esc((m.as_of || '').slice(0, 4)) + ', kein Umsatz im Vorjahr</div></div>' +
+		'<div class="tile"><p class="k">Schlafende Kunden</p>' +
+		'<div class="v" style="color:' + (c.dormant_count ? 'var(--warning)' : 'var(--good)') + '">' +
+		(c.dormant_count || 0) + '</div>' +
+		'<div class="m">Vorjahresumsatz, aber seit &gt; ' + (c.dormant_days || 180) +
+		' Tagen keine Rechnung</div></div>' +
+		'<div class="tile"><p class="k">Leads &amp; Opportunities</p>' +
+		'<div class="v">' + (l.open_count || 0) + ' / ' + (o.open_count || 0) + '</div>' +
+		'<div class="m">offene Leads / offene Opportunities' +
+		(o.open_amount ? ' (' + self.eur(o.open_amount) + ')' : '') + '</div></div>' +
+		'</div>';
+
+	// --- Angebote nachfassen -------------------------------------------------
+	var follow = (q.open || []).filter(function (r) { return r.expiring; });
+	var followBody = follow.map(function (r) {
+		var badge = r.overdue
+			? '<span class="dot-hi">' + Math.abs(r.days_left) + ' Tag(e) abgelaufen</span>'
+			: (r.days_left === 0
+				? '<span class="dot-hi">läuft heute ab</span>'
+				: '<span class="pill info">' + r.days_left + ' Tag(e) gültig</span>');
+		return '<tr class="late"><td>' + self.quoteLink(r.name) + '</td>' +
+			'<td>' + self.esc(r.customer) + '</td>' +
+			'<td>' + (r.date ? self.esc(frappe.datetime.str_to_user(r.date)) : '—') + '</td>' +
+			'<td class="exp">' + (r.valid_till
+				? self.esc(frappe.datetime.str_to_user(r.valid_till)) : '—') + '</td>' +
+			'<td>' + badge + '</td>' +
+			'<td class="num">' + (r.age_days != null ? r.age_days + ' T.' : '—') + '</td>' +
+			'<td class="num">' + self.eur(r.net_total) + '</td></tr>';
+	}).join('');
+	var followCard = '<section class="card"><div class="sec-h"><h2>📣 Angebote nachfassen</h2>' +
+		'<span class="muted">Gültigkeit läuft aus oder ist vorbei — der Kunde hat noch nicht entschieden</span></div>' +
+		(follow.length
+			? '<table class="tbl"><thead><tr><th>Angebot</th><th>Kunde</th><th>Datum</th>' +
+				'<th>Gültig bis</th><th>Status</th><th class="num">Alter</th>' +
+				'<th class="num">Netto</th></tr></thead><tbody>' + followBody +
+				'</tbody><tfoot><tr><td colspan="6">Summe (' + follow.length + ')</td>' +
+				'<td class="num">' + self.eur(q.expiring_net) + '</td></tr></tfoot></table>'
+			: '<p class="muted">Kein Angebot läuft demnächst ab. ✅</p>') + '</section>';
+
+	// --- Alle offenen Angebote ----------------------------------------------
+	var openBody = (q.open || []).map(function (r) {
+		return '<tr' + (r.overdue ? ' class="late"' : '') + '><td>' + self.quoteLink(r.name) + '</td>' +
+			'<td>' + self.esc(r.customer) + '</td>' +
+			'<td>' + (r.date ? self.esc(frappe.datetime.str_to_user(r.date)) : '—') + '</td>' +
+			'<td class="exp">' + (r.valid_till
+				? self.esc(frappe.datetime.str_to_user(r.valid_till)) : '<span class="muted">ohne Frist</span>') + '</td>' +
+			'<td>' + self.esc(r.status || '') + '</td>' +
+			'<td class="num">' + self.eur(r.net_total) + '</td></tr>';
+	}).join('');
+	var openCard = '<section class="card"><figcaption>Offene Angebote (' + (q.open_count || 0) +
+		', ' + self.eur(q.open_net) + ') — nach Gültigkeit</figcaption>' +
+		((q.open || []).length
+			? '<table class="tbl"><thead><tr><th>Angebot</th><th>Kunde</th><th>Datum</th>' +
+				'<th>Gültig bis</th><th>Status</th><th class="num">Netto</th></tr></thead>' +
+				'<tbody>' + openBody + '</tbody></table>'
+			: '<p class="muted">Keine offenen Angebote.</p>') + '</section>';
+
+	// --- Angebotsbestand je Kunde (Klumpenrisiko) ---------------------------
+	var custBody = (q.by_customer || []).map(function (r, idx) {
+		var share = q.open_net > 0 ? r.net / q.open_net : 0;
+		return '<tr><td>' + (idx + 1) + '</td><td>' + self.esc(r.customer) + '</td>' +
+			'<td class="num">' + r.count + '</td>' +
+			'<td class="num">' + self.eur(r.net) + '</td>' +
+			'<td class="num">' + self.pct(share) + '</td></tr>';
+	}).join('');
+	var byCustCard = (q.by_customer || []).length
+		? '<section class="card"><figcaption>Offener Angebotsbestand je Kunde (Top 5) ' +
+			'<i class="muted" style="font-size:.78rem;font-weight:400">— Klumpenrisiko im Angebotsbuch</i>' +
+			'</figcaption><table class="tbl"><thead><tr><th>#</th><th>Kunde</th>' +
+			'<th class="num">Angebote</th><th class="num">Netto</th><th class="num">Anteil</th>' +
+			'</tr></thead><tbody>' + custBody + '</tbody></table></section>'
+		: '';
+
+	// --- Trefferquote im Jahresvergleich ------------------------------------
+	function convRow(x) {
+		if (!x || !x.year) return '';
+		return '<tr><td>' + self.esc(String(x.year)) + '</td>' +
+			'<td class="num">' + (x.won || 0) + '</td>' +
+			'<td class="num">' + self.eur(x.won_net) + '</td>' +
+			'<td class="num">' + (x.lost || 0) + '</td>' +
+			'<td class="num">' + self.eur(x.lost_net) + '</td>' +
+			'<td class="num">' + (x.expired || 0) + '</td>' +
+			'<td class="num">' + (x.open || 0) + '</td>' +
+			'<td class="num"><b>' + (x.rate == null ? '—' : self.pct(x.rate)) + '</b></td>' +
+			'<td class="num">' + (x.rate_net == null ? '—' : self.pct(x.rate_net)) + '</td></tr>';
+	}
+	var convCard = '<section class="card"><figcaption>Trefferquote Angebote — Jahresvergleich</figcaption>' +
+		'<table class="tbl"><thead><tr><th>Jahr</th><th class="num">gewonnen</th>' +
+		'<th class="num">Wert gewonnen</th><th class="num">verloren</th><th class="num">Wert verloren</th>' +
+		'<th class="num">abgelaufen</th><th class="num">noch offen</th>' +
+		'<th class="num">Quote (Anzahl)</th><th class="num">Quote (Wert)</th></tr></thead><tbody>' +
+		convRow(conv) + convRow(convPrev) + '</tbody></table>' +
+		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Quote = gewonnen ÷ entschiedene ' +
+		'Angebote (gewonnen + verloren + abgelaufen). Noch offene Angebote zählen bewusst nicht ' +
+		'mit — sie sind weder gewonnen noch verloren und würden die Quote künstlich drücken. ' +
+		'Teilweise beauftragte Angebote gelten als gewonnen; Stornos bleiben außen vor.</p></section>';
+
+	// --- Kundenentwicklung ---------------------------------------------------
+	var newBody = (c.new || []).map(function (r) {
+		return '<tr><td>' + self.esc(r.customer) + '</td>' +
+			'<td>' + self.esc(frappe.datetime.str_to_user(r.first_date)) + '</td>' +
+			'<td class="num">' + self.eur(r.revenue_year) + '</td></tr>';
+	}).join('');
+	var newCard = (c.new || []).length
+		? '<section class="card"><figcaption>Neu- &amp; reaktivierte Kunden ' +
+			self.esc((m.as_of || '').slice(0, 4)) + ' (' + (c.new_count || 0) + ')</figcaption>' +
+			'<table class="tbl"><thead><tr><th>Kunde</th><th>erste Rechnung</th>' +
+			'<th class="num">Umsatz</th></tr></thead><tbody>' + newBody + '</tbody></table>' +
+			'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Umsatz im laufenden Jahr, ' +
+			'kein Umsatz im Vorjahr — das umfasst echte Neukunden und zurückgewonnene Altkunden.</p></section>'
+		: '';
+	var dormBody = (c.dormant || []).map(function (r) {
+		return '<tr class="late"><td>' + self.esc(r.customer) + '</td>' +
+			'<td>' + self.esc(frappe.datetime.str_to_user(r.last_date)) + '</td>' +
+			'<td class="num">' + r.days_since + ' T.</td>' +
+			'<td class="num">' + self.eur(r.revenue_prev_year) + '</td>' +
+			'<td class="num">' + self.eur(r.revenue_year) + '</td></tr>';
+	}).join('');
+	var dormCard = (c.dormant || []).length
+		? '<section class="card"><div class="sec-h"><h2>😴 Schlafende Kunden</h2>' +
+			'<span class="muted">hatten Vorjahresumsatz, seit über ' + (c.dormant_days || 180) +
+			' Tagen keine Rechnung — größter Vorjahresumsatz zuerst</span></div>' +
+			'<table class="tbl"><thead><tr><th>Kunde</th><th>letzte Rechnung</th>' +
+			'<th class="num">seit</th><th class="num">Umsatz Vorjahr</th>' +
+			'<th class="num">Umsatz laufendes Jahr</th></tr></thead><tbody>' + dormBody +
+			'</tbody></table></section>'
+		: '';
+
+	// --- Leads & Opportunities (dünn gepflegt, daher kompakt) ---------------
+	var leadChips = (l.by_status || []).map(function (s) {
+		return '<span class="wo-chip">' + self.esc(s[0]) + ' <b>' + s[1] + '</b></span>';
+	}).join(' ');
+	var oppBody = (o.rows || []).map(function (r) {
+		return '<tr><td><a href="/app/opportunity/' + encodeURIComponent(r.name) +
+			'" target="_blank">' + self.esc(r.name) + '</a></td>' +
+			'<td>' + self.esc(r.customer || '') + '</td>' +
+			'<td>' + self.esc(r.stage || '') + '</td>' +
+			'<td>' + (r.date ? self.esc(frappe.datetime.str_to_user(r.date)) : '—') + '</td>' +
+			'<td class="num">' + self.eur(r.amount) + '</td></tr>';
+	}).join('');
+	var leadCard = (l.total || o.total)
+		? '<section class="card"><figcaption>Leads &amp; Opportunities</figcaption>' +
+			'<p class="m" style="margin:0 0 8px">' + (l.total || 0) + ' Leads, davon ' +
+			(l.open_count || 0) + ' offen: <span class="pi-wos">' + (leadChips || '—') + '</span></p>' +
+			(oppBody
+				? '<table class="tbl"><thead><tr><th>Opportunity</th><th>Kunde</th><th>Phase</th>' +
+					'<th>Datum</th><th class="num">Wert</th></tr></thead><tbody>' + oppBody +
+					'</tbody></table>'
+				: '<p class="muted">Keine offene Opportunity.</p>') + '</section>'
+		: '';
+
+	return '<section class="card"><div class="sec-h"><h2>🤝 CRM-Überblick</h2>' +
+		'<span class="muted">Angebote, Trefferquote und Kundenentwicklung</span></div>' + tiles +
+		'</section>' + followCard + convCard + byCustCard + openCard + newCard + dormCard + leadCard;
 };
 
 PCBBoard.prototype.deliveryDatesHtml = function (m) {

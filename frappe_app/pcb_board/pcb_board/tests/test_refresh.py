@@ -96,9 +96,11 @@ class TestFetchErpnext(unittest.TestCase):
     def test_core_keys_always_present(self):
         data, _, _ = self._run()
         for key in ("as_of", "invoices", "to_bill_delivery_notes", "open_sales_orders",
-                    "purchase_receipts", "work_orders", "ekt_components",
+                    "purchase_receipts", "work_orders", "ekt_components", "crm",
                     "invoice_items_year", "invoice_items_prev_year"):
             self.assertIn(key, data)
+        for key in ("quotations", "leads", "opportunities"):
+            self.assertIn(key, data["crm"])
 
     def test_failing_production_block_does_not_kill_refresh(self):
         """Fällt die Fertigungsabfrage aus, fehlt nur dieser Abschnitt."""
@@ -116,6 +118,14 @@ class TestFetchErpnext(unittest.TestCase):
         self.assertEqual(data["invoice_items_year"], [])
         self.assertEqual(data["invoice_items_prev_year"], [])
         self.assertEqual(data["invoices"][0]["name"], "RE-1")
+        self.assertTrue(any("übersprungen" in t for t in frappe.logged))
+
+    def test_failing_crm_block_does_not_kill_refresh(self):
+        """Ohne CRM-Daten bleibt der Reiter leer, das Board laeuft weiter."""
+        data, _, frappe = self._run(failing_doctypes=("Quotation",))
+        self.assertEqual(data["crm"]["quotations"], [])
+        self.assertEqual(data["crm"]["leads"], [])
+        self.assertIn("as_of", data)
         self.assertTrue(any("übersprungen" in t for t in frappe.logged))
 
     def test_failing_unit_costs_do_not_kill_refresh(self):
@@ -145,7 +155,7 @@ class TestFetchFeedsMetrics(TestFetchErpnext):
         from pcb_board import metrics
         out = metrics.build_metrics(data, self.METRICS_CONFIG, date(2026, 7, 15))
         for key in ("forecast", "costs", "todo", "purchasing", "profit_history",
-                    "product_flops", "product_margins_year", "billing", "pipeline"):
+                    "product_flops", "product_margins_year", "billing", "pipeline", "crm"):
             self.assertIn(key, out)
         self.assertEqual(out["purchasing"]["open_count"], 0)
         self.assertEqual(out["product_margins_year"]["prev_year"], 2025)

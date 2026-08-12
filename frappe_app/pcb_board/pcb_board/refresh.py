@@ -155,7 +155,9 @@ def _fetch_erpnext(config: dict) -> dict:
         filters=[["posting_date", ">=", date(py, 1, 1).isoformat()],
                  ["posting_date", "<", date(today.year, 1, 1).isoformat()],
                  ["docstatus", "=", 1]],
-        fields=["name", "base_net_total", "posting_date"],
+        # customer/customer_name auch hier: die CRM-Kundenentwicklung braucht das
+        # Vorjahr, um Neu-/reaktivierte und schlafende Kunden zu erkennen.
+        fields=["name", "customer", "customer_name", "base_net_total", "posting_date"],
         limit_page_length=0,
         ignore_permissions=True,
     )
@@ -249,9 +251,61 @@ def _fetch_erpnext(config: dict) -> dict:
             "items": items[:20],
         })
 
+    def _fetch_crm() -> dict:
+        """Angebote, Leads und Opportunities für den CRM-Reiter — optionaler Block.
+        docstatus < 2 lässt Stornos weg: bei geänderten Angeboten (AN-1234 storniert,
+        AN-1234-1 aktiv) würde sonst jedes Angebot doppelt zählen."""
+        py_start = date(today.year - 1, 1, 1).isoformat()
+        quotations = [{
+            "name": q["name"],
+            "customer": q.get("customer_name") or q.get("party_name") or "",
+            "status": q.get("status"),
+            "is_draft": int(q.get("docstatus") or 0) == 0,
+            "date": str(q["transaction_date"])[:10] if q.get("transaction_date") else None,
+            "valid_till": str(q["valid_till"])[:10] if q.get("valid_till") else None,
+            "net_total": round(float(q.get("base_net_total") or 0), 2),
+        } for q in frappe.get_all(
+            "Quotation",
+            filters=[["docstatus", "<", 2], ["transaction_date", ">=", py_start]],
+            fields=["name", "party_name", "customer_name", "status", "transaction_date",
+                    "valid_till", "base_net_total", "docstatus"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        )]
+        leads = [{
+            "name": r["name"],
+            "lead_name": r.get("company_name") or r.get("lead_name") or r["name"],
+            "status": r.get("status"),
+            "created": str(r.get("creation") or "")[:10],
+        } for r in frappe.get_all(
+            "Lead",
+            fields=["name", "lead_name", "company_name", "status", "creation"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        )]
+        opportunities = [{
+            "name": o["name"],
+            "customer": o.get("customer_name") or o.get("party_name") or "",
+            "status": o.get("status"),
+            "stage": o.get("sales_stage"),
+            "date": str(o["transaction_date"])[:10] if o.get("transaction_date") else None,
+            "amount": round(float(o.get("opportunity_amount") or 0), 2),
+        } for o in frappe.get_all(
+            "Opportunity",
+            filters=[["docstatus", "<", 2]],
+            fields=["name", "party_name", "customer_name", "status", "sales_stage",
+                    "transaction_date", "opportunity_amount"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        )]
+        return {"quotations": quotations, "leads": leads, "opportunities": opportunities}
+
+    crm = _optional("CRM-Daten", _fetch_crm,
+                    {"quotations": [], "leads": [], "opportunities": []})
+
     def _fetch_production() -> tuple[list[dict], list[dict]]:
         """Fertigungsaufträge, Materialbedarf und EKT-Nummern — optionaler Block."""
-        # Fertigungsaufträge mit offenem Materialbedarf — dafür ist die bestellte Ware
+        # Nur Aufträge mit offenem Materialbedarf — dafür ist die bestellte Ware
         # gedacht. available_qty_at_source_warehouse ist ERPNexts eigene Bestandszahl
         # aus dem Auftrag (deckungsgleich mit Bin.actual_qty des Quelllagers), damit im
         # Board dieselbe Menge steht wie im Fertigungsauftrag selbst.
@@ -556,6 +610,7 @@ def _fetch_erpnext(config: dict) -> dict:
         "po_receipt_pairs": po_receipt_pairs,
         "work_orders": work_orders,
         "ekt_components": ekt_components,
+        "crm": crm,
         "purchase_receipts": purchase_receipts,
         "invoice_items": invoice_items,
         "invoice_items_year": invoice_items_year,

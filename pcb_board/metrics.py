@@ -822,6 +822,189 @@ def product_margins_year(data: dict, today: date, limit: int = 5) -> dict:
     return {"year": today.year, "prev_year": today.year - 1, "rows": rows}
 
 
+# Angebotsstatus in ERPNext, gruppiert nach Bedeutung fürs Board.
+QUOTE_WON = ("Ordered", "Partially Ordered")
+QUOTE_LOST = ("Lost",)
+QUOTE_EXPIRED = ("Expired",)
+QUOTE_OPEN = ("Open", "Replied")
+
+
+def crm_summary(data: dict, today: date, expiring_days: int = 14,
+                dormant_days: int = 180) -> dict:
+    """CRM-Überblick: Angebote (offen, nachzufassen, Trefferquote) und die
+    Kundenentwicklung aus den Rechnungsdaten, dazu Leads/Opportunities.
+
+    Storno-Belege (docstatus 2) sind schon im Abruf ausgeschlossen — bei
+    geänderten Angeboten (AN-1234 storniert, AN-1234-1 aktiv) würde sonst jedes
+    Angebot doppelt zählen.
+
+    Kundenentwicklung: das Datenfenster reicht vom Vorjahresanfang bis heute.
+    „Neu" heißt darum genau: Umsatz im laufenden Jahr, keiner im Vorjahr — das
+    umfasst auch reaktivierte Altkunden und ist im Board so benannt.
+    """
+    crm = data.get("crm") or {}
+    quotes = crm.get("quotations") or []
+
+    horizon = today + timedelta(days=expiring_days)
+    open_rows, draft_rows = [], []
+    for q in quotes:
+        d = _to_date(q.get("date"))
+        vt = _to_date(q.get("valid_till"))
+        row = {
+            "name": q.get("name"),
+            "customer": q.get("customer") or "",
+            "status": q.get("status"),
+            "date": d.isoformat() if d else None,
+            "valid_till": vt.isoformat() if vt else None,
+            "net_total": round(float(q.get("net_total") or 0), 2),
+            "age_days": (today - d).days if d else None,
+            "days_left": (vt - today).days if vt else None,
+            # abgelaufen laut Datum, aber im Status noch offen -> nachfassen
+            "overdue": bool(vt and vt < today),
+            "expiring": bool(vt and vt <= horizon),
+        }
+        if q.get("is_draft"):
+            draft_rows.append(row)
+        elif q.get("status") in QUOTE_OPEN:
+            open_rows.append(row)
+    # ohne Gültigkeitsdatum ans Ende: da ist nichts zu terminieren
+    open_rows.sort(key=lambda r: (r["valid_till"] is None, r["valid_till"] or "", r["name"] or ""))
+    draft_rows.sort(key=lambda r: (r["date"] is None, r["date"] or ""), reverse=True)
+    expiring = [r for r in open_rows if r["expiring"]]
+
+    by_customer: dict[str, dict] = {}
+    for r in open_rows:
+        e = by_customer.setdefault(r["customer"], {"customer": r["customer"], "count": 0, "net": 0.0})
+        e["count"] += 1
+        e["net"] += r["net_total"]
+    top_customers_q = sorted(by_customer.values(), key=lambda e: e["net"], reverse=True)[:5]
+    for e in top_customers_q:
+        e["net"] = round(e["net"], 2)
+
+    def conversion(year: int) -> dict:
+        won = lost = exp = still_open = 0
+        won_net = lost_net = exp_net = open_net = 0.0
+        for q in quotes:
+            d = _to_date(q.get("date"))
+            if not d or d.year != year or q.get("is_draft"):
+                continue
+            net = float(q.get("net_total") or 0)
+            st = q.get("status")
+            if st in QUOTE_WON:
+                won += 1
+                won_net += net
+            elif st in QUOTE_LOST:
+                lost += 1
+                lost_net += net
+            elif st in QUOTE_EXPIRED:
+                exp += 1
+                exp_net += net
+            elif st in QUOTE_OPEN:
+                still_open += 1
+                open_net += net
+        decided = won + lost + exp
+        decided_net = won_net + lost_net + exp_net
+        return {
+            "year": year,
+            "won": won, "won_net": round(won_net, 2),
+            "lost": lost, "lost_net": round(lost_net, 2),
+            "expired": exp, "expired_net": round(exp_net, 2),
+            "open": still_open, "open_net": round(open_net, 2),
+            "decided": decided,
+            # Trefferquote nur über ENTSCHIEDENE Angebote — noch offene sind
+            # weder gewonnen noch verloren und würden die Quote künstlich drücken.
+            "rate": round(won / decided, 4) if decided else None,
+            "rate_net": round(won_net / decided_net, 4) if decided_net > 0 else None,
+        }
+
+    # --- Kundenentwicklung aus den Rechnungen ------------------------------
+    per_customer: dict[str, dict] = {}
+    for inv in list(data.get("invoices") or []) + list(data.get("prev_year_invoices") or []):
+        d = _pdate(inv)
+        if not d or d > today:
+            continue
+        key = inv.get("customer_name") or inv.get("customer")
+        if not key:
+            continue
+        e = per_customer.setdefault(key, {
+            "customer": key, "first_date": d, "last_date": d,
+            "revenue_year": 0.0, "revenue_prev_year": 0.0,
+        })
+        e["first_date"] = min(e["first_date"], d)
+        e["last_date"] = max(e["last_date"], d)
+        amt = _net(inv)
+        if d.year == today.year:
+            e["revenue_year"] += amt
+        elif d.year == today.year - 1:
+            e["revenue_prev_year"] += amt
+
+    new_customers, dormant = [], []
+    for e in per_customer.values():
+        entry = {
+            "customer": e["customer"],
+            "first_date": e["first_date"].isoformat(),
+            "last_date": e["last_date"].isoformat(),
+            "days_since": (today - e["last_date"]).days,
+            "revenue_year": round(e["revenue_year"], 2),
+            "revenue_prev_year": round(e["revenue_prev_year"], 2),
+        }
+        if e["revenue_year"] > 0 and e["revenue_prev_year"] <= 0:
+            new_customers.append(entry)
+        # schlafend: war im Vorjahr echter Kunde, seit Monaten kein Umsatz mehr
+        if e["revenue_prev_year"] > 0 and entry["days_since"] > dormant_days:
+            dormant.append(entry)
+    new_customers.sort(key=lambda e: e["revenue_year"], reverse=True)
+    dormant.sort(key=lambda e: e["revenue_prev_year"], reverse=True)
+
+    leads = crm.get("leads") or []
+    lead_closed = ("Converted", "Do Not Contact", "Lost Quotation")
+    lead_status: dict[str, int] = {}
+    for row in leads:
+        st = row.get("status") or "?"
+        lead_status[st] = lead_status.get(st, 0) + 1
+    opps = crm.get("opportunities") or []
+    open_opps = [o for o in opps if (o.get("status") or "") == "Open"]
+
+    return {
+        "quotations": {
+            "open": open_rows,
+            "open_count": len(open_rows),
+            "open_net": round(sum(r["net_total"] for r in open_rows), 2),
+            "expiring": expiring,
+            "expiring_count": len(expiring),
+            "expiring_net": round(sum(r["net_total"] for r in expiring), 2),
+            "overdue_count": len([r for r in open_rows if r["overdue"]]),
+            "draft": draft_rows[:10],
+            "draft_count": len(draft_rows),
+            "draft_net": round(sum(r["net_total"] for r in draft_rows), 2),
+            "by_customer": top_customers_q,
+            "conversion": conversion(today.year),
+            "conversion_prev": conversion(today.year - 1),
+            "expiring_days": expiring_days,
+        },
+        "customers": {
+            "new": new_customers[:10],
+            "new_count": len(new_customers),
+            "dormant": dormant[:10],
+            "dormant_count": len(dormant),
+            "dormant_days": dormant_days,
+            "active_count": len([e for e in per_customer.values() if e["revenue_year"] > 0]),
+        },
+        "leads": {
+            "total": len(leads),
+            "open_count": len([r for r in leads if (r.get("status") or "") not in lead_closed]),
+            "by_status": sorted(lead_status.items()),
+            "recent": sorted(leads, key=lambda r: r.get("created") or "", reverse=True)[:5],
+        },
+        "opportunities": {
+            "total": len(opps),
+            "open_count": len(open_opps),
+            "open_amount": round(sum(float(o.get("amount") or 0) for o in open_opps), 2),
+            "rows": sorted(open_opps, key=lambda o: float(o.get("amount") or 0), reverse=True)[:5],
+        },
+    }
+
+
 def prev_year_month(data: dict, config: dict, today: date) -> dict:
     """Vorjahres-Kennzahlen (aus data["prev_year_invoices"], komplettes Vorjahr):
     Gesamtsumme des gleichen Monats, Summe bis zum gleichen Kalendertag (fairer
@@ -1139,6 +1322,7 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
         ), 2),
         "purchasing": purchasing,
         "todo": todo_orders(data, today, purchasing.get("work_orders")),
+        "crm": crm_summary(data, today),
         "profit_history": profit_history(data, config, today),
         "forecast": fc.to_dict(),
         "daily_series": daily_series,

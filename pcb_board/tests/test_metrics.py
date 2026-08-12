@@ -433,6 +433,135 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertEqual(p["expected_today"]["positions"], 0)
         self.assertIsNone(p["lead_times"]["overall_median_days"])
 
+    def _crm_data(self):
+        """Angebote in allen Zuständen, plus Kundenhistorie über zwei Jahre."""
+        data = self._data()
+        data["crm"] = {
+            "quotations": [
+                # offen, Frist schon vorbei -> nachfassen, rot
+                {"name": "AN-1", "customer": "Kunde A", "status": "Open", "is_draft": False,
+                 "date": "2026-06-01", "valid_till": "2026-07-01", "net_total": 5000},
+                # offen, läuft in 3 Tagen ab -> nachfassen
+                {"name": "AN-2", "customer": "Kunde B", "status": "Replied", "is_draft": False,
+                 "date": "2026-06-20", "valid_till": "2026-07-18", "net_total": 2000},
+                # offen, noch lange gültig
+                {"name": "AN-3", "customer": "Kunde A", "status": "Open", "is_draft": False,
+                 "date": "2026-07-10", "valid_till": "2026-09-30", "net_total": 8000},
+                # Entwurf: noch nicht beim Kunden
+                {"name": "AN-4", "customer": "Kunde C", "status": "Draft", "is_draft": True,
+                 "date": "2026-07-14", "valid_till": "2026-08-14", "net_total": 1000},
+                # entschieden 2026
+                {"name": "AN-5", "customer": "Kunde A", "status": "Ordered", "is_draft": False,
+                 "date": "2026-03-01", "valid_till": "2026-04-01", "net_total": 10000},
+                {"name": "AN-6", "customer": "Kunde B", "status": "Partially Ordered",
+                 "is_draft": False, "date": "2026-03-05", "valid_till": "2026-04-05",
+                 "net_total": 4000},
+                {"name": "AN-7", "customer": "Kunde D", "status": "Lost", "is_draft": False,
+                 "date": "2026-02-01", "valid_till": "2026-03-01", "net_total": 6000},
+                {"name": "AN-8", "customer": "Kunde D", "status": "Expired", "is_draft": False,
+                 "date": "2026-01-15", "valid_till": "2026-02-15", "net_total": 2000},
+                # Vorjahr: 1 gewonnen, 3 verloren -> Quote 25 %
+                {"name": "AN-V1", "customer": "Kunde A", "status": "Ordered", "is_draft": False,
+                 "date": "2025-05-01", "valid_till": "2025-06-01", "net_total": 3000},
+                {"name": "AN-V2", "customer": "Kunde A", "status": "Lost", "is_draft": False,
+                 "date": "2025-05-02", "valid_till": "2025-06-02", "net_total": 1000},
+                {"name": "AN-V3", "customer": "Kunde B", "status": "Lost", "is_draft": False,
+                 "date": "2025-05-03", "valid_till": "2025-06-03", "net_total": 1000},
+                {"name": "AN-V4", "customer": "Kunde B", "status": "Lost", "is_draft": False,
+                 "date": "2025-05-04", "valid_till": "2025-06-04", "net_total": 1000},
+            ],
+            "leads": [
+                {"name": "L-1", "lead_name": "Interessent 1", "status": "Lead", "created": "2026-07-01"},
+                {"name": "L-2", "lead_name": "Interessent 2", "status": "Converted", "created": "2026-06-01"},
+                {"name": "L-3", "lead_name": "Interessent 3", "status": "Lead", "created": "2026-05-01"},
+            ],
+            "opportunities": [
+                {"name": "OPP-1", "customer": "Kunde E", "status": "Open", "stage": "Prospecting",
+                 "date": "2026-06-24", "amount": 2000},
+                {"name": "OPP-2", "customer": "Kunde F", "status": "Converted",
+                 "stage": "Prospecting", "date": "2026-06-24", "amount": 500},
+            ],
+        }
+        # Kundenhistorie: Neu (nur 2026), schlafend (nur 2025), laufend (beide Jahre)
+        data["invoices"] = [
+            {"name": "RE-N", "customer_name": "Kunde Neu", "base_net_total": 4000,
+             "posting_date": "2026-05-10"},
+            {"name": "RE-L", "customer_name": "Kunde Laufend", "base_net_total": 9000,
+             "posting_date": "2026-07-01"},
+        ]
+        data["prev_year_invoices"] = [
+            {"name": "RE-S", "customer_name": "Kunde Schlaeft", "base_net_total": 20000,
+             "posting_date": "2025-06-01"},
+            {"name": "RE-L0", "customer_name": "Kunde Laufend", "base_net_total": 5000,
+             "posting_date": "2025-11-01"},
+        ]
+        return data
+
+    def test_crm_quotation_follow_up_and_open(self):
+        crm = m.build_metrics(self._crm_data(), CONFIG, date(2026, 7, 15))["crm"]
+        q = crm["quotations"]
+        # offen = eingereichte Angebote im Status Open/Replied, nach Frist sortiert
+        self.assertEqual([r["name"] for r in q["open"]], ["AN-1", "AN-2", "AN-3"])
+        self.assertAlmostEqual(q["open_net"], 15000, delta=0.01)
+        # Entwuerfe zaehlen separat, nicht als "beim Kunden"
+        self.assertEqual(q["draft_count"], 1)
+        self.assertAlmostEqual(q["draft_net"], 1000, delta=0.01)
+        # nachfassen: abgelaufen + laeuft in <= 14 Tagen ab
+        self.assertEqual([r["name"] for r in q["expiring"]], ["AN-1", "AN-2"])
+        self.assertEqual(q["overdue_count"], 1)
+        self.assertEqual(q["open"][0]["days_left"], -14)      # AN-1: 14 Tage drueber
+        self.assertTrue(q["open"][0]["overdue"])
+        self.assertEqual(q["open"][1]["days_left"], 3)        # AN-2
+        self.assertFalse(q["open"][2]["expiring"])            # AN-3 noch lange gueltig
+        self.assertEqual(q["open"][0]["age_days"], 44)
+
+    def test_crm_conversion_rate_only_counts_decided(self):
+        crm = m.build_metrics(self._crm_data(), CONFIG, date(2026, 7, 15))["crm"]
+        cur = crm["quotations"]["conversion"]
+        # 2026 entschieden: AN-5 + AN-6 gewonnen, AN-7 verloren, AN-8 abgelaufen
+        self.assertEqual((cur["won"], cur["lost"], cur["expired"], cur["decided"]), (2, 1, 1, 4))
+        self.assertAlmostEqual(cur["rate"], 0.5, delta=0.0001)
+        # Wertquote: 14000 von 22000
+        self.assertAlmostEqual(cur["rate_net"], 14000 / 22000, delta=0.0001)
+        # offene Angebote gehen NICHT in die Quote ein
+        self.assertEqual(cur["open"], 3)
+        prev = crm["quotations"]["conversion_prev"]
+        self.assertEqual((prev["year"], prev["won"], prev["lost"]), (2025, 1, 3))
+        self.assertAlmostEqual(prev["rate"], 0.25, delta=0.0001)
+
+    def test_crm_quotations_by_customer_share(self):
+        q = m.build_metrics(self._crm_data(), CONFIG, date(2026, 7, 15))["crm"]["quotations"]
+        top = q["by_customer"]
+        self.assertEqual(top[0]["customer"], "Kunde A")
+        self.assertAlmostEqual(top[0]["net"], 13000, delta=0.01)   # AN-1 + AN-3
+        self.assertEqual(top[0]["count"], 2)
+
+    def test_crm_customer_development(self):
+        c = m.build_metrics(self._crm_data(), CONFIG, date(2026, 7, 15))["crm"]["customers"]
+        self.assertEqual([r["customer"] for r in c["new"]], ["Kunde Neu"])
+        self.assertAlmostEqual(c["new"][0]["revenue_year"], 4000, delta=0.01)
+        # schlafend: Vorjahresumsatz, letzte Rechnung > 180 Tage her
+        self.assertEqual([r["customer"] for r in c["dormant"]], ["Kunde Schlaeft"])
+        self.assertAlmostEqual(c["dormant"][0]["revenue_prev_year"], 20000, delta=0.01)
+        self.assertEqual(c["dormant"][0]["days_since"], 409)
+        # laufender Kunde ist weder neu noch schlafend
+        self.assertEqual(c["active_count"], 2)
+
+    def test_crm_leads_and_opportunities(self):
+        crm = m.build_metrics(self._crm_data(), CONFIG, date(2026, 7, 15))["crm"]
+        self.assertEqual((crm["leads"]["total"], crm["leads"]["open_count"]), (3, 2))
+        self.assertEqual(dict(crm["leads"]["by_status"]), {"Lead": 2, "Converted": 1})
+        self.assertEqual(crm["opportunities"]["open_count"], 1)
+        self.assertAlmostEqual(crm["opportunities"]["open_amount"], 2000, delta=0.01)
+        self.assertEqual(crm["opportunities"]["rows"][0]["name"], "OPP-1")
+
+    def test_crm_empty_without_crm_data(self):
+        crm = m.build_metrics(self._data(), CONFIG, date(2026, 7, 15))["crm"]
+        self.assertEqual(crm["quotations"]["open_count"], 0)
+        self.assertIsNone(crm["quotations"]["conversion"]["rate"])
+        self.assertEqual(crm["leads"]["total"], 0)
+        self.assertEqual(crm["customers"]["dormant"], [])
+
     def _margin_data(self):
         """Vier Artikel mit EK: A gut, B knapp, C Verlust, D grosser Verlust.
         E ohne EK/Stückliste — nicht bewertbar."""

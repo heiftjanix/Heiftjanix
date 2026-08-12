@@ -1019,7 +1019,8 @@ PCBBoard.prototype.costsTabHtml = function (m) {
 	return '<section class="card"><div class="sec-h"><h2>Kosten</h2>' +
 		'<span class="muted">laufender Monat</span></div>' + tiles + '</section>' +
 		this.recentReceiptsHtml(m) + this.topPurchasesHtml(m) + this.topSuppliersHtml(m) +
-		this.productMarginsHtml(m) + this.profitHistoryHtml(m);
+		this.productMarginsHtml(m) + this.productFlopsHtml(m) +
+		this.productMarginsYearHtml(m) + this.profitHistoryHtml(m);
 };
 
 PCBBoard.prototype.topSuppliersHtml = function (m) {
@@ -1045,26 +1046,13 @@ PCBBoard.prototype.productMarginsHtml = function (m) {
 		return '';
 	}
 	var rows = items.map(function (p) {
-		var srcTag = p.cost_source === 'bom'
-			? ' <span class="muted" style="font-size:.75rem" title="Wareneinsatz aus Stücklistenwert (BOM)">SL</span>'
-			: (p.cost_source === 'ek'
-				? ' <span class="muted" style="font-size:.75rem" title="Wareneinsatz aus letztem Einkaufspreis">EK</span>'
-				: '');
-		var cost = p.cost == null ? '<span class="muted">—</span>' : self.eur(p.cost) + srcTag;
-		var margin, marginPct;
-		if (p.margin == null) {
-			margin = '<span class="muted">—</span>';
-			marginPct = '<span class="muted">kein EK/keine Stückliste</span>';
-		} else {
-			var col = p.margin >= 0 ? 'var(--good)' : 'var(--critical)';
-			margin = '<span style="color:' + col + ';font-weight:650">' + self.eur(p.margin) + '</span>';
-			marginPct = '<span style="color:' + col + '">' + self.pct(p.margin_pct) + '</span>';
-		}
-		return '<tr><td>' + self.esc(p.item_name || p.item_code) + '</td>' +
+		var c = self.dbCells(p);
+		return '<tr><td title="' + self.esc(p.item_name || '') + '">' +
+			self.esc(p.item_code || p.item_name) + '</td>' +
 			'<td class="num">' + self.eur(p.revenue) + '</td>' +
-			'<td class="num">' + cost + '</td>' +
-			'<td class="num">' + margin + '</td>' +
-			'<td class="num">' + marginPct + '</td></tr>';
+			'<td class="num">' + c.cost + '</td>' +
+			'<td class="num">' + c.margin + '</td>' +
+			'<td class="num">' + c.marginPct + '</td></tr>';
 	}).join('');
 	return '<section class="card"><figcaption>Deckungsbeitrag Top-Produkte (Monat)</figcaption>' +
 		'<table class="tbl"><thead><tr><th>Produkt</th><th class="num">Umsatz</th>' +
@@ -1073,6 +1061,103 @@ PCBBoard.prototype.productMarginsHtml = function (m) {
 		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Wareneinsatz = verkaufte Menge × ' +
 		'letzter Einkaufspreis (EK) des Artikels; ohne EK greift der Wert der aktiven ' +
 		'Standard-Stückliste je Einheit (SL). Fehlt beides, bleibt die Marge leer.</p></section>';
+};
+
+// Gemeinsame Zellen der DB-Tabellen: Wareneinsatz mit Quellen-Kürzel, DB farbig.
+PCBBoard.prototype.dbCells = function (p) {
+	var self = this;
+	var srcTag = p.cost_source === 'bom'
+		? ' <span class="muted" style="font-size:.75rem" title="Wareneinsatz aus Stücklistenwert (BOM)">SL</span>'
+		: (p.cost_source === 'ek'
+			? ' <span class="muted" style="font-size:.75rem" title="Wareneinsatz aus letztem Einkaufspreis">EK</span>'
+			: '');
+	var cost = p.cost == null ? '<span class="muted">—</span>' : self.eur(p.cost) + srcTag;
+	var margin, marginPct;
+	if (p.margin == null) {
+		margin = '<span class="muted">—</span>';
+		marginPct = '<span class="muted">kein EK/keine Stückliste</span>';
+	} else {
+		var col = p.margin >= 0 ? 'var(--good)' : 'var(--critical)';
+		margin = '<span style="color:' + col + ';font-weight:650">' + self.eur(p.margin) + '</span>';
+		marginPct = '<span style="color:' + col + '">' + self.pct(p.margin_pct) + '</span>';
+	}
+	return { cost: cost, margin: margin, marginPct: marginPct };
+};
+
+PCBBoard.prototype.productFlopsHtml = function (m) {
+	var self = this;
+	var items = m.product_flops || [];
+	if (!items.length) {
+		return '';
+	}
+	var rows = items.map(function (p, idx) {
+		var c = self.dbCells(p);
+		return '<tr' + (p.margin < 0 ? ' class="late"' : '') + '><td>' + (idx + 1) + '</td>' +
+			'<td title="' + self.esc(p.item_name || '') + '">' +
+			self.esc(p.item_code || p.item_name) + '</td>' +
+			'<td class="num">' + self.eur(p.revenue) + '</td>' +
+			'<td class="num">' + c.cost + '</td>' +
+			'<td class="num">' + c.margin + '</td>' +
+			'<td class="num">' + c.marginPct + '</td></tr>';
+	}).join('');
+	return '<section class="card"><figcaption>Flop 5 Produkte im ' + self.esc(this.monthLabel(m)) +
+		' nach Deckungsbeitrag <i class="muted" style="font-size:.78rem;font-weight:400">' +
+		'— schwächster Beitrag zuerst</i></figcaption>' +
+		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th><th class="num">Umsatz</th>' +
+		'<th class="num">Wareneinsatz</th><th class="num">DB</th><th class="num">DB %</th></tr></thead>' +
+		'<tbody>' + rows + '</tbody></table>' +
+		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Sortiert nach absolutem ' +
+		'Deckungsbeitrag: ein vierstelliger Verlust wiegt schwerer als ein Cent-Verlust am ' +
+		'Kleinteil. Produkte ohne EK und ohne Stückliste sind nicht bewertbar und bleiben außen vor.</p></section>';
+};
+
+PCBBoard.prototype.productMarginsYearHtml = function (m) {
+	var self = this;
+	var d = m.product_margins_year || {};
+	var items = d.rows || [];
+	if (!items.length) {
+		return '';
+	}
+	function deltaTag(v) {
+		if (v == null) {
+			return ' <span class="muted" style="font-size:.78rem">neu</span>';
+		}
+		var up = v >= 0;
+		return ' <span style="color:' + (up ? 'var(--good)' : 'var(--critical)') +
+			';font-weight:650;font-size:.8rem">' + (up ? '▲ +' : '▼ −') + self.eur(Math.abs(v)) + '</span>';
+	}
+	var rows = items.map(function (p, idx) {
+		var c = self.dbCells(p);
+		return '<tr><td>' + (idx + 1) + '</td>' +
+			'<td title="' + self.esc(p.item_name || '') + '">' +
+			self.esc(p.item_code || p.item_name) + '</td>' +
+			'<td class="num">' + self.eur(p.revenue) + '</td>' +
+			'<td class="num">' + c.cost + '</td>' +
+			'<td class="num">' + c.margin + '</td>' +
+			'<td class="num">' + c.marginPct + '</td>' +
+			'<td class="num">' + (p.prev_revenue == null
+				? '<span class="muted">—</span>' : self.eur(p.prev_revenue)) + '</td>' +
+			'<td class="num">' + (p.prev_margin == null
+				? '<span class="muted">—</span>'
+				: '<span style="color:' + (p.prev_margin >= 0 ? 'var(--good)' : 'var(--critical)') +
+					'">' + self.eur(p.prev_margin) + '</span>') + '</td>' +
+			'<td class="num">' + deltaTag(p.delta_margin) + '</td></tr>';
+	}).join('');
+	return '<section class="card"><figcaption>Top 5 Produkte ' + self.esc(String(d.year || '')) +
+		' nach Deckungsbeitrag — Jahresvergleich mit ' + self.esc(String(d.prev_year || '')) +
+		'</figcaption>' +
+		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th>' +
+		'<th class="num">Umsatz ' + self.esc(String(d.year || '')) + '</th>' +
+		'<th class="num">Wareneinsatz</th><th class="num">DB</th><th class="num">DB %</th>' +
+		'<th class="num">Umsatz ' + self.esc(String(d.prev_year || '')) + '</th>' +
+		'<th class="num">DB ' + self.esc(String(d.prev_year || '')) + '</th>' +
+		'<th class="num">DB-Veränderung</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Umsatz ' +
+		self.esc(String(d.year || '')) + ' = Jahresanfang bis heute, Vorjahr = komplettes Jahr. ' +
+		'Achtung bei der Auslegung: der Wareneinsatz beider Jahre ist mit den HEUTIGEN Stückkosten ' +
+		'gerechnet (letzter EK bzw. Stücklistenwert) — ERPNext führt den damaligen Einstandspreis ' +
+		'nicht am Rechnungsbeleg. Der Vergleich zeigt also die Entwicklung von Menge und ' +
+		'Verkaufspreis bei heutigen Kosten, nicht die damalige Einkaufslage.</p></section>';
 };
 
 PCBBoard.prototype.topPurchasesHtml = function (m) {

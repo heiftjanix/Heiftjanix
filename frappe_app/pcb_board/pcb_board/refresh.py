@@ -398,10 +398,46 @@ def _fetch_erpnext(config: dict) -> dict:
             ignore_permissions=True,
         )
 
+    # Deckungsbeitrag im Jahresvergleich: Rechnungspositionen je Artikel, schon in
+    # der Datenbank summiert (group_by) — Einzelzeilen wären für zwei komplette
+    # Jahre Zehntausende und würden den Cache-Eintrag aufblähen. item_name mit im
+    # group_by: doppelte Codes mit abweichendem Namen fasst metrics.py wieder
+    # zusammen, ONLY_FULL_GROUP_BY bleibt aber zufrieden.
+    def _items_per_item(names: list[str]) -> list[dict]:
+        if not names:
+            return []
+        return frappe.get_all(
+            "Sales Invoice Item",
+            filters=[["parent", "in", names]],
+            fields=["item_code", "item_name", "sum(base_net_amount) as net_total",
+                    "sum(qty) as qty"],
+            group_by="item_code, item_name",
+            limit_page_length=0,
+            ignore_permissions=True,
+        )
+
+    year_start = date(today.year, 1, 1).isoformat()
+    invoice_items_year = _items_per_item(
+        [i["name"] for i in invoices if str(i.get("posting_date") or "") >= year_start]
+    )
+    invoice_items_prev_year = _items_per_item([i["name"] for i in prev_year_invoices])
+
     # Deckungsbeitrag: letzter Einkaufspreis je verkauftem Artikel (Wareneinsatz-
     # Schätzung); für Eigenfertigung ohne Einkaufspreis dient der Wert der
     # aktiven Standard-Stückliste (BOM-Kosten je Einheit) als Fallback.
-    item_codes = sorted({r["item_code"] for r in invoice_items if r.get("item_code")})
+    # Neben den Monatsartikeln auch die umsatzstärksten Jahresartikel — gedeckelt,
+    # damit die Stammdatenabfrage nicht über Tausende Codes läuft. Der DB eines
+    # Artikels kann seinen Umsatz nicht übersteigen, die DB-Rangliste steckt also
+    # in der Umsatz-Rangliste.
+    def _top_codes(rows: list[dict], n: int = 100) -> list[str]:
+        ranked = sorted(rows, key=lambda r: float(r.get("net_total") or 0), reverse=True)
+        return [r["item_code"] for r in ranked[:n] if r.get("item_code")]
+
+    item_codes = sorted(
+        {r["item_code"] for r in invoice_items if r.get("item_code")}
+        | set(_top_codes(invoice_items_year))
+        | set(_top_codes(invoice_items_prev_year))
+    )
     item_purchase_rates = []
     item_bom_costs = []
     if item_codes:
@@ -471,6 +507,8 @@ def _fetch_erpnext(config: dict) -> dict:
         "ekt_components": ekt_components,
         "purchase_receipts": purchase_receipts,
         "invoice_items": invoice_items,
+        "invoice_items_year": invoice_items_year,
+        "invoice_items_prev_year": invoice_items_prev_year,
         "purchase_receipt_items": purchase_receipt_items,
         "item_purchase_rates": item_purchase_rates,
         "item_bom_costs": item_bom_costs,

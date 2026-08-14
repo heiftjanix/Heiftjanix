@@ -817,17 +817,25 @@ def attach_work_order_notes(view: dict) -> None:
     an die Produktionsaufträge der aktuellen Ansicht. Wird beim Lesen aufgerufen,
     nicht beim Refresh — eine Eingabe steht damit sofort im Board."""
     wos = ((view.get("purchasing") or {}).get("work_orders")) or []
+    # Auch die an den Kundenaufträgen hängenden Kopien versorgen — sonst fehlte die
+    # Sperr-Markierung ausgerechnet in der Liefertermin-Liste.
+    todo = view.get("todo") or {}
+    for group in ("overdue", "due_this_week"):
+        for so in todo.get(group) or []:
+            wos = wos + (so.get("work_orders") or [])
     if not wos:
         return
     rows = frappe.get_all(
         "PCB Board Work Order Note",
-        fields=["work_order", "revised_date", "remark", "updated_by"],
+        fields=["work_order", "revised_date", "remark", "updated_by", "on_hold", "on_hold_since"],
         limit_page_length=0,
         ignore_permissions=True,
     )
     by_wo = {r["work_order"]: r for r in rows}
     for wo in wos:
-        row = by_wo.get(wo.get("name"))
-        wo["note_date"] = str(row["revised_date"]) if (row and row.get("revised_date")) else None
-        wo["note_remark"] = (row or {}).get("remark")
-        wo["note_by"] = (row or {}).get("updated_by")
+        row = by_wo.get(wo.get("name")) or {}
+        wo["note_date"] = str(row["revised_date"]) if row.get("revised_date") else None
+        wo["note_remark"] = row.get("remark")
+        wo["note_by"] = row.get("updated_by")
+        wo["on_hold"] = bool(row.get("on_hold"))
+        wo["on_hold_since"] = str(row["on_hold_since"]) if row.get("on_hold_since") else None

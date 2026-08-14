@@ -168,6 +168,49 @@ class TestMailSyncStatus(unittest.TestCase):
                          "Status muss dem neuen Stand folgen, sonst lädt das Board endlos neu")
 
 
+class TestWorkOrderNotes(unittest.TestCase):
+    """Notizen und die Sperre werden beim LESEN angehängt — und müssen in beiden
+    Listen ankommen: Produktionsübersicht und den Kopien an den Kundenaufträgen."""
+
+    def _attach(self, view, note_rows):
+        def get_all(doctype, **kwargs):
+            return note_rows if doctype == "PCB Board Work Order Note" else []
+
+        _install_frappe_stub(get_all)
+        for mod in [m for m in sys.modules if m.startswith("pcb_board")]:
+            del sys.modules[mod]
+        from pcb_board import refresh
+        refresh.attach_work_order_notes(view)
+        return view
+
+    def test_hold_and_note_reach_both_lists(self):
+        view = {
+            "purchasing": {"work_orders": [{"name": "FA-1"}, {"name": "FA-2"}]},
+            "todo": {
+                "overdue": [{"name": "AB-1", "work_orders": [{"name": "FA-1"}]}],
+                "due_this_week": [{"name": "AB-2", "work_orders": [{"name": "FA-2"}]}],
+            },
+        }
+        self._attach(view, [{"work_order": "FA-1", "revised_date": "2026-08-20",
+                             "remark": "Kunde informiert", "updated_by": "u@x",
+                             "on_hold": 1, "on_hold_since": "2026-07-10"}])
+        prod = {w["name"]: w for w in view["purchasing"]["work_orders"]}
+        self.assertTrue(prod["FA-1"]["on_hold"])
+        self.assertEqual(prod["FA-1"]["on_hold_since"], "2026-07-10")
+        self.assertEqual(prod["FA-1"]["note_date"], "2026-08-20")
+        self.assertEqual(prod["FA-1"]["note_remark"], "Kunde informiert")
+        self.assertFalse(prod["FA-2"]["on_hold"])
+        self.assertIsNone(prod["FA-2"]["note_date"])
+        # dieselbe Sperre muss auch an der Liefertermin-Liste haengen
+        self.assertTrue(view["todo"]["overdue"][0]["work_orders"][0]["on_hold"])
+        self.assertFalse(view["todo"]["due_this_week"][0]["work_orders"][0]["on_hold"])
+
+    def test_attach_without_work_orders_is_noop(self):
+        view = {"purchasing": {"work_orders": []}}
+        self._attach(view, [{"work_order": "FA-1", "on_hold": 1}])
+        self.assertEqual(view["purchasing"]["work_orders"], [])
+
+
 class TestFetchFeedsMetrics(TestFetchErpnext):
     """Der Abruf muss genau das liefern, was build_metrics erwartet — der Bruch
     zwischen beiden ist auf der Instanz erst als leeres Board aufgefallen."""

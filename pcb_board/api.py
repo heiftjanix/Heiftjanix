@@ -143,6 +143,45 @@ def set_work_order_note(work_order: str, revised_date: str | None = None,
 
 
 @frappe.whitelist()
+def set_work_order_hold(work_order: str, on_hold: int | str = 1):
+    """Produktionsauftrag im Board als „zur Bearbeitung gesperrt" markieren bzw.
+    wieder freigeben. Rein informativ: der ERPNext-Beleg bleibt unberührt (Regel
+    „nur Vorschläge"), gesperrt wird also die Sicht des Teams, nicht der Auftrag
+    selbst. Eine vorhandene Bemerkung bleibt beim Freigeben erhalten."""
+    work_order = (work_order or "").strip()
+    if not work_order:
+        frappe.throw("work_order ist erforderlich.")
+    hold = str(on_hold).strip().lower() not in ("0", "false", "", "none")
+    exists = frappe.db.exists("PCB Board Work Order Note", work_order)
+    if not hold and not exists:
+        return {"ok": True, "work_order": work_order, "on_hold": False, "on_hold_since": None}
+    if exists:
+        doc = frappe.get_doc("PCB Board Work Order Note", work_order)
+    else:
+        doc = frappe.new_doc("PCB Board Work Order Note")
+        doc.work_order = work_order
+    doc.on_hold = 1 if hold else 0
+    # „seit wann" nicht bei jedem Klick neu setzen — sonst verliert man beim
+    # zweimaligen Drücken die eigentliche Sperrdauer.
+    if hold:
+        doc.on_hold_since = doc.on_hold_since or frappe.utils.today()
+    else:
+        doc.on_hold_since = None
+    doc.updated_by = frappe.session.user
+    doc.save(ignore_permissions=True)
+    # Freigegeben und sonst nichts gepflegt: Notiz wieder wegräumen.
+    if not hold and not doc.revised_date and not (doc.remark or "").strip():
+        frappe.delete_doc("PCB Board Work Order Note", work_order, ignore_permissions=True)
+    frappe.db.commit()
+    return {
+        "ok": True,
+        "work_order": work_order,
+        "on_hold": hold,
+        "on_hold_since": str(doc.on_hold_since) if hold and doc.on_hold_since else None,
+    }
+
+
+@frappe.whitelist()
 def get_refresh_status():
     return rf.get_status()
 

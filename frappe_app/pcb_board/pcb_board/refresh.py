@@ -104,6 +104,12 @@ def scheduled_mail_sync() -> None:
         computed["mail"] = m.mail_summary({"window_hours": config["mail_lookback_hours"], "items": mail_items})
         computed["generated_at"] = frappe.utils.now()
         frappe.cache().set_value(METRICS_KEY, computed)
+        # Status MUSS mitwandern: das Board vergleicht den Zeitstempel im Status
+        # mit dem seines geladenen Stands und lädt bei Abweichung neu. Ohne diese
+        # Zeile blieben beide dauerhaft verschieden — das Board hätte sich nach
+        # dem ersten Mail-Sync im 4-Sekunden-Takt selbst neu gezeichnet (und dabei
+        # laufend den Fokus aus Such- und Eingabefeldern geworfen).
+        _set_status(generated_at=computed["generated_at"])
     except Exception:  # noqa: BLE001 — still fehlschlagen, alter Stand bleibt einfach stehen
         frappe.log_error(title="PCB Board Mail-Sync fehlgeschlagen", message=frappe.get_traceback())
 

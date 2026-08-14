@@ -470,9 +470,12 @@ PCBBoard.prototype.soWorkOrdersCell = function (r) {
 			return (a.supplier || a.po) + (a.expected_date
 				? ' bis ' + frappe.datetime.str_to_user(a.expected_date) : '');
 		}).join(', ');
-		var title = (w.item_code ? w.item_code + ' · ' : '') + st.text +
+		var title = (w.item_code ? w.item_code + ' · ' : '') +
+			(w.on_hold ? 'Bearbeitung gesperrt · ' : '') + st.text +
 			(waiting ? ' — warten auf: ' + waiting : '');
-		return '<span class="wo-chip" title="' + self.esc(title) + '">' + self.woLink(w.name) +
+		return '<span class="wo-chip' + (w.on_hold ? ' held' : '') + '" title="' +
+			self.esc(title) + '">' + self.woLink(w.name) +
+			(w.on_hold ? ' <span title="Bearbeitung gesperrt">⏸</span>' : '') +
 			' <span style="color:' + st.color + '">' + st.icon + '</span></span>';
 	}).join(' ') + '</span>';
 };
@@ -754,7 +757,8 @@ PCBBoard.prototype.deliveryDatesHtml = function (m) {
 		'<div class="m">' + week.length + ' Auftrag/Aufträge · sollten diese Woche fertig werden</div></div>' +
 		'</div>';
 
-	return '<section class="card"><div class="sec-h"><h2>📅 Liefertermine: diese Woche oder überfällig</h2>' +
+	return '<section class="card" id="pcb-delivery-dates"><div class="sec-h">' +
+		'<h2>📅 Liefertermine: diese Woche oder überfällig</h2>' +
 		'<span class="muted">Handelsware & Aufträge nicht übersehen</span></div>' +
 		reliability + table + '</section>';
 };
@@ -992,6 +996,7 @@ PCBBoard.PROD_COLS = [
 	{ key: 'qty', label: 'Menge', cls: 'num' },
 	{ key: 'status', label: 'Status' },
 	{ key: 'customer_due_date', label: 'Wunschtermin Kunde' },
+	{ key: 'hold', label: 'Bearbeitung' },
 	{ key: 'sales_order', label: 'Kundenauftrag' },
 	{ key: 'material', label: 'Material' },
 	{ key: 'awaiting', label: 'Warten auf (Item-Code / Lieferant / Bestellung / erwartet)', nosort: true },
@@ -1005,6 +1010,7 @@ PCBBoard.prototype.prodSortValue = function (w, key) {
 		case 'item': return String(w.production_item || w.item_name || '').toLowerCase();
 		case 'qty': return Number(w.qty || 0);
 		case 'material': return (w.missing_items || []).length ? 0 : (w.material_ok ? 2 : 1);
+		case 'hold': return w.on_hold ? 0 : 1;
 		case 'note': return String(w.note_date || w.note_remark || '').toLowerCase();
 		case 'customer_due_date': return w.customer_due_date || '9999-12-31';
 		default: return String(w[key] == null ? '' : w[key]).toLowerCase();
@@ -1026,6 +1032,21 @@ PCBBoard.prototype.ektTag = function (it) {
 		'" target="_blank" title="' + this.esc(title) + '">' + this.esc(it.ekt) + '</a>';
 };
 
+// Schalter „Bearbeitung gesperrt": markiert den Auftrag nur im Board (der
+// ERPNext-Beleg bleibt unberührt), damit alle sehen, dass hier gerade nichts geht.
+PCBBoard.prototype.holdCell = function (w) {
+	if (w.on_hold) {
+		var since = w.on_hold_since
+			? ' seit ' + frappe.datetime.str_to_user(w.on_hold_since) : '';
+		return '<button class="hold-btn on" type="button" data-wo="' + this.esc(w.name) +
+			'" data-hold="0" title="Sperre aufheben — der Auftrag ist wieder in Bearbeitung">' +
+			'⏸ gesperrt' + this.esc(since) + '</button>';
+	}
+	return '<button class="hold-btn" type="button" data-wo="' + this.esc(w.name) +
+		'" data-hold="1" title="Als aktuell zur Bearbeitung gesperrt markieren">' +
+		'On Hold</button>';
+};
+
 PCBBoard.prototype.prodRows = function (m) {
 	var self = this;
 	var rows = (((m || this.metrics || {}).purchasing || {}).work_orders || []).slice();
@@ -1033,11 +1054,13 @@ PCBBoard.prototype.prodRows = function (m) {
 	var q = (this._woQuery || '').toLowerCase();
 	rows = rows.filter(function (w) {
 		var missing = (w.missing_items || []).length;
+		if (f === 'held' && !w.on_hold) return false;
 		if (f === 'missing' && !missing) return false;
 		if (f === 'incoming' && (missing || w.material_ok)) return false;
 		if (f === 'ok' && !w.material_ok) return false;
 		if (!q) return true;
-		var hay = [w.name, w.production_item, w.item_name, w.sales_order, w.status, w.note_remark]
+		var hay = [w.name, w.production_item, w.item_name, w.sales_order, w.status, w.note_remark,
+			(w.on_hold ? 'gesperrt on hold' : '')]
 			.concat((w.awaiting || []).map(function (a) {
 				return [a.supplier, a.po].concat((a.items || []).map(function (i) { return i.item_code; })).join(' ');
 			}))
@@ -1115,7 +1138,10 @@ PCBBoard.prototype.prodTableHtml = function (m) {
 		if (w.note_remark) {
 			note += (note ? ' ' : '') + '<span class="note-txt">' + self.esc(w.note_remark) + '</span>';
 		}
-		return '<tr' + ((w.missing_items || []).length ? ' class="late"' : '') + '>' +
+		// Gesperrte Aufträge treten optisch zurück; die rote Materialwarnung soll
+		// bei ihnen nicht mehr um Aufmerksamkeit buhlen.
+		var rowCls = w.on_hold ? ' class="held"' : ((w.missing_items || []).length ? ' class="late"' : '');
+		return '<tr' + rowCls + '>' +
 			'<td>' + self.woLink(w.name) + '</td>' +
 			'<td title="' + self.esc(w.item_name || '') + '">' +
 			self.esc(w.production_item || w.item_name || '') + '</td>' +
@@ -1124,6 +1150,7 @@ PCBBoard.prototype.prodTableHtml = function (m) {
 			'<td>' + (w.customer_due_date
 				? self.esc(frappe.datetime.str_to_user(w.customer_due_date))
 				: '<span class="muted" title="Kein Liefertermin an der AB hinterlegt">—</span>') + '</td>' +
+			'<td class="hold-cell">' + self.holdCell(w) + '</td>' +
 			'<td>' + (w.sales_order
 				? '<a href="/app/sales-order/' + encodeURIComponent(w.sales_order) + '" target="_blank">' +
 					self.esc(w.sales_order) + '</a>'
@@ -1152,6 +1179,7 @@ PCBBoard.prototype.productionOrdersHtml = function (m) {
 	var ok = all.filter(function (w) { return w.material_ok; }).length;
 	var missing = all.filter(function (w) { return (w.missing_items || []).length; }).length;
 	var incoming = all.length - ok - missing;
+	var held = all.filter(function (w) { return w.on_hold; }).length;
 	var f = this._woFilter || 'all';
 	function chip(key, label) {
 		return '<button class="chip' + (f === key ? ' active' : '') + '" data-wof="' + key + '">' +
@@ -1163,6 +1191,7 @@ PCBBoard.prototype.productionOrdersHtml = function (m) {
 		chip('missing', '⛔ nicht bestellt <span class="chip-n">' + missing + '</span>') +
 		chip('incoming', '🚚 im Zulauf <span class="chip-n">' + incoming + '</span>') +
 		chip('ok', '✅ vollständig <span class="chip-n">' + ok + '</span>') +
+		(held ? chip('held', '⏸ gesperrt <span class="chip-n">' + held + '</span>') : '') +
 		'</div><input type="search" id="pcb-wo-search" placeholder="Suche: Auftrag, Item-Code, Lieferant, AB, Bemerkung …" ' +
 		'value="' + this.esc(this._woQuery || '') + '"></div>';
 
@@ -1196,6 +1225,47 @@ PCBBoard.prototype.bindProdTable = function () {
 	});
 	root.find('.note-btn').on('click', function () {
 		self.openWorkOrderNote($(this).data('wo'));
+	});
+	root.find('.hold-btn').on('click', function () {
+		self.toggleWorkOrderHold($(this).data('wo'), $(this).data('hold') ? 1 : 0);
+	});
+};
+
+PCBBoard.prototype.toggleWorkOrderHold = function (woName, hold) {
+	var self = this;
+	frappe.call({
+		method: 'pcb_board.api.set_work_order_hold',
+		type: 'POST',
+		args: { work_order: woName, on_hold: hold },
+	}).then(function (r) {
+		var res = (r && r.message) || {};
+		// Alle Kopien des Auftrags mitziehen (Produktionsliste UND Liefertermine),
+		// damit die Markierung ohne Neuladen überall stimmt.
+		self.eachWorkOrder(woName, function (w) {
+			w.on_hold = !!res.on_hold;
+			w.on_hold_since = res.on_hold_since || null;
+		});
+		self.toast(res.on_hold ? 'Auftrag gesperrt ⏸' : 'Sperre aufgehoben ▶');
+		self.renderProdTable();
+		// Liefertermin-Karte mitziehen: dort steht derselbe Auftrag als Kürzel.
+		self.$root.find('#pcb-delivery-dates').replaceWith(self.deliveryDatesHtml(self.metrics));
+	});
+};
+
+// Ein Produktionsauftrag steckt in mehreren Listen (Produktionsübersicht und je
+// Kundenauftrag) — Änderungen müssen überall ankommen.
+PCBBoard.prototype.eachWorkOrder = function (name, fn) {
+	var m = this.metrics || {};
+	((m.purchasing || {}).work_orders || []).forEach(function (w) {
+		if (w.name === name) fn(w);
+	});
+	var todo = m.todo || {};
+	['overdue', 'due_this_week'].forEach(function (g) {
+		(todo[g] || []).forEach(function (so) {
+			(so.work_orders || []).forEach(function (w) {
+				if (w.name === name) fn(w);
+			});
+		});
 	});
 };
 
@@ -2256,6 +2326,16 @@ var PCB_BOARD_CSS =
 	'border-radius:8px;padding:3px 8px;font-size:.8rem;cursor:pointer;text-align:left;max-width:220px}' +
 	'.note-btn:hover{border-color:var(--brand-teal);border-style:solid}' +
 	'.ekt-link{font-weight:650;white-space:nowrap}' +
+	'.hold-btn{border:1px solid var(--border);background:var(--surface-1);color:var(--text-secondary);' +
+	'border-radius:999px;padding:3px 10px;font-size:.76rem;font-weight:650;cursor:pointer;white-space:nowrap}' +
+	'.hold-btn:hover{border-color:var(--warning);color:var(--warning)}' +
+	'.hold-btn.on{background:var(--warning);border-color:transparent;color:#3a2c00}' +
+	'.hold-btn.on:hover{filter:brightness(1.06);color:#3a2c00}' +
+	// Gesperrte Zeilen treten zurueck, bleiben aber lesbar — sie sind nicht
+	// erledigt, nur gerade nicht dran.
+	'.tbl tr.held{background:color-mix(in srgb,var(--warning) 10%,transparent)}' +
+	'.tbl tr.held td:not(.hold-cell){opacity:.62}' +
+	'.wo-chip.held{border-color:var(--warning);border-style:dashed}' +
 	'.note-date{font-weight:650;color:var(--brand-teal);white-space:nowrap}' +
 	'.note-txt{display:block;color:var(--text-secondary);font-size:.78rem;white-space:normal}' +
 	'.pcb-root .muted{color:var(--muted)}.pcb-root .foot{color:var(--muted);font-size:.78rem;margin-top:18px}' +

@@ -28,6 +28,18 @@
       "label": "Korrigierter Liefertermin"
     },
     {
+      "fieldname": "on_hold",
+      "fieldtype": "Check",
+      "default": "0",
+      "label": "Bearbeitung gesperrt"
+    },
+    {
+      "fieldname": "on_hold_since",
+      "fieldtype": "Date",
+      "label": "Gesperrt seit",
+      "read_only": 1
+    },
+    {
       "fieldname": "column_break_note_1",
       "fieldtype": "Column Break"
     },

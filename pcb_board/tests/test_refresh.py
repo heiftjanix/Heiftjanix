@@ -136,6 +136,38 @@ class TestFetchErpnext(unittest.TestCase):
         self.assertTrue(any("übersprungen" in t for t in frappe.logged))
 
 
+class TestMailSyncStatus(unittest.TestCase):
+    """Der Mail-Sync muss den Zeitstempel im Status mitziehen.
+
+    Sonst weichen Status und gecachte Kennzahlen dauerhaft voneinander ab, das
+    Board hält seinen Stand für veraltet und lädt sich im Poll-Takt (4 s) endlos
+    neu — was im Betrieb den Fokus aus jedem Eingabefeld geworfen hat.
+    """
+
+    def test_mail_sync_keeps_status_and_metrics_in_sync(self):
+        store = {"pcb_board_status": {"state": "idle", "generated_at": "2026-08-12 09:00:00"},
+                 "pcb_board_metrics": {"generated_at": "2026-08-12 09:00:00", "mail": {}}}
+        frappe = _install_frappe_stub(lambda *a, **k: [])
+        frappe.cache = lambda: types.SimpleNamespace(
+            get_value=lambda k: store.get(k),
+            set_value=lambda k, v: store.__setitem__(k, v),
+        )
+        frappe.utils = types.SimpleNamespace(now=lambda: "2026-08-12 09:05:00",
+                                             get_fullname=lambda u: u)
+        for mod in [m for m in sys.modules if m.startswith("pcb_board")]:
+            del sys.modules[mod]
+        from pcb_board import refresh
+
+        refresh._settings = lambda: {"mail_lookback_hours": 24, "anthropic_model": "x",
+                                     "extra_mailboxes": []}
+        refresh._fetch_mail = lambda config, key: []
+        refresh.scheduled_mail_sync()
+
+        self.assertEqual(store["pcb_board_metrics"]["generated_at"], "2026-08-12 09:05:00")
+        self.assertEqual(store["pcb_board_status"]["generated_at"], "2026-08-12 09:05:00",
+                         "Status muss dem neuen Stand folgen, sonst lädt das Board endlos neu")
+
+
 class TestFetchFeedsMetrics(TestFetchErpnext):
     """Der Abruf muss genau das liefern, was build_metrics erwartet — der Bruch
     zwischen beiden ist auf der Instanz erst als leeres Board aufgefallen."""

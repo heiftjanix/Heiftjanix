@@ -20,6 +20,7 @@ function PCBBoard(page) {
 	this.selMb = 'all';
 	this.selCat = 'all';
 	this.q = '';
+	this.qRaw = '';
 	this.metrics = null;
 	this._openMids = {};
 	this._openPos = {};
@@ -374,6 +375,10 @@ PCBBoard.prototype.disconnectOutlook = function () {
 
 PCBBoard.prototype.renderAll = function () {
 	var m = this.metrics;
+	// Ein Hintergrund-Refresh baut die Reiter neu auf. Wer gerade in einem Suchfeld
+	// tippt, verlöre dabei Fokus und Cursorposition — beides wird deshalb über den
+	// Neuaufbau hinweg gemerkt und danach wiederhergestellt.
+	var keep = this.captureFocus();
 	var stand = m.generated_at ? frappe.datetime.str_to_user(m.generated_at) : '—';
 	var duration = m.refresh_seconds ? ' (' + m.refresh_seconds + ' s)' : '';
 	var next = ' · nächster Refresh in ' + this.nextRefreshIn();
@@ -384,6 +389,36 @@ PCBBoard.prototype.renderAll = function () {
 	this.$root.find('#pcb-tab-crm').html(this.crmTabHtml(m));
 	this.bindMailInteractions();
 	this.bindMaterialInteractions();
+	this.restoreFocus(keep);
+};
+
+// Fokus + Cursorposition eines Eingabefeldes merken bzw. zurücksetzen.
+PCBBoard.prototype.captureFocus = function () {
+	var el = document.activeElement;
+	if (!el || !el.id || !this.$root.find('#' + el.id).length) {
+		return null;
+	}
+	return { id: el.id, start: el.selectionStart, end: el.selectionEnd };
+};
+
+PCBBoard.prototype.restoreFocus = function (keep) {
+	if (!keep) {
+		return;
+	}
+	var el = document.getElementById(keep.id);
+	if (!el) {
+		return;
+	}
+	el.focus();
+	if (keep.start != null && el.setSelectionRange) {
+		// Manche Feldtypen (u. a. type="search" in Safari) verweigern
+		// setSelectionRange — der Fokus allein ist dann schon der Gewinn.
+		try {
+			el.setSelectionRange(keep.start, keep.end);
+		} catch (e) {
+			/* egal */
+		}
+	}
 };
 
 // Materialwirtschaft = frühere Tabs „ToDo" (Liefertermine) + „Abrechnung"
@@ -1493,10 +1528,15 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 	});
 	function mbColor(name) { return self2._mbColors[name] || 'var(--brand-teal)'; }
 
-	var chips = '<button class="chip active" data-mb="all">Alle</button>';
+	// Auswahl aus dem Instanzzustand zeichnen, nicht fest auf „Alle": nach einem
+	// Hintergrund-Refresh filterte das Board sonst weiter nach einem Postfach,
+	// während oben „Alle" markiert war.
+	var chips = '<button class="chip' + (self.selMb === 'all' ? ' active' : '') +
+		'" data-mb="all">Alle</button>';
 	boxes.forEach(function (b) {
 		var col = mbColor(b.name);
-		chips += '<button class="chip" data-mb="' + self.esc(b.name) + '" ' +
+		chips += '<button class="chip' + (self.selMb === b.name ? ' active' : '') +
+			'" data-mb="' + self.esc(b.name) + '" ' +
 			'style="border-left:4px solid ' + col + '">' +
 			self.esc(self.shortBox(b.name)) + ' <span class="chip-n">' + b.total + '</span></button>';
 	});
@@ -1509,13 +1549,16 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 		'<div class="b"><div class="v" data-count="high" style="color:var(--critical)">' + (mail.high_priority || 0) + '</div><div class="k">Dringend</div></div>' +
 		'</div>';
 
+	function catBtn(key, label) {
+		return '<button class="' + (self.selCat === key ? 'active' : '') + '" data-cat="' + key +
+			'">' + label + '</button>';
+	}
 	var controls =
 		'<div class="mailctl"><div class="segbtns" id="pcb-cat-filter">' +
-		'<button class="active" data-cat="all">Alle</button>' +
-		'<button data-cat="relevant">Zu beantworten</button>' +
-		'<button data-cat="high">Dringend</button>' +
-		'<button data-cat="info">Info</button>' +
-		'</div><input type="search" id="pcb-mail-search" placeholder="Suche: Absender, Betreff …"></div>';
+		catBtn('all', 'Alle') + catBtn('relevant', 'Zu beantworten') +
+		catBtn('high', 'Dringend') + catBtn('info', 'Info') +
+		'</div><input type="search" id="pcb-mail-search" placeholder="Suche: Absender, Betreff …" ' +
+		'value="' + self.esc(self.qRaw || '') + '"></div>';
 
 	this._mailByMid = {};
 	var cards = items.map(function (i) {
@@ -1651,7 +1694,10 @@ PCBBoard.prototype.bindMailInteractions = function () {
 		applyFilter();
 	});
 	root.find('#pcb-mail-search').on('input', function () {
-		self.q = $(this).val().toLowerCase().trim();
+		// qRaw = was der Nutzer sieht, q = normalisierter Suchschlüssel. Getrennt,
+		// damit ein Neuaufbau die Eingabe nicht kleingeschrieben zurückschreibt.
+		self.qRaw = $(this).val();
+		self.q = self.qRaw.toLowerCase().trim();
 		applyFilter();
 	});
 	root.find('.mailcard.has-draft .mc-head').on('click', function () {

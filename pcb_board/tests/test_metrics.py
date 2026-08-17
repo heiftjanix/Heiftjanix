@@ -787,6 +787,95 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertEqual(link["still_missing"], 1)                 # -> ⌛
         self.assertIsNone(p["work_orders"][0]["complete_on"])
 
+    def _bin_data(self, bins, required, wh="Lager - PCB"):
+        data = self._data()
+        data["po_receipt_pairs"] = []
+        data["open_purchase_orders"] = []
+        data["stock_bins"] = bins
+        data["work_orders"] = [{
+            "name": "FA-1", "item_name": "Baugruppe", "qty": 1, "status": "Not Started",
+            "planned_start_date": "2026-07-20", "required_items": required,
+        }]
+        return data
+
+    def test_stock_comes_from_bin_not_from_stale_work_order_snapshot(self):
+        """Regression: available_qty_at_source_warehouse am Fertigungsauftrag ist nur
+        ein Schnappschuss vom letzten Speichern. Ein danach gebuchter Wareneingang
+        stand dort nie drin — das Board hielt gelieferte Artikel für fehlend."""
+        data = self._bin_data(
+            bins=[{"item_code": "R.1215", "warehouse": "Lager - PCB", "actual_qty": 100}],
+            required=[{"item_code": "R.1215", "item_name": "Widerstand", "required_qty": 20,
+                       "transferred_qty": 0,
+                       # veralteter Schnappschuss aus dem Auftrag
+                       "available_qty": 0, "source_warehouse": "Lager - PCB"}],
+        )
+        wo = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"][0]
+        pos = wo["positions"][0]
+        self.assertEqual(pos["state"], "stock")
+        self.assertEqual(pos["from_stock"], 20)
+        self.assertEqual(pos["short_qty"], 0)
+        self.assertTrue(wo["material_ok"])
+        self.assertAlmostEqual(wo["ready_pct"], 1.0, delta=0.0001)
+        self.assertEqual(wo["missing_items"], [])
+
+    def test_stock_counts_only_the_source_warehouse(self):
+        """Bestand in einem anderen Lager deckt die Position nicht."""
+        data = self._bin_data(
+            bins=[{"item_code": "R.1215", "warehouse": "Anderes Lager", "actual_qty": 100}],
+            required=[{"item_code": "R.1215", "item_name": "Widerstand", "required_qty": 20,
+                       "transferred_qty": 0, "available_qty": 0,
+                       "source_warehouse": "Lager - PCB"}],
+        )
+        pos = m.build_metrics(data, CONFIG, date(2026, 7, 15))[
+            "purchasing"]["work_orders"][0]["positions"][0]
+        self.assertEqual(pos["state"], "missing")
+        self.assertEqual(pos["short_qty"], 20)
+
+    def test_stock_without_source_warehouse_uses_all_warehouses(self):
+        data = self._bin_data(
+            bins=[{"item_code": "R.1215", "warehouse": "Lager A", "actual_qty": 8},
+                  {"item_code": "R.1215", "warehouse": "Lager B", "actual_qty": 12}],
+            required=[{"item_code": "R.1215", "item_name": "Widerstand", "required_qty": 20,
+                       "transferred_qty": 0, "available_qty": 0, "source_warehouse": None}],
+        )
+        pos = m.build_metrics(data, CONFIG, date(2026, 7, 15))[
+            "purchasing"]["work_orders"][0]["positions"][0]
+        self.assertEqual(pos["state"], "stock")
+        self.assertEqual(pos["from_stock"], 20)
+
+    def test_bin_stock_is_shared_between_work_orders(self):
+        """Der Live-Bestand darf nicht zweimal verplant werden: der frühere Bedarf
+        bekommt ihn, der spätere bleibt offen."""
+        data = self._bin_data(
+            bins=[{"item_code": "R.1215", "warehouse": "Lager - PCB", "actual_qty": 10}],
+            required=[],
+        )
+        common = {"item_name": "Baugruppe", "qty": 1, "status": "Not Started",
+                  "required_items": [{"item_code": "R.1215", "item_name": "Widerstand",
+                                      "required_qty": 10, "transferred_qty": 0,
+                                      "available_qty": 0,
+                                      "source_warehouse": "Lager - PCB"}]}
+        data["work_orders"] = [dict(common, name="FA-FRUEH", planned_start_date="2026-07-21"),
+                               dict(common, name="FA-SPAET", planned_start_date="2026-07-28")]
+        wos = {w["name"]: w for w in
+               m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"]}
+        self.assertEqual(wos["FA-FRUEH"]["positions"][0]["state"], "stock")
+        self.assertEqual(wos["FA-SPAET"]["positions"][0]["state"], "missing")
+
+    def test_without_bin_data_snapshot_is_used_as_fallback(self):
+        """Fällt die Bin-Abfrage aus, rechnet das Board mit dem Auftragswert weiter,
+        statt alles als fehlend zu melden."""
+        data = self._bin_data(
+            bins=[],
+            required=[{"item_code": "R.1215", "item_name": "Widerstand", "required_qty": 20,
+                       "transferred_qty": 0, "available_qty": 50,
+                       "source_warehouse": "Lager - PCB"}],
+        )
+        pos = m.build_metrics(data, CONFIG, date(2026, 7, 15))[
+            "purchasing"]["work_orders"][0]["positions"][0]
+        self.assertEqual(pos["state"], "stock")
+        self.assertEqual(pos["from_stock"], 20)
+
     def test_work_order_positions_states_and_completeness(self):
         """Jede Stücklistenposition bekommt ihren Zustand, daraus die
         Vollständigkeit: 2 von 4 greifbar = 50 %."""

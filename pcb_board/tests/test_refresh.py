@@ -96,7 +96,7 @@ class TestFetchErpnext(unittest.TestCase):
     def test_core_keys_always_present(self):
         data, _, _ = self._run()
         for key in ("as_of", "invoices", "to_bill_delivery_notes", "open_sales_orders",
-                    "purchase_receipts", "work_orders", "ekt_components", "crm",
+                    "purchase_receipts", "work_orders", "ekt_components", "crm", "stock_bins",
                     "invoice_items_year", "invoice_items_prev_year"):
             self.assertIn(key, data)
         for key in ("quotations", "leads", "opportunities"):
@@ -107,6 +107,7 @@ class TestFetchErpnext(unittest.TestCase):
         data, _, frappe = self._run(failing_doctypes=("Work Order",))
         self.assertEqual(data["work_orders"], [])
         self.assertEqual(data["ekt_components"], [])
+        self.assertEqual(data["stock_bins"], [])
         self.assertIn("as_of", data)
         self.assertTrue(any("übersprungen" in t for t in frappe.logged))
 

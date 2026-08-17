@@ -309,12 +309,15 @@ def _fetch_erpnext(config: dict) -> dict:
     crm = _optional("CRM-Daten", _fetch_crm,
                     {"quotations": [], "leads": [], "opportunities": []})
 
-    def _fetch_production() -> tuple[list[dict], list[dict]]:
-        """Fertigungsaufträge, Materialbedarf und EKT-Nummern — optionaler Block."""
+    def _fetch_production() -> tuple[list[dict], list[dict], list[dict]]:
+        """Fertigungsaufträge, Materialbedarf, EKT-Nummern und der LIVE-Lagerbestand
+        — optionaler Block."""
         # Nur Aufträge mit offenem Materialbedarf — dafür ist die bestellte Ware
         # gedacht. available_qty_at_source_warehouse ist ERPNexts eigene Bestandszahl
-        # aus dem Auftrag (deckungsgleich mit Bin.actual_qty des Quelllagers), damit im
-        # Board dieselbe Menge steht wie im Fertigungsauftrag selbst.
+        # aus dem Auftrag — ABER nur ein Schnappschuss vom letzten Speichern des
+        # Auftrags: nach einem Wareneingang steht dort weiter die alte Menge. Der
+        # Bestand kommt deshalb live aus Bin (siehe unten); das Feld bleibt nur als
+        # Notnagel erhalten, falls die Bin-Abfrage einmal ausfällt.
         wos = frappe.get_all(
             "Work Order",
             filters=[["docstatus", "=", 1],
@@ -331,7 +334,8 @@ def _fetch_erpnext(config: dict) -> dict:
                 "Work Order Item",
                 filters=[["parent", "in", [w["name"] for w in wos]]],
                 fields=["parent", "item_code", "item_name", "required_qty", "transferred_qty",
-                        "available_qty_at_source_warehouse", "is_customer_provided_item"],
+                        "available_qty_at_source_warehouse", "is_customer_provided_item",
+                        "source_warehouse"],
                 limit_page_length=0,
                 ignore_permissions=True,
             ):
@@ -353,6 +357,7 @@ def _fetch_erpnext(config: dict) -> dict:
                     "required_qty": required,
                     "transferred_qty": transferred,
                     "available_qty": float(row.get("available_qty_at_source_warehouse") or 0),
+                    "source_warehouse": row.get("source_warehouse"),
                 })
 
         # EKT-Nummern aus dem Einkaufstool (kundeneigener DocType): fehlt ein Artikel
@@ -420,10 +425,23 @@ def _fetch_erpnext(config: dict) -> dict:
                 "beistellung_count": wo_beistellung.get(w["name"], 0),
                 "required_items": wo_required.get(w["name"], []),
             })
-        return work_orders, ekt_components
+        # Lagerbestand LIVE je Artikel und Lager. Genau das hat gefehlt: ein am
+        # Vormittag gebuchter Wareneingang war im Board nicht zu sehen, weil der
+        # Bestand aus dem Auftragsschnappschuss kam.
+        stock_bins = []
+        if req_codes:
+            for start in range(0, len(req_codes), 500):
+                stock_bins += frappe.get_all(
+                    "Bin",
+                    filters=[["item_code", "in", req_codes[start:start + 500]]],
+                    fields=["item_code", "warehouse", "actual_qty"],
+                    limit_page_length=0,
+                    ignore_permissions=True,
+                )
+        return work_orders, ekt_components, stock_bins
 
-    work_orders, ekt_components = _optional(
-        "Fertigungs-/Einkaufstool-Daten", _fetch_production, ([], []))
+    work_orders, ekt_components, stock_bins = _optional(
+        "Fertigungs-/Einkaufstool-Daten", _fetch_production, ([], [], []))
 
     # Lieferzeit-Historie je Lieferant: Wareneingangspositionen mit Bestellbezug
     # ergeben (Bestelldatum -> Wareneingangsdatum). Basis sind die oben schon
@@ -618,6 +636,7 @@ def _fetch_erpnext(config: dict) -> dict:
         "po_receipt_pairs": po_receipt_pairs,
         "work_orders": work_orders,
         "ekt_components": ekt_components,
+        "stock_bins": stock_bins,
         "crm": crm,
         "purchase_receipts": purchase_receipts,
         "invoice_items": invoice_items,

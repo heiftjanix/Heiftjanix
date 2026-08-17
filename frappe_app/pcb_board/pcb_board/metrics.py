@@ -412,12 +412,50 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
         if row.get("item_code"):
             ekt_by_item[row["item_code"]].append(row)
 
-    stock: dict[str, float] = {}
-    for wo in data.get("work_orders") or []:
-        for it in wo.get("required_items") or []:
-            code = it.get("item_code")
-            if code:
-                stock[code] = max(stock.get(code, 0.0), float(it.get("available_qty") or 0))
+    # Bestandstopf — LIVE aus Bin (Artikel + Lager). Der im Fertigungsauftrag
+    # gespeicherte available_qty_at_source_warehouse ist nur ein Schnappschuss vom
+    # letzten Speichern des Auftrags: ein danach gebuchter Wareneingang taucht dort
+    # nie auf, und das Board hielt bereits gelieferte Artikel weiter für fehlend.
+    # Der Schnappschuss bleibt nur Notnagel, falls die Bin-Abfrage ausfällt.
+    bins: dict[tuple[str, str], float] = {}
+    bin_total: dict[str, float] = defaultdict(float)
+    for b in data.get("stock_bins") or []:
+        code = b.get("item_code")
+        if not code:
+            continue
+        qty = float(b.get("actual_qty") or 0)
+        key = (code, b.get("warehouse") or "")
+        bins[key] = bins.get(key, 0.0) + qty
+        bin_total[code] += qty
+    use_bins = bool(bins)
+
+    snapshot: dict[str, float] = {}
+    if not use_bins:
+        for wo in data.get("work_orders") or []:
+            for it in wo.get("required_items") or []:
+                code = it.get("item_code")
+                if code:
+                    snapshot[code] = max(snapshot.get(code, 0.0), float(it.get("available_qty") or 0))
+
+    stock: dict[tuple[str, str], float] = {}
+
+    def stock_key(code: str, warehouse) -> tuple[str, str]:
+        # Ohne Bin-Daten wird nur je Artikel gerechnet (ein Topf, wie bisher).
+        return (code, (warehouse or "") if use_bins else "")
+
+    def stock_left(code: str, warehouse) -> float:
+        """Noch nicht verplanter Bestand. Beim ersten Zugriff aus Bin befüllt —
+        danach zehren die Aufträge in Bedarfsreihenfolge davon ab."""
+        key = stock_key(code, warehouse)
+        if key not in stock:
+            if not use_bins:
+                stock[key] = snapshot.get(code, 0.0)
+            elif warehouse:
+                stock[key] = bins.get((code, warehouse), 0.0)
+            else:
+                # Position ohne Quelllager: Bestand über alle Lager
+                stock[key] = bin_total.get(code, 0.0)
+        return stock[key]
 
     def need_date(wo: dict) -> str:
         return wo.get("planned_start_date") or wo.get("expected_delivery_date") or "9999-12-31"
@@ -456,8 +494,9 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
             positions.append(pos)
             if need <= 1e-9:
                 continue
-            take = min(need, max(stock.get(code, 0.0), 0.0))
-            stock[code] = stock.get(code, 0.0) - take
+            wh = it.get("source_warehouse")
+            take = min(need, max(stock_left(code, wh), 0.0))
+            stock[stock_key(code, wh)] = stock_left(code, wh) - take
             need -= take
             pos["from_stock"] = round(take, 2)
             if need <= 1e-9:

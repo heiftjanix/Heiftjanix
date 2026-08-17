@@ -787,6 +787,82 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertEqual(link["still_missing"], 1)                 # -> ⌛
         self.assertIsNone(p["work_orders"][0]["complete_on"])
 
+    def test_work_order_positions_states_and_completeness(self):
+        """Jede Stücklistenposition bekommt ihren Zustand, daraus die
+        Vollständigkeit: 2 von 4 greifbar = 50 %."""
+        data = self._data()
+        data["po_receipt_pairs"] = []
+        data["open_purchase_orders"] = [
+            {"name": "BE-1", "supplier": "LF-A", "supplier_name": "Lieferant A",
+             "status": "To Receive", "transaction_date": "2026-07-01",
+             "schedule_date": "2026-07-25", "net_open": 100, "positions": 1,
+             "items": [{"item_code": "C", "item_name": "Artikel C", "open_qty": 5}]},
+        ]
+        data["work_orders"] = [{
+            "name": "FA-1", "item_name": "Baugruppe", "production_item": "BG.1",
+            "qty": 1, "status": "Not Started", "planned_start_date": "2026-07-20",
+            "required_items": [
+                # schon vollständig in die Fertigung umgelagert -> vorhanden
+                {"item_code": "A", "item_name": "Artikel A", "required_qty": 4,
+                 "transferred_qty": 4, "available_qty": 0},
+                # liegt am Lager -> vorhanden
+                {"item_code": "B", "item_name": "Artikel B", "required_qty": 2,
+                 "transferred_qty": 0, "available_qty": 10},
+                # kommt mit BE-1 -> im Zulauf
+                {"item_code": "C", "item_name": "Artikel C", "required_qty": 5,
+                 "transferred_qty": 0, "available_qty": 0},
+                # nirgends gedeckt -> fehlt
+                {"item_code": "D", "item_name": "Artikel D", "required_qty": 3,
+                 "transferred_qty": 1, "available_qty": 0},
+            ],
+        }]
+        wo = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"][0]
+        states = {p["item_code"]: p["state"] for p in wo["positions"]}
+        self.assertEqual(states, {"A": "done", "B": "stock", "C": "incoming", "D": "missing"})
+        self.assertEqual((wo["positions_total"], wo["positions_ready"]), (4, 2))
+        self.assertEqual((wo["positions_incoming"], wo["positions_missing"]), (1, 1))
+        self.assertAlmostEqual(wo["ready_pct"], 0.5, delta=0.0001)
+        # mengengewichtet: A 4 + B 2 + D 1 (schon umgelagert) von 4+2+5+3 = 7/14.
+        # Teilmengen zählen hier mit — anders als bei der Positionsquote, wo eine
+        # angebrochene Position noch keine fertige Position ist.
+        self.assertAlmostEqual(wo["qty_ready_pct"], 7 / 14, delta=0.0001)
+
+        by_code = {p["item_code"]: p for p in wo["positions"]}
+        self.assertEqual(by_code["B"]["from_stock"], 2)
+        self.assertEqual(by_code["C"]["incoming"][0]["po"], "BE-1")
+        self.assertEqual(by_code["C"]["incoming"][0]["supplier"], "Lieferant A")
+        self.assertEqual(by_code["C"]["incoming"][0]["qty"], 5)
+        self.assertEqual(by_code["D"]["short_qty"], 2)      # 3 gebraucht, 1 umgelagert
+        self.assertEqual(by_code["A"]["open_qty"], 0)
+
+    def test_work_order_positions_full_when_everything_available(self):
+        data = self._data()
+        data["po_receipt_pairs"] = []
+        data["open_purchase_orders"] = []
+        data["work_orders"] = [{
+            "name": "FA-OK", "item_name": "Baugruppe", "qty": 1, "status": "Not Started",
+            "planned_start_date": "2026-07-20",
+            "required_items": [
+                {"item_code": "A", "item_name": "Artikel A", "required_qty": 2,
+                 "transferred_qty": 2, "available_qty": 0},
+                {"item_code": "B", "item_name": "Artikel B", "required_qty": 1,
+                 "transferred_qty": 0, "available_qty": 5},
+            ],
+        }]
+        wo = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"][0]
+        self.assertAlmostEqual(wo["ready_pct"], 1.0, delta=0.0001)
+        self.assertTrue(wo["material_ok"])
+        self.assertEqual(wo["positions_missing"], 0)
+
+    def test_work_order_positions_marks_last_delivery(self):
+        """Der 🔓-Hinweis muss auch an der Position hängen, nicht nur am Auftrag."""
+        wo = {w["name"]: w for w in m.build_metrics(
+            self._wo_data(), CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"]}
+        pos = {p["item_code"]: p for p in wo["FA-1"]["positions"]}
+        # FA-1 wird durch BE-2 (Artikel B, spätester Termin) komplett
+        self.assertTrue(pos["B"]["incoming"][0]["is_last"])
+        self.assertFalse(pos["A"]["incoming"][0]["is_last"])
+
     def test_work_orders_awaiting_lists_suppliers(self):
         p = m.build_metrics(self._wo_data(), CONFIG, date(2026, 7, 15))["purchasing"]
         wo = {w["name"]: w for w in p["work_orders"]}

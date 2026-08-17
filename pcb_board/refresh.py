@@ -335,11 +335,13 @@ def _fetch_erpnext(config: dict) -> dict:
                 limit_page_length=0,
                 ignore_permissions=True,
             ):
-                # Bereits in die Fertigung umgelagerte Mengen fehlen nicht mehr.
+                # ALLE Positionen mitnehmen, auch die bereits vollständig
+                # umgelagerten: das Board zeigt je Auftrag den Stand der gesamten
+                # Stückliste (vorhanden / im Zulauf / fehlt) und die daraus
+                # abgeleitete Vollständigkeit in Prozent. Was fehlt, entscheidet
+                # metrics.py aus required_qty/transferred_qty.
                 required = float(row.get("required_qty") or 0)
                 transferred = float(row.get("transferred_qty") or 0)
-                if required - transferred <= 0:
-                    continue
                 # Beistellung (Kunde liefert bei, Kennzeichen aus der Stückliste): nicht
                 # unsere Beschaffung — taucht deshalb nicht als fehlendes Material auf.
                 if int(row.get("is_customer_provided_item") or 0):

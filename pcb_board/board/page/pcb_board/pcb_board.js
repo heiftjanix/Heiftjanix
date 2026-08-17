@@ -24,6 +24,7 @@ function PCBBoard(page) {
 	this.metrics = null;
 	this._openMids = {};
 	this._openPos = {};
+	this._openWos = {};
 	// Sortierung/Filter der Produktionsauftragsliste — überlebt Neurendern.
 	this._woSort = { key: 'customer_due_date', dir: 1 };
 	this._woFilter = 'all';
@@ -999,7 +1000,7 @@ PCBBoard.PROD_COLS = [
 	{ key: 'hold', label: 'Bearbeitung' },
 	{ key: 'sales_order', label: 'Kundenauftrag' },
 	{ key: 'material', label: 'Material' },
-	{ key: 'awaiting', label: 'Warten auf (Item-Code / Lieferant / Bestellung / erwartet)', nosort: true },
+	{ key: 'ready', label: 'Vollständigkeit / Warten auf' },
 	{ key: 'note', label: 'Bemerkung' },
 ];
 
@@ -1011,6 +1012,7 @@ PCBBoard.prototype.prodSortValue = function (w, key) {
 		case 'qty': return Number(w.qty || 0);
 		case 'material': return (w.missing_items || []).length ? 0 : (w.material_ok ? 2 : 1);
 		case 'hold': return w.on_hold ? 0 : 1;
+		case 'ready': return w.ready_pct == null ? -1 : w.ready_pct;
 		case 'note': return String(w.note_date || w.note_remark || '').toLowerCase();
 		case 'customer_due_date': return w.customer_due_date || '9999-12-31';
 		default: return String(w[key] == null ? '' : w[key]).toLowerCase();
@@ -1045,6 +1047,71 @@ PCBBoard.prototype.holdCell = function (w) {
 	return '<button class="hold-btn" type="button" data-wo="' + this.esc(w.name) +
 		'" data-hold="1" title="Als aktuell zur Bearbeitung gesperrt markieren">' +
 		'On Hold</button>';
+};
+
+// Spalte „Vollständigkeit / Warten auf": zugeklappt der Anteil greifbarer
+// Stücklistenpositionen, aufgeklappt jede Position mit ihrem Zustand —
+// grün = vorhanden, gelb = im Zulauf, rot gestrichelt = nicht bestellt. So ist
+// auch sichtbar, was seit Anlage des Auftrags schon eingetroffen ist.
+PCBBoard.PROD_POS_STATE = {
+	done: { cls: 'ok', icon: '✅', text: 'in der Fertigung' },
+	stock: { cls: 'ok', icon: '✅', text: 'am Lager' },
+	incoming: { cls: 'wait', icon: '🚚', text: 'im Zulauf' },
+	missing: { cls: 'missing', icon: '⛔', text: 'nicht bestellt' },
+};
+
+PCBBoard.prototype.materialCell = function (w, open) {
+	var self = this;
+	var total = w.positions_total || 0;
+	if (!total) {
+		return '<span class="muted">keine Stücklistenpositionen</span>';
+	}
+	var pct = w.ready_pct == null ? 0 : w.ready_pct;
+	var col = pct >= 1 ? 'var(--good)' : (pct >= 0.8 ? 'var(--series-3)' : 'var(--critical)');
+	var title = (w.positions_ready || 0) + ' von ' + total + ' Positionen greifbar · ' +
+		(w.positions_incoming || 0) + ' im Zulauf · ' + (w.positions_missing || 0) + ' nicht bestellt' +
+		(w.qty_ready_pct != null ? ' · mengengewichtet ' + self.pct(w.qty_ready_pct) : '') +
+		(w.beistellung_count ? ' · ' + w.beistellung_count + ' Beistellung(en) nicht mitgezählt' : '');
+	var head = '<button class="mat-toggle" type="button" data-wo="' + self.esc(w.name) +
+		'" title="' + self.esc(title) + '">' +
+		'<span class="mat-bar"><i style="width:' + (pct * 100).toFixed(0) + '%;background:' + col + '"></i></span>' +
+		'<b style="color:' + col + '">zu ' + self.pct(pct) + ' vollständig</b>' +
+		' <span class="muted">(' + (w.positions_ready || 0) + '/' + total + ')</span>' +
+		' <span class="chev">' + (open ? '▴' : '▾') + '</span></button>';
+
+	// Reihenfolge: erst die Lücken, dann der Zulauf, dann das Vorhandene —
+	// oben steht, was Arbeit macht.
+	var order = { missing: 0, incoming: 1, stock: 2, done: 3 };
+	var rows = (w.positions || []).slice().sort(function (a, z) {
+		var d = order[a.state] - order[z.state];
+		return d !== 0 ? d : String(a.item_code).localeCompare(String(z.item_code));
+	});
+	var list = rows.map(function (p) {
+		var st = PCBBoard.PROD_POS_STATE[p.state] || PCBBoard.PROD_POS_STATE.missing;
+		var detail;
+		if (p.state === 'missing') {
+			detail = 'fehlen ' + String(p.short_qty).replace('.', ',') + ' Stk.' +
+				self.ektTag({ ekt: p.ekt });
+		} else if (p.state === 'incoming') {
+			detail = (p.incoming || []).map(function (i) {
+				return '<b>' + self.esc(i.supplier || '?') + '</b> ' + self.poLink(i.po) +
+					(i.expected_date
+						? ' <span class="muted">' + self.esc(frappe.datetime.str_to_user(i.expected_date)) +
+							'</span>' : '') +
+					(i.is_last ? ' <span title="letzte fehlende Lieferung für diesen Auftrag">🔓</span>' : '');
+			}).join(' · ');
+		} else if (p.state === 'stock') {
+			detail = '<span class="muted">am Lager verfügbar</span>';
+		} else {
+			detail = '<span class="muted">bereits umgelagert</span>';
+		}
+		return '<div class="mat-pos ' + st.cls + '" title="' + self.esc(p.item_name || '') + '">' +
+			'<span class="mp-code">' + st.icon + ' ' + self.esc(p.item_code) + '</span>' +
+			'<span class="mp-qty">' + String(p.required_qty).replace('.', ',') + ' Stk.</span>' +
+			'<span class="mp-info">' + detail + '</span></div>';
+	}).join('');
+
+	return head + '<div class="mat-detail"' + (open ? '' : ' hidden') + '>' + list + '</div>';
 };
 
 PCBBoard.prototype.prodRows = function (m) {
@@ -1104,32 +1171,7 @@ PCBBoard.prototype.prodTableHtml = function (m) {
 		var st = self.woMaterialState(w);
 		var matTitle = st.text + (w.beistellung_count
 			? ' · ' + w.beistellung_count + ' Beistellung(en) nicht mitgezählt' : '');
-		// Auf wen wird gewartet: Item-Code, Lieferant, Bestellung, erwarteter Termin.
-		var waitCell;
-		if (w.material_ok) {
-			waitCell = '<span class="muted">—</span>';
-		} else {
-			var parts = (w.awaiting || []).map(function (a) {
-				var codes = (a.items || []).map(function (i) {
-					return '<span title="' + self.esc(i.item_name || '') + '">' +
-						self.esc(i.item_code || '') + '</span>';
-				}).join(', ');
-				return '<span class="wo-chip">' + (codes ? codes + ' · ' : '') +
-					'<b>' + self.esc(a.supplier || '?') + '</b> ' + self.poLink(a.po) +
-					(a.expected_date
-						? ' <span class="muted">' + self.esc(frappe.datetime.str_to_user(a.expected_date)) +
-							'</span>' : '') +
-					(a.is_last ? ' <span title="letzte fehlende Lieferung">🔓</span>' : '') +
-					'</span>';
-			});
-			(w.missing_items || []).forEach(function (it) {
-				parts.push('<span class="wo-chip missing" title="' + self.esc(it.item_name || '') +
-					' — nicht bestellt, fehlende Menge ' + self.esc(String(it.short_qty)) + '">' +
-					self.esc(it.item_code || it.item_name) +
-					' <span class="muted">✗ nicht bestellt</span>' + self.ektTag(it) + '</span>');
-			});
-			waitCell = '<span class="pi-wos">' + (parts.join(' ') || '<span class="muted">—</span>') + '</span>';
-		}
+		var waitCell = self.materialCell(w, !!self._openWos[w.name]);
 		var note = '';
 		if (w.note_date) {
 			note += '<span class="note-date" title="vom Team korrigierter Liefertermin">📅 ' +
@@ -1199,7 +1241,12 @@ PCBBoard.prototype.productionOrdersHtml = function (m) {
 		'<span class="muted">' + ok + ' vollständig · ' + incoming + ' im Zulauf · ' +
 		missing + ' nicht bestellt</span></div>' + controls +
 		'<div id="pcb-prod-table">' + this.prodTableHtml(m) + '</div>' +
-		'<p class="muted" style="font-size:.78rem;margin:8px 0 0">Materialbedarf = Sollmenge minus ' +
+		'<p class="muted" style="font-size:.78rem;margin:8px 0 0">Vollständigkeit = Anteil der ' +
+		'Stücklistenpositionen, deren Material greifbar ist (in der Fertigung oder am Lager). ' +
+		'Gezählt werden Positionen, nicht Mengen — eine Position über 5.000 Widerstände ist fürs ' +
+		'Rüsten genauso eine Lücke wie die eine fehlende Platine; die mengengewichtete Quote steht ' +
+		'im Tooltip. Aufklappen zeigt jede Position: grün = vorhanden, gelb = im Zulauf, rot ' +
+		'gestrichelt = nicht bestellt. Materialbedarf = Sollmenge minus ' +
 		'bereits umgelagerte Menge, gedeckt aus dem Bestand des Quelllagers und den erwarteten ' +
 		'Wareneingängen. Als Beistellung gekennzeichnete Positionen (Kunde liefert bei) bleiben ' +
 		'außen vor. Fehlt ein Artikel und ist nichts bestellt, steht die EKT-Nummer der ' +
@@ -1228,6 +1275,17 @@ PCBBoard.prototype.bindProdTable = function () {
 	});
 	root.find('.hold-btn').on('click', function () {
 		self.toggleWorkOrderHold($(this).data('wo'), $(this).data('hold') ? 1 : 0);
+	});
+	// Positionsliste auf-/zuklappen; der Zustand überlebt Sortieren, Filtern und
+	// einen Hintergrund-Refresh.
+	root.find('.mat-toggle').on('click', function () {
+		var wo = $(this).data('wo');
+		var $detail = $(this).siblings('.mat-detail');
+		var open = !!$detail.prop('hidden');
+		$detail.prop('hidden', !open);
+		$(this).find('.chev').text(open ? '▴' : '▾');
+		if (open) self._openWos[wo] = true;
+		else delete self._openWos[wo];
 	});
 };
 
@@ -2336,6 +2394,23 @@ var PCB_BOARD_CSS =
 	'.tbl tr.held{background:color-mix(in srgb,var(--warning) 10%,transparent)}' +
 	'.tbl tr.held td:not(.hold-cell){opacity:.62}' +
 	'.wo-chip.held{border-color:var(--warning);border-style:dashed}' +
+	'.mat-toggle{display:flex;align-items:center;gap:6px;border:0;background:transparent;padding:0;' +
+	'cursor:pointer;font-size:.8rem;color:var(--text-secondary);white-space:nowrap;text-align:left}' +
+	'.mat-toggle:hover .chev{color:var(--brand-teal)}' +
+	'.mat-bar{display:inline-block;width:54px;height:7px;border-radius:999px;background:var(--grid);overflow:hidden;flex:0 0 auto}' +
+	'.mat-bar i{display:block;height:100%;border-radius:999px}' +
+	'.mat-detail{display:flex;flex-direction:column;gap:3px;margin-top:6px;max-height:280px;overflow-y:auto}' +
+	// Rahmenfarbe = Zustand der Position: gruen vorhanden, gelb im Zulauf,
+	// rot gestrichelt nicht bestellt.
+	'.mat-pos{display:grid;grid-template-columns:minmax(90px,auto) auto 1fr;gap:8px;align-items:baseline;' +
+	'border:1px solid var(--border);border-left-width:3px;border-radius:6px;padding:2px 8px;font-size:.78rem;' +
+	'background:var(--surface-1)}' +
+	'.mat-pos.ok{border-color:var(--good)}' +
+	'.mat-pos.wait{border-color:var(--series-3)}' +
+	'.mat-pos.missing{border-color:var(--critical);border-style:dashed;border-left-style:solid}' +
+	'.mat-pos .mp-code{font-weight:650;white-space:nowrap}' +
+	'.mat-pos .mp-qty{color:var(--text-secondary);white-space:nowrap;font-variant-numeric:tabular-nums}' +
+	'.mat-pos .mp-info{color:var(--text-secondary)}' +
 	'.note-date{font-weight:650;color:var(--brand-teal);white-space:nowrap}' +
 	'.note-txt{display:block;color:var(--text-secondary);font-size:.78rem;white-space:normal}' +
 	'.pcb-root .muted{color:var(--muted)}.pcb-root .foot{color:var(--muted);font-size:.78rem;margin-top:18px}' +

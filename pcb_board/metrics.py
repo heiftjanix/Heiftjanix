@@ -430,16 +430,38 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
     for wo in wos:
         links = []          # (po, item_code, expected_date) — was dieser Auftrag zieht
         missing = []        # Artikel ohne jede Deckung (Bestand + Bestellungen)
+        positions = []      # JEDE Stücklistenposition mit ihrem Zustand
         from_stock_only = True
         for it in wo.get("required_items") or []:
             code = it.get("item_code")
-            need = float(it.get("required_qty") or 0) - float(it.get("transferred_qty") or 0)
-            if not code or need <= 0:
+            if not code:
+                continue
+            required = float(it.get("required_qty") or 0)
+            transferred = float(it.get("transferred_qty") or 0)
+            need = required - transferred
+            # Zustand je Position: done = schon in der Fertigung, stock = liegt am
+            # Lager, incoming = kommt mit einer Bestellung, missing = ungedeckt.
+            pos = {
+                "item_code": code,
+                "item_name": it.get("item_name") or code,
+                "required_qty": round(required, 2),
+                "transferred_qty": round(transferred, 2),
+                "open_qty": round(max(need, 0.0), 2),
+                "from_stock": 0.0,
+                "incoming": [],
+                "short_qty": 0.0,
+                "ekt": None,
+                "state": "done",
+            }
+            positions.append(pos)
+            if need <= 1e-9:
                 continue
             take = min(need, max(stock.get(code, 0.0), 0.0))
             stock[code] = stock.get(code, 0.0) - take
             need -= take
+            pos["from_stock"] = round(take, 2)
             if need <= 1e-9:
+                pos["state"] = "stock"
                 continue
             from_stock_only = False
             for inc in incoming.get(code, []):
@@ -448,14 +470,25 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
                 use = min(need, inc["qty"])
                 inc["qty"] -= use
                 need -= use
+                pos["incoming"].append({
+                    "po": inc["po"],
+                    "supplier": inc.get("supplier") or "",
+                    "expected_date": inc["expected_date"],
+                    "qty": round(use, 2),
+                    "is_last": False,
+                })
                 links.append({"po": inc["po"], "item_code": code,
                               "supplier": inc.get("supplier"),
                               "item_name": inc.get("item_name") or code,
                               "expected_date": inc["expected_date"]})
                 if need <= 1e-9:
                     break
+            pos["state"] = "incoming"
             if need > 1e-9:
                 ekt = _pick_ekt(ekt_by_item.get(code), wo.get("name"))
+                pos["state"] = "missing"
+                pos["short_qty"] = round(need, 2)
+                pos["ekt"] = ekt["ekt"] if ekt else None
                 missing.append({"item_code": code,
                                 "item_name": it.get("item_name") or code,
                                 "short_qty": round(need, 2),
@@ -475,6 +508,22 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
             for l in links:
                 if l["expected_date"] == complete_on:
                     complete_po = l["po"]
+
+        for pos in positions:
+            for inc in pos["incoming"]:
+                inc["is_last"] = bool(complete_po) and inc["po"] == complete_po
+
+        # Vollständigkeit = Anteil der Positionen, deren Material greifbar ist
+        # (in der Fertigung oder am Lager). Positionen zählen, nicht Mengen: eine
+        # Widerstandsposition über 5000 Stück ist fürs Rüsten genauso EINE Lücke
+        # wie die eine fehlende Platine. Die mengengewichtete Quote steht
+        # zusätzlich daneben.
+        ready_states = ("done", "stock")
+        total_pos = len(positions)
+        ready_pos = len([p for p in positions if p["state"] in ready_states])
+        req_sum = sum(p["required_qty"] for p in positions)
+        have_sum = sum(min(p["transferred_qty"] + p["from_stock"], p["required_qty"])
+                       for p in positions)
 
         for l in links:
             entry = {
@@ -529,6 +578,13 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
             "complete_po": complete_po,
             "awaiting": awaiting,
             "missing_items": missing,
+            "positions": positions,
+            "positions_total": total_pos,
+            "positions_ready": ready_pos,
+            "positions_incoming": len([p for p in positions if p["state"] == "incoming"]),
+            "positions_missing": len([p for p in positions if p["state"] == "missing"]),
+            "ready_pct": round(ready_pos / total_pos, 4) if total_pos else None,
+            "qty_ready_pct": round(have_sum / req_sum, 4) if req_sum > 0 else None,
         })
 
     waiting = [w for w in out if w["waiting"]]

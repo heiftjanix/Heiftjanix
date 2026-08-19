@@ -1303,6 +1303,11 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
             "customer": dn.get("customer_name") or dn.get("customer"),
             "net_open": round(open_net, 2),
             "posting_date": d.isoformat() if d else None,
+            # Versanddatum: das von UPS gemeldete Datum, sonst das Lieferscheindatum
+            # (dann ist der Beleg das einzige Zeugnis für den Versandtag).
+            "shipment_date": (str(dn.get("shipment_date"))[:10] if dn.get("shipment_date")
+                              else (d.isoformat() if d else None)),
+            "shipment_date_source": "ups" if dn.get("shipment_date") else ("note" if d else None),
             "age_days": age,
             "tracking_number": dn.get("tracking_number"),
             "arrival_status": dn.get("arrival_status", "unknown"),
@@ -1310,6 +1315,7 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
             "arrival_method": dn.get("arrival_method"),
         }
         is_stale = age is not None and age > stale_days
+        item["needs_review"] = is_stale
         status = item["arrival_status"]
         if is_stale:
             stale.append(item)
@@ -1324,6 +1330,12 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
 
     ready.sort(key=lambda x: x["net_open"], reverse=True)
     stale.sort(key=lambda x: (x["age_days"] or 0), reverse=True)
+
+    # „Jetzt abrechenbar" und „zu klären" getrennt ausweisen — dieselbe Summe darf
+    # nicht in beiden Zahlen stehen. Ein zugestellter Lieferschein, der älter als
+    # die Klärgrenze ist, gehört zum Klärfall (so markiert ihn auch die Tabelle).
+    stale_net = round(sum(r["net_open"] for r in stale), 2)
+    ready_clear_net = round(sum(r["net_open"] for r in ready if not r["needs_review"]), 2)
 
     open_so_net = round(
         sum(float(so.get("net_open", 0) or 0) for so in data.get("open_sales_orders", [])),
@@ -1442,6 +1454,11 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
             "unknown": unknown,
             "stale": stale,
             "ready_count": len(ready),
+            "ready_clear_count": len([r for r in ready if not r["needs_review"]]),
+            "ready_clear_net": ready_clear_net,
+            "stale_count": len(stale),
+            "stale_net": stale_net,
+            "stale_days": stale_days,
             "total_open_count": len(ready) + len(in_transit) + len(unknown),
             "throughput": throughput,
         },

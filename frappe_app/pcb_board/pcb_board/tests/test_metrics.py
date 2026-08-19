@@ -283,6 +283,58 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertAlmostEqual(rr[0]["net_total"], 1500, delta=0.01)
         self.assertIsNone(rr[2]["positions"])   # keine Angabe -> None
 
+    def test_top_customers_year_ranks_and_compares(self):
+        data = self._data()
+        data["invoices"] = [
+            {"name": "RE-1", "customer_name": "Kunde A", "base_net_total": 30000,
+             "posting_date": "2026-02-10"},
+            {"name": "RE-2", "customer_name": "Kunde A", "base_net_total": 10000,
+             "posting_date": "2026-06-10"},
+            {"name": "RE-3", "customer_name": "Kunde B", "base_net_total": 25000,
+             "posting_date": "2026-03-10"},
+            {"name": "RE-4", "customer_name": "Kunde C", "base_net_total": 5000,
+             "posting_date": "2026-07-01"},
+            # Vorjahr darf nicht in den Jahresumsatz rutschen
+            {"name": "RE-ALT", "customer_name": "Kunde A", "base_net_total": 99000,
+             "posting_date": "2025-12-30"},
+        ]
+        data["prev_year_invoices"] = [
+            {"name": "RE-V1", "customer_name": "Kunde A", "base_net_total": 20000,
+             "posting_date": "2025-05-01"},
+            {"name": "RE-V2", "customer_name": "Kunde B", "base_net_total": 50000,
+             "posting_date": "2025-05-01"},
+        ]
+        d = m.build_metrics(data, CONFIG, date(2026, 7, 15))["top_customers_year"]
+        self.assertEqual((d["year"], d["prev_year"]), (2026, 2025))
+        self.assertEqual([r["customer"] for r in d["rows"]], ["Kunde A", "Kunde B", "Kunde C"])
+        a = d["rows"][0]
+        self.assertAlmostEqual(a["net_total"], 40000, delta=0.01)   # ohne die 2025er Rechnung
+        self.assertEqual(a["invoices"], 2)
+        self.assertAlmostEqual(a["share_pct"], 40000 / 70000, delta=0.0001)
+        self.assertAlmostEqual(a["prev_net_total"], 20000, delta=0.01)
+        self.assertAlmostEqual(a["delta_pct"], 1.0, delta=0.0001)   # 40k vs 20k = +100 %
+        # Kunde B liegt unter Vorjahr
+        self.assertAlmostEqual(d["rows"][1]["delta_pct"], (25000 - 50000) / 50000, delta=0.0001)
+        # Kunde C hatte kein Vorjahr -> kein Vergleich
+        self.assertIsNone(d["rows"][2]["prev_net_total"])
+        self.assertIsNone(d["rows"][2]["delta_pct"])
+        self.assertAlmostEqual(d["year_total"], 70000, delta=0.01)
+        self.assertAlmostEqual(d["top_share_pct"], 1.0, delta=0.0001)
+        self.assertEqual(d["customer_count"], 3)
+
+    def test_top_customers_year_limited_to_ten(self):
+        data = self._data()
+        data["invoices"] = [
+            {"name": "RE-%d" % i, "customer_name": "Kunde %02d" % i,
+             "base_net_total": 1000 * (20 - i), "posting_date": "2026-03-01"}
+            for i in range(15)
+        ]
+        d = m.build_metrics(data, CONFIG, date(2026, 7, 15))["top_customers_year"]
+        self.assertEqual(len(d["rows"]), 10)
+        self.assertEqual(d["customer_count"], 15)
+        self.assertEqual(d["rows"][0]["customer"], "Kunde 00")     # groesster Umsatz
+        self.assertLess(d["top_share_pct"], 1.0)                   # nicht alle enthalten
+
     def test_billing_shipment_date_prefers_ups_then_note(self):
         data = self._data()
         data["to_bill_delivery_notes"][0]["shipment_date"] = "2026-07-09"

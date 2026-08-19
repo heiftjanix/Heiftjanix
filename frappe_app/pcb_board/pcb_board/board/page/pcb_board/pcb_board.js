@@ -2089,6 +2089,7 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 		this.coverageBarHtml(m) + '</section>';
 
 	return tiles + vcards + bars + this.topProductsHtml(m) + this.topCustomersHtml(m) +
+		this.topCustomersYearHtml(m) +
 		this.tipsHtml(m);
 };
 
@@ -2107,6 +2108,52 @@ PCBBoard.prototype.topCustomersHtml = function (m) {
 		' nach Netto-Umsatz <i class="muted" style="font-size:.78rem;font-weight:400">— Klumpenrisiko im Blick behalten</i></figcaption>' +
 		'<table class="tbl"><thead><tr><th>#</th><th>Kunde</th><th class="num">Umsatz</th>' +
 		'<th class="num">Anteil</th></tr></thead><tbody>' + rows + '</tbody></table></section>';
+};
+
+PCBBoard.prototype.topCustomersYearHtml = function (m) {
+	var self = this;
+	var d = m.top_customers_year || {};
+	var items = d.rows || [];
+	if (!items.length) {
+		return '';
+	}
+	var rows = items.map(function (c, idx) {
+		var medal = idx === 0 ? '🥇 ' : (idx === 1 ? '🥈 ' : (idx === 2 ? '🥉 ' : ''));
+		var prev = c.prev_net_total == null
+			? '<span class="muted" title="Kein Umsatz im Vorjahr — neuer oder reaktivierter Kunde">neu</span>'
+			: self.eur(c.prev_net_total);
+		var delta = '<span class="muted">—</span>';
+		if (c.delta_pct != null) {
+			var up = c.delta_pct >= 0;
+			delta = '<span style="color:' + (up ? 'var(--good)' : 'var(--critical)') +
+				';font-weight:650">' + (up ? '▲ +' : '▼ −') +
+				Math.abs(Math.round(c.delta_pct * 100)) + ' %</span>';
+		}
+		return '<tr><td>' + medal + (idx + 1) + '</td>' +
+			'<td class="col-customer" title="' + self.esc(c.customer) + '">' +
+			self.esc(c.customer) + '</td>' +
+			'<td class="num">' + self.eur(c.net_total) + '</td>' +
+			'<td class="num">' + self.pct(c.share_pct) + '</td>' +
+			'<td class="num">' + c.invoices + '</td>' +
+			'<td class="num">' + prev + '</td>' +
+			'<td class="num">' + delta + '</td></tr>';
+	}).join('');
+	return '<section class="card"><figcaption>Top 10 Kunden ' + self.esc(String(d.year || '')) +
+		' nach Netto-Umsatz <i class="muted" style="font-size:.78rem;font-weight:400">— ' +
+		'Jahresanfang bis heute</i></figcaption>' +
+		'<p class="m" style="margin:0 0 8px">Diese ' + items.length + ' Kunden stehen für <b>' +
+		self.pct(d.top_share_pct) + '</b> des Jahresumsatzes (' + self.eur(d.year_total) +
+		' von ' + (d.customer_count || 0) + ' Kunden insgesamt).</p>' +
+		'<table class="tbl"><thead><tr><th>#</th><th class="col-customer">Kunde</th>' +
+		'<th class="num">Umsatz ' + self.esc(String(d.year || '')) + '</th>' +
+		'<th class="num">Anteil</th><th class="num">Rechnungen</th>' +
+		'<th class="num">' + self.esc(String(d.prev_year || '')) + ' gesamt</th>' +
+		'<th class="num">Entwicklung</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Die Spalte „' +
+		self.esc(String(d.prev_year || '')) + ' gesamt" ist das KOMPLETTE Vorjahr. Die ' +
+		'Entwicklung vergleicht also einen laufenden Zeitraum mit einem abgeschlossenen ' +
+		'Jahr und fällt früh im Jahr zwangsläufig negativ aus — sie zeigt den Stand ' +
+		'gegenüber dem Vorjahresergebnis, nicht den Trend.</p></section>';
 };
 
 PCBBoard.prototype.monthLabel = function (m) {

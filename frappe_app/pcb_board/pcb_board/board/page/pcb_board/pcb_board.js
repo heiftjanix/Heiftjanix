@@ -138,6 +138,7 @@ PCBBoard.prototype.shellHtml = function () {
 		'<div class="tabs">' +
 		'<button class="active" data-tab="mail">📥 Posteingang</button>' +
 		'<button data-tab="wareneingang">📥 Wareneingang</button>' +
+		'<button data-tab="produktion">🏭 Produktion</button>' +
 		'<button data-tab="warenausgang">📦 Warenausgang</button>' +
 		'<button data-tab="guv">📊 GuV</button>' +
 		'<button data-tab="crm">🤝 CRM</button>' +
@@ -145,6 +146,7 @@ PCBBoard.prototype.shellHtml = function () {
 		'</div>' +
 		'<div class="tab-panel active" id="pcb-tab-mail"><p class="muted">Lade Daten …</p></div>' +
 		'<div class="tab-panel" id="pcb-tab-wareneingang"></div>' +
+		'<div class="tab-panel" id="pcb-tab-produktion"></div>' +
 		'<div class="tab-panel" id="pcb-tab-warenausgang"></div>' +
 		'<div class="tab-panel" id="pcb-tab-guv"></div>' +
 		'<div class="tab-panel" id="pcb-tab-crm"></div>' +
@@ -388,6 +390,7 @@ PCBBoard.prototype.renderAll = function () {
 	this.$root.find('#pcb-stand').text('Stand ' + stand + duration + next);
 	this.$root.find('#pcb-tab-mail').html(this.mailTabHtml(m));
 	this.$root.find('#pcb-tab-wareneingang').html(this.wareneingangTabHtml(m));
+	this.$root.find('#pcb-tab-produktion').html(this.productionOrdersHtml(m));
 	this.$root.find('#pcb-tab-warenausgang').html(this.warenausgangTabHtml(m));
 	this.$root.find('#pcb-tab-guv').html(this.guvTabHtml(m));
 	this.$root.find('#pcb-tab-crm').html(this.crmTabHtml(m));
@@ -425,10 +428,10 @@ PCBBoard.prototype.restoreFocus = function (keep) {
 	}
 };
 
-// Wareneingang = was hereinkommt: Bestellungen mit erwartetem Termin und die
-// Fertigungsaufträge, für die das Material gedacht ist.
+// Wareneingang = was hereinkommt: Bestellungen mit erwartetem Termin. Die
+// Fertigungsaufträge stehen im eigenen Reiter „Produktion".
 PCBBoard.prototype.wareneingangTabHtml = function (m) {
-	return this.purchaseOrdersHtml(m) + this.productionOrdersHtml(m);
+	return this.purchaseOrdersHtml(m);
 };
 
 // Warenausgang = was hinausgeht: Liefertermine der Kundenaufträge und die
@@ -2196,8 +2199,15 @@ PCBBoard.prototype.outgoingPackagesHtml = function (m) {
 	// Ausgehende Pakete (Lieferscheine) in EINER Tabelle, Status als Spalte.
 	var staleNames = {};
 	(b.stale || []).forEach(function (r) { staleNames[r.name] = true; });
+	var staleDays = b.stale_days || 60;
 	function tag(r, group) {
-		if (staleNames[r.name]) return '<span class="dot-hi">alt (>60 T.)</span>';
+		// Regel unverändert (älter als die Klärgrenze), nur die Benennung ist
+		// jetzt handlungsorientiert: solche Belege gehören angeschaut, nicht
+		// bloß als „alt" abgestempelt.
+		if (staleNames[r.name]) {
+			return '<span class="dot-hi" title="Lieferschein älter als ' + staleDays +
+				' Tage — bitte prüfen">zu klären</span>';
+		}
 		if (group === 'ready') return '<span class="pill rel">zugestellt – abrechnen</span>';
 		if (group === 'transit') return '<span class="pill info">unterwegs</span>';
 		return '<span class="muted">Status offen</span>';
@@ -2207,21 +2217,37 @@ PCBBoard.prototype.outgoingPackagesHtml = function (m) {
 	groups.forEach(function (g) {
 		(g[1] || []).forEach(function (r) { rows.push({ r: r, group: g[0] }); });
 	});
-	rows.sort(function (a, z) { return (z.r.age_days || 0) - (a.r.age_days || 0); });
+	// Neuester Versand oben; ohne Datum ans Ende.
+	rows.sort(function (a, z) {
+		var da = a.r.shipment_date || '', dz = z.r.shipment_date || '';
+		if (!da && !dz) return String(a.r.name).localeCompare(String(z.r.name));
+		if (!da) return 1;
+		if (!dz) return -1;
+		return da < dz ? 1 : (da > dz ? -1 : String(a.r.name).localeCompare(String(z.r.name)));
+	});
 	var totalNet = rows.reduce(function (acc, o) { return acc + (o.r.net_open || 0); }, 0);
 	var body = rows.map(function (o) {
 		var r = o.r;
-		return '<tr><td><a href="/app/delivery-note/' + encodeURIComponent(r.name) +
+		var shipped = r.shipment_date
+			? '<span title="' + (r.shipment_date_source === 'ups'
+					? 'Versanddatum laut UPS' : 'Datum des Lieferscheins') + '">' +
+				self.esc(frappe.datetime.str_to_user(r.shipment_date)) + '</span>' +
+				(r.age_days != null
+					? ' <span class="muted" style="font-size:.76rem">(' + r.age_days + ' T.)</span>' : '')
+			: '<span class="muted">—</span>';
+		return '<tr><td class="col-dn"><a href="/app/delivery-note/' + encodeURIComponent(r.name) +
 			'" target="_blank">' + self.esc(r.name) + '</a></td>' +
-			'<td>' + self.esc(r.customer || '') + '</td>' +
+			'<td class="col-dn-customer" title="' + self.esc(r.customer || '') + '">' +
+			self.esc(r.customer || '') + '</td>' +
 			'<td class="num">' + self.eur(r.net_open) + '</td>' +
 			'<td>' + tag(r, o.group) + '</td>' +
-			'<td class="num">' + (r.age_days != null ? r.age_days + ' T.' : '—') + '</td>' +
+			'<td>' + shipped + '</td>' +
 			'<td>' + (methodLabel[r.arrival_method] || '—') + '</td></tr>';
 	}).join('');
 	var table = rows.length
-		? '<table class="tbl"><thead><tr><th>Lieferschein</th><th>Kunde</th><th class="num">Netto</th>' +
-			'<th>Status</th><th class="num">Alter</th><th>Zustellquelle</th></tr></thead><tbody>' + body +
+		? '<table class="tbl"><thead><tr><th class="col-dn">Lieferschein</th>' +
+			'<th class="col-dn-customer">Kunde</th><th class="num">Netto</th>' +
+			'<th>Status</th><th>Versanddatum</th><th>Zustellquelle</th></tr></thead><tbody>' + body +
 			'</tbody><tfoot><tr><td colspan="2">Summe (' + rows.length + ')</td>' +
 			'<td class="num">' + self.eur(totalNet) + '</td><td colspan="3"></td></tr></tfoot></table>'
 		: '<p class="muted">Keine offenen Lieferscheine zur Abrechnung. ✅</p>';
@@ -2230,9 +2256,21 @@ PCBBoard.prototype.outgoingPackagesHtml = function (m) {
 	var tp = b.throughput || {};
 	var analysis =
 		'<div class="tiles" style="margin-bottom:12px">' +
-		'<div class="tile"><p class="k">Jetzt abrechenbar (zugestellt)</p>' +
-		'<div class="v" style="color:var(--good)">' + self.eur(m.pipeline.ready_net) + '</div>' +
-		'<div class="m">' + b.ready_count + ' Lieferschein(e) – direkt in Umsatz</div></div>' +
+		// Zwei getrennte Beträge: was sofort in Umsatz kann, und was erst geklärt
+		// werden muss. Bewusst ohne Überschneidung — ein zugestellter Lieferschein
+		// jenseits der Klärgrenze zählt zum Klärfall, nicht zum abrechenbaren Geld.
+		'<div class="tile"><p class="k">Jetzt abrechenbar / zu klären</p>' +
+		'<div class="split-vals">' +
+		'<span class="sv"><span class="sv-v" style="color:var(--good)">' +
+		self.eur(b.ready_clear_net) + '</span>' +
+		'<span class="sv-k">jetzt abrechenbar · ' + (b.ready_clear_count || 0) +
+		' Lieferschein(e)</span></span>' +
+		'<span class="sv"><span class="sv-v" style="color:' +
+		((b.stale_count || 0) ? 'var(--critical)' : 'var(--text-secondary)') + '">' +
+		self.eur(b.stale_net) + '</span>' +
+		'<span class="sv-k">zu klären · ' + (b.stale_count || 0) + ' Lieferschein(e) &gt; ' +
+		(b.stale_days || 60) + ' T.</span></span>' +
+		'</div></div>' +
 		'<div class="tile"><p class="k">Ø Wartezeit bis Abrechnung</p>' +
 		'<div class="v">' + (tp.open_count ? String(tp.avg_open_age_days).replace('.', ',') + ' Tage' : '—') + '</div>' +
 		'<div class="m">' + (tp.open_count ? 'Median ' + String(tp.median_open_age_days).replace('.', ',') +
@@ -2243,7 +2281,7 @@ PCBBoard.prototype.outgoingPackagesHtml = function (m) {
 		'</div>';
 
 	return '<section class="card"><div class="sec-h"><h2>📦 Ausgehende Pakete (Lieferscheine)</h2>' +
-		'<span class="muted">zugestellt / unterwegs / alt — alles zum Abrechnen</span></div>' +
+		'<span class="muted">zugestellt / unterwegs / zu klären — alles zum Abrechnen</span></div>' +
 		analysis + table + '</section>';
 };
 
@@ -2429,6 +2467,16 @@ var PCB_BOARD_CSS =
 	'text-overflow:ellipsis;white-space:nowrap}' +
 	'.tbl td.col-wo,.tbl th.col-wo{max-width:120px}' +
 	'.tbl td.col-wo .wo-list{flex-wrap:wrap}' +
+	// Ausgehende Pakete: Lieferschein 30 % schmaler (160 -> 112 px),
+	// Kunde 40 % schmaler (240 -> 144 px, langer Name gekürzt, voll im Tooltip).
+	'.tbl td.col-dn,.tbl th.col-dn{max-width:112px;white-space:nowrap}' +
+	'.tbl td.col-dn-customer,.tbl th.col-dn-customer{max-width:144px;overflow:hidden;' +
+	'text-overflow:ellipsis;white-space:nowrap}' +
+	// Kachel mit zwei Beträgen nebeneinander.
+	'.split-vals{display:flex;gap:18px;flex-wrap:wrap;margin-top:2px}' +
+	'.split-vals .sv{display:flex;flex-direction:column}' +
+	'.split-vals .sv-v{font-size:1.35rem;font-weight:680;font-variant-numeric:tabular-nums}' +
+	'.split-vals .sv-k{font-size:.74rem;color:var(--muted)}' +
 	'.mat-toggle{display:flex;align-items:center;gap:6px;border:0;background:transparent;padding:0;' +
 	'cursor:pointer;font-size:.8rem;color:var(--text-secondary);white-space:nowrap;text-align:left}' +
 	'.mat-toggle:hover .chev{color:var(--brand-teal)}' +

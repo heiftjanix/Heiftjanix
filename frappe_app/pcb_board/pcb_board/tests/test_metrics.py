@@ -283,6 +283,34 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertAlmostEqual(rr[0]["net_total"], 1500, delta=0.01)
         self.assertIsNone(rr[2]["positions"])   # keine Angabe -> None
 
+    def test_billing_shipment_date_prefers_ups_then_note(self):
+        data = self._data()
+        data["to_bill_delivery_notes"][0]["shipment_date"] = "2026-07-09"
+        b = m.build_metrics(data, CONFIG, date(2026, 7, 15))["billing"]
+        by_name = {r["name"]: r for r in b["ready"] + b["in_transit"] + b["unknown"]}
+        # LS-A: UPS-Versanddatum gewinnt
+        self.assertEqual(by_name["LS-A"]["shipment_date"], "2026-07-09")
+        self.assertEqual(by_name["LS-A"]["shipment_date_source"], "ups")
+        # LS-B: ohne UPS-Datum das Lieferscheindatum
+        self.assertEqual(by_name["LS-B"]["shipment_date"], "2026-07-14")
+        self.assertEqual(by_name["LS-B"]["shipment_date_source"], "note")
+
+    def test_billing_splits_clearable_from_review_amounts(self):
+        """„Jetzt abrechenbar" und „zu klären" dürfen sich nicht überschneiden:
+        ein zugestellter Lieferschein jenseits der Klärgrenze gehört zum Klärfall."""
+        data = self._data()
+        # LS-OLD (2025-05-01) ist zugestellt UND älter als 60 Tage
+        data["to_bill_delivery_notes"][2]["arrival_status"] = "delivered"
+        b = m.build_metrics(data, CONFIG, date(2026, 7, 15))["billing"]
+        self.assertEqual(b["ready_count"], 2)               # LS-A + LS-OLD
+        self.assertEqual(b["ready_clear_count"], 1)         # nur LS-A
+        self.assertAlmostEqual(b["ready_clear_net"], 5000, delta=0.01)
+        self.assertEqual(b["stale_count"], 1)
+        self.assertAlmostEqual(b["stale_net"], 1000, delta=0.01)
+        self.assertEqual(b["stale_days"], 60)
+        # Summe beider Beträge = alle zugestellten, nichts doppelt
+        self.assertAlmostEqual(b["ready_clear_net"] + b["stale_net"], 6000, delta=0.01)
+
     def test_billing_throughput_open_age(self):
         tp = m.build_metrics(self._data(), CONFIG, date(2026, 7, 15))["billing"]["throughput"]
         # offene Lieferscheine: LS-A (4 T.), LS-B (1 T.), LS-OLD (440 T.)

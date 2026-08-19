@@ -778,6 +778,57 @@ def top_customers(data: dict, today: date, limit: int = 5) -> list[dict]:
     } for name, amt in ranked]
 
 
+def top_customers_year(data: dict, today: date, limit: int = 10) -> dict:
+    """Top-N Kunden des laufenden Jahres nach Netto-Rechnungsumsatz (Jahresanfang
+    bis heute), mit Anteil am Jahresumsatz und dem Vorjahreswert desselben Kunden.
+
+    Der Vorjahresbetrag ist das KOMPLETTE Vorjahr — die Prozentangabe daneben
+    vergleicht also einen laufenden Zeitraum mit einem abgeschlossenen Jahr und
+    fällt früh im Jahr zwangsläufig negativ aus. Im Board steht das als Hinweis
+    unter der Tabelle, damit die Zahl nicht als Kundenverlust gelesen wird.
+    """
+    totals: dict[str, float] = defaultdict(float)
+    counts: dict[str, int] = defaultdict(int)
+    year_total = 0.0
+    for inv in data.get("invoices", []) or []:
+        d = _pdate(inv)
+        if d and d.year == today.year and d <= today:
+            amt = _net(inv)
+            key = inv.get("customer_name") or inv.get("customer") or "?"
+            totals[key] += amt
+            counts[key] += 1
+            year_total += amt
+
+    prev: dict[str, float] = defaultdict(float)
+    for inv in data.get("prev_year_invoices", []) or []:
+        d = _pdate(inv)
+        if d and d.year == today.year - 1:
+            prev[inv.get("customer_name") or inv.get("customer") or "?"] += _net(inv)
+
+    rows = []
+    for name, amt in sorted(totals.items(), key=lambda kv: kv[1], reverse=True)[:limit]:
+        prev_amt = prev.get(name)
+        rows.append({
+            "customer": name,
+            "net_total": round(amt, 2),
+            "invoices": counts[name],
+            "share_pct": round(amt / year_total, 4) if year_total else 0.0,
+            "prev_net_total": round(prev_amt, 2) if prev_amt is not None else None,
+            "delta_pct": (round((amt - prev_amt) / prev_amt, 4)
+                          if prev_amt and prev_amt > 0 else None),
+        })
+    return {
+        "year": today.year,
+        "prev_year": today.year - 1,
+        "rows": rows,
+        "year_total": round(year_total, 2),
+        # Anteil der Top-N am Jahresumsatz = Klumpenrisiko in einer Zahl.
+        "top_share_pct": (round(sum(r["net_total"] for r in rows) / year_total, 4)
+                          if year_total else 0.0),
+        "customer_count": len(totals),
+    }
+
+
 def top_suppliers(data: dict, today: date, limit: int = 5) -> list[dict]:
     """Top-N Lieferanten nach Netto-Einkaufswert (Wareneingänge) im laufenden
     Monat, mit Anteil am Monats-Wareneingang (macht Lieferantenabhängigkeit
@@ -1417,6 +1468,7 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
         "top_products": top_products(data),
         "top_purchases": top_purchases(data),
         "top_customers": top_customers(data, today),
+        "top_customers_year": top_customers_year(data, today),
         "top_suppliers": top_suppliers(data, today),
         "product_margins": product_margins(data),
         "product_flops": product_flops(data),

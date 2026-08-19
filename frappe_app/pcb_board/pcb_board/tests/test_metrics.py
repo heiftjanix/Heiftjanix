@@ -969,6 +969,21 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertEqual(wo["FA-2"]["awaiting"], [])
         self.assertEqual(len(wo["FA-2"]["missing_items"]), 1)
 
+    def test_todo_orders_carry_followup_date(self):
+        """Wiedervorlage aus dem Kundenauftrag (Custom Field) wird durchgereicht;
+        ohne Eintrag bleibt sie leer."""
+        data = self._data()
+        data["open_sales_orders"] = [
+            {"name": "AB-1", "customer_name": "Kunde A", "delivery_date": "2026-07-17",
+             "net_open": 500, "followup_date": "2026-08-05"},
+            {"name": "AB-2", "customer_name": "Kunde B", "delivery_date": "2026-07-17",
+             "net_open": 300},
+        ]
+        rows = {r["name"]: r for r in
+                m.build_metrics(data, CONFIG, date(2026, 7, 15))["todo"]["due_this_week"]}
+        self.assertEqual(rows["AB-1"]["followup_date"], "2026-08-05")
+        self.assertIsNone(rows["AB-2"]["followup_date"])
+
     def test_todo_orders_attach_work_orders_and_material_flag(self):
         data = self._wo_data()
         data["open_sales_orders"] = [

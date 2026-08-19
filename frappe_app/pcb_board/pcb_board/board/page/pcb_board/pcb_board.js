@@ -126,7 +126,7 @@ PCBBoard.prototype.shellHtml = function () {
 		'<div class="pcb-root">' +
 		'<div class="hd">' +
 		'<div class="brand">' + this.pcbLogoSvg(46, false, '') +
-		'<div><h1 id="pcb-h1">Team-Board</h1><div class="tag">der/die/das Sekretär/-in</div>' +
+		'<div><h1 id="pcb-h1">Team-Board</h1><div class="tag">Sekretariat</div>' +
 		'<div class="slogan" id="pcb-slogan" hidden></div>' +
 		'<div class="sub" id="pcb-stand">Lade …</div></div></div>' +
 		'<div class="actions">' +
@@ -137,13 +137,15 @@ PCBBoard.prototype.shellHtml = function () {
 		'</div></div>' +
 		'<div class="tabs">' +
 		'<button class="active" data-tab="mail">📥 Posteingang</button>' +
-		'<button data-tab="material">📦 Materialwirtschaft</button>' +
+		'<button data-tab="wareneingang">📥 Wareneingang</button>' +
+		'<button data-tab="warenausgang">📦 Warenausgang</button>' +
 		'<button data-tab="guv">📊 GuV</button>' +
 		'<button data-tab="crm">🤝 CRM</button>' +
 		'<button data-tab="assign">👤 Zuweisungen</button>' +
 		'</div>' +
 		'<div class="tab-panel active" id="pcb-tab-mail"><p class="muted">Lade Daten …</p></div>' +
-		'<div class="tab-panel" id="pcb-tab-material"></div>' +
+		'<div class="tab-panel" id="pcb-tab-wareneingang"></div>' +
+		'<div class="tab-panel" id="pcb-tab-warenausgang"></div>' +
 		'<div class="tab-panel" id="pcb-tab-guv"></div>' +
 		'<div class="tab-panel" id="pcb-tab-crm"></div>' +
 		'<div class="tab-panel" id="pcb-tab-assign"><p class="muted">Lade Daten …</p></div>' +
@@ -385,11 +387,12 @@ PCBBoard.prototype.renderAll = function () {
 	var next = ' · nächster Refresh in ' + this.nextRefreshIn();
 	this.$root.find('#pcb-stand').text('Stand ' + stand + duration + next);
 	this.$root.find('#pcb-tab-mail').html(this.mailTabHtml(m));
-	this.$root.find('#pcb-tab-material').html(this.materialTabHtml(m));
+	this.$root.find('#pcb-tab-wareneingang').html(this.wareneingangTabHtml(m));
+	this.$root.find('#pcb-tab-warenausgang').html(this.warenausgangTabHtml(m));
 	this.$root.find('#pcb-tab-guv').html(this.guvTabHtml(m));
 	this.$root.find('#pcb-tab-crm').html(this.crmTabHtml(m));
 	this.bindMailInteractions();
-	this.bindMaterialInteractions();
+	this.bindWarenInteractions();
 	this.restoreFocus(keep);
 };
 
@@ -422,11 +425,16 @@ PCBBoard.prototype.restoreFocus = function (keep) {
 	}
 };
 
-// Materialwirtschaft = frühere Tabs „ToDo" (Liefertermine) + „Abrechnung"
-// (ausgehende Pakete/Lieferscheine), zusammengefasst auf je eine Kachel.
-PCBBoard.prototype.materialTabHtml = function (m) {
-	return this.deliveryDatesHtml(m) + this.outgoingPackagesHtml(m) +
-		this.purchaseOrdersHtml(m) + this.productionOrdersHtml(m);
+// Wareneingang = was hereinkommt: Bestellungen mit erwartetem Termin und die
+// Fertigungsaufträge, für die das Material gedacht ist.
+PCBBoard.prototype.wareneingangTabHtml = function (m) {
+	return this.purchaseOrdersHtml(m) + this.productionOrdersHtml(m);
+};
+
+// Warenausgang = was hinausgeht: Liefertermine der Kundenaufträge und die
+// Lieferscheine, die noch abzurechnen sind.
+PCBBoard.prototype.warenausgangTabHtml = function (m) {
+	return this.deliveryDatesHtml(m) + this.outgoingPackagesHtml(m);
 };
 
 // GuV = frühere Tabs „Umsatz" + „Kosten".
@@ -698,8 +706,14 @@ PCBBoard.prototype.deliveryDatesHtml = function (m) {
 			self.esc(name) + '</a>';
 	}
 	// Eine gemeinsame, nach Liefertermin sortierte Liste (überfällig zuerst).
+	// Neuester Termin oben: absteigend nach Liefertermin, überfällige damit unten
+	// (dort steht der älteste Rückstand zuletzt).
 	var rows = overdue.map(function (r) { return { r: r, kind: 'overdue' }; })
 		.concat(week.map(function (r) { return { r: r, kind: 'week' }; }));
+	rows.sort(function (a, z) {
+		var da = a.r.delivery_date || '', dz = z.r.delivery_date || '';
+		return da < dz ? 1 : (da > dz ? -1 : String(a.r.name).localeCompare(String(z.r.name)));
+	});
 	var body = rows.map(function (o) {
 		var r = o.r;
 		var badge = o.kind === 'overdue'
@@ -707,17 +721,30 @@ PCBBoard.prototype.deliveryDatesHtml = function (m) {
 				? '<span class="dot-hi">' + r.days_overdue + ' Tag(e) überfällig</span>'
 				: '<span class="dot-hi">heute fällig</span>')
 			: '<span class="pill info">diese Woche</span>';
-		return '<tr><td>' + soLink(r.name) + '</td><td>' + self.esc(r.customer || '') + '</td>' +
+		// Wiedervorlage: im Auftrag gepflegt (Custom Field), hier nur angezeigt.
+		var followup = r.followup_date
+			? '<span class="followup" title="Wiedervorlage laut Kundenauftrag">📌 ' +
+				self.esc(frappe.datetime.str_to_user(r.followup_date)) + '</span>'
+			: '<span class="muted">—</span>';
+		return '<tr><td>' + soLink(r.name) + '</td>' +
+			'<td class="col-customer" title="' + self.esc(r.customer || '') + '">' +
+			self.esc(r.customer || '') + '</td>' +
+			'<td>' + followup + '</td>' +
 			'<td>' + self.esc(frappe.datetime.str_to_user(r.delivery_date)) + '</td>' +
 			'<td>' + badge + '</td>' +
-			'<td>' + self.soWorkOrdersCell(r) + '</td>' +
+			'<td class="col-wo">' + self.soWorkOrdersCell(r) + '</td>' +
 			'<td class="num">' + self.eur(r.net_open) + '</td></tr>';
 	}).join('');
 	var table = rows.length
-		? '<table class="tbl"><thead><tr><th>Auftrag</th><th>Kunde</th><th>Liefertermin</th>' +
-			'<th>Status</th><th>Produktionsauftrag</th><th class="num">Offen (netto)</th></tr></thead>' +
+		? '<table class="tbl"><thead><tr><th>Auftrag</th><th class="col-customer">Kunde</th>' +
+			'<th>Wiedervorlage</th><th>Liefertermin</th>' +
+			'<th>Status</th><th class="col-wo">Produktionsauftrag</th>' +
+			'<th class="num">Offen (netto)</th></tr></thead>' +
 			'<tbody>' + body + '</tbody></table>' +
-			'<p class="muted" style="font-size:.78rem;margin:8px 0 0">✅ hinter dem Produktionsauftrag = ' +
+			'<p class="muted" style="font-size:.78rem;margin:8px 0 0">Sortiert nach Liefertermin, ' +
+			'neuester zuerst. „Wiedervorlage" wird im Kundenauftrag gepflegt (Feld ' +
+			'<code>Wiedervorlage</code>, auch nach Freigabe änderbar) — bei Teillieferung oder ' +
+			'Verzögerung eintragen. ✅ hinter dem Produktionsauftrag = ' +
 			'Material vollständig (Bestand reicht bzw. ist bereits umgelagert). 🚚 = Material noch im ' +
 			'Zulauf, ⛔ = es fehlt Material, das noch nicht bestellt ist.</p>'
 		: '<p class="muted">Nichts diese Woche oder überfällig — alles im Plan. ✅</p>';
@@ -807,13 +834,13 @@ PCBBoard.prototype.leadCell = function (r) {
 
 // Aufgeklappte Bestellungen bleiben über einen Hintergrund-Refresh hinweg offen
 // (gleiche Logik wie bei den Mail-Vorschauen).
-PCBBoard.prototype.bindMaterialInteractions = function () {
+PCBBoard.prototype.bindWarenInteractions = function () {
 	var self = this;
-	this.$root.find('#pcb-tab-material .po-toggle').on('click', function (e) {
+	this.$root.find('#pcb-tab-wareneingang .po-toggle').on('click', function (e) {
 		e.stopPropagation();
 		var $tr = $(this).closest('tr');
 		var po = $tr.data('po');
-		var $detail = self.$root.find('#pcb-tab-material [data-po-detail="' + po + '"]');
+		var $detail = self.$root.find('#pcb-tab-wareneingang [data-po-detail="' + po + '"]');
 		var open = !!$detail.prop('hidden');
 		$detail.prop('hidden', !open);
 		$(this).find('.chev').text(open ? '▴' : '▾');
@@ -2394,6 +2421,14 @@ var PCB_BOARD_CSS =
 	'.tbl tr.held{background:color-mix(in srgb,var(--warning) 10%,transparent)}' +
 	'.tbl tr.held td:not(.hold-cell){opacity:.62}' +
 	'.wo-chip.held{border-color:var(--warning);border-style:dashed}' +
+	'.followup{font-weight:650;color:var(--brand-teal);white-space:nowrap}' +
+	// Schmalere Spalten in der Liefertermin-Liste: Kundenname 25 % schmaler
+	// (240 -> 180 px) und bei Bedarf gekürzt (voller Name im Tooltip),
+	// Produktionsauftrag 40 % schmaler (200 -> 120 px), Kürzel brechen um.
+	'.tbl td.col-customer,.tbl th.col-customer{max-width:180px;overflow:hidden;' +
+	'text-overflow:ellipsis;white-space:nowrap}' +
+	'.tbl td.col-wo,.tbl th.col-wo{max-width:120px}' +
+	'.tbl td.col-wo .wo-list{flex-wrap:wrap}' +
 	'.mat-toggle{display:flex;align-items:center;gap:6px;border:0;background:transparent;padding:0;' +
 	'cursor:pointer;font-size:.8rem;color:var(--text-secondary);white-space:nowrap;text-align:left}' +
 	'.mat-toggle:hover .chev{color:var(--brand-teal)}' +

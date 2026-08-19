@@ -16,3 +16,8 @@ scheduler_events = {
         "*/5 6-18 * * 1-5": ["pcb_board.refresh.scheduled_mail_sync"],
     }
 }
+
+# Das Board zeigt die Wiedervorlage aus dem Kundenauftrag. Das Feld wird beim
+# Migrieren angelegt, falls es fehlt — so ist es auf einer neuen Site sofort da
+# und nicht nur dort, wo es einmal von Hand eingetragen wurde.
+after_migrate = ["pcb_board.setup.ensure_custom_fields"]

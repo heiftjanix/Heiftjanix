@@ -284,6 +284,8 @@ def todo_orders(data: dict, today: date, work_orders: list[dict] | None = None) 
             "name": so.get("name"),
             "customer": so.get("customer_name") or so.get("customer"),
             "delivery_date": d.isoformat(),
+            # Wiedervorlage aus dem Auftrag (Custom Field), vom Team gepflegt.
+            "followup_date": so.get("followup_date"),
             "net_open": round(net_open, 2),
             "days_overdue": (today - d).days,
             "work_orders": wos,

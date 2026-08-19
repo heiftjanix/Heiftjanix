@@ -179,21 +179,30 @@ def _fetch_erpnext(config: dict) -> dict:
         r["tracking_number"] = r.pop("custom_tracking_numbers", None)
         r["shipment_date"] = r.pop("custom_ups_shipment_date", None)
 
+    so_fields = ["name", "customer", "customer_name", "base_net_total", "per_billed",
+                 "delivery_date"]
+    # Wiedervorlage ist ein Custom Field (siehe setup.py). Vor dem Abfragen prüfen:
+    # auf einer Site ohne das Feld würde die Abfrage sonst komplett scheitern.
+    has_followup = frappe.get_meta("Sales Order").has_field("custom_wiedervorlage")
+    if has_followup:
+        so_fields.append("custom_wiedervorlage")
     sos = frappe.get_all(
         "Sales Order",
         filters=[["status", "not in", ["Closed", "Cancelled", "Completed"]], ["docstatus", "=", 1]],
-        fields=["name", "customer", "customer_name", "base_net_total", "per_billed", "delivery_date"],
+        fields=so_fields,
         limit_page_length=0,
         ignore_permissions=True,
     )
     open_sales_orders = []
     for r in sos:
         net_open = float(r.get("base_net_total") or 0) * (1.0 - float(r.get("per_billed") or 0) / 100.0)
+        followup = r.get("custom_wiedervorlage")
         open_sales_orders.append({
             "name": r["name"],
             "customer": r.get("customer"),
             "customer_name": r.get("customer_name"),
             "delivery_date": str(r["delivery_date"]) if r.get("delivery_date") else None,
+            "followup_date": str(followup)[:10] if followup else None,
             "net_open": round(net_open, 2),
         })
 

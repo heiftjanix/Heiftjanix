@@ -16,11 +16,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-def _install_frappe_stub(get_all, exists=lambda *a, **k: True):
-    """Minimaler frappe-Ersatz; refresh.py importiert ihn auf Modulebene."""
+def _install_frappe_stub(get_all, exists=lambda *a, **k: True, has_field=True):
+    """Minimaler frappe-Ersatz; refresh.py importiert ihn auf Modulebene.
+    has_field steuert, ob Custom Fields (z. B. Wiedervorlage) vorhanden sind."""
     frappe = types.ModuleType("frappe")
     frappe.get_all = get_all
     frappe.db = types.SimpleNamespace(exists=exists)
+    frappe.get_meta = lambda dt: types.SimpleNamespace(has_field=lambda f: has_field)
     frappe.logged = []
     frappe.log_error = lambda title=None, message=None: frappe.logged.append(title)
     frappe.get_traceback = lambda: "traceback"
@@ -51,7 +53,7 @@ def _install_frappe_stub(get_all, exists=lambda *a, **k: True):
 class TestFetchErpnext(unittest.TestCase):
     CONFIG = {"forecast": {"baseline_months": 3}}
 
-    def _run(self, failing_doctypes=()):
+    def _run(self, failing_doctypes=(), has_field=True):
         """Ruft _fetch_erpnext mit protokollierendem get_all auf."""
         calls = []
 
@@ -69,7 +71,7 @@ class TestFetchErpnext(unittest.TestCase):
                          "base_net_amount": 40, "qty": 2}]
             return []
 
-        frappe = _install_frappe_stub(get_all)
+        frappe = _install_frappe_stub(get_all, has_field=has_field)
         for mod in [m for m in sys.modules if m.startswith("pcb_board")]:
             del sys.modules[mod]
         from pcb_board import refresh
@@ -101,6 +103,17 @@ class TestFetchErpnext(unittest.TestCase):
             self.assertIn(key, data)
         for key in ("quotations", "leads", "opportunities"):
             self.assertIn(key, data["crm"])
+
+    def test_followup_field_only_queried_when_it_exists(self):
+        """Die Wiedervorlage ist ein Custom Field. Auf einer Site ohne das Feld darf
+        es nicht abgefragt werden — sonst scheitert die ganze Auftragsabfrage."""
+        for has_field, expected in ((True, True), (False, False)):
+            _, calls, _ = self._run(has_field=has_field)
+            so_calls = [c for c in calls if c["doctype"] == "Sales Order"]
+            self.assertTrue(so_calls)
+            asked = any("custom_wiedervorlage" in (c.get("fields") or []) for c in so_calls)
+            self.assertEqual(asked, expected,
+                             "Feldabfrage passt nicht zum Vorhandensein des Custom Fields")
 
     def test_failing_production_block_does_not_kill_refresh(self):
         """Fällt die Fertigungsabfrage aus, fehlt nur dieser Abschnitt."""

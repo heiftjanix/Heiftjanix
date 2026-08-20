@@ -142,6 +142,7 @@ PCBBoard.prototype.shellHtml = function () {
 		'<button data-tab="warenausgang">📦 Warenausgang</button>' +
 		'<button data-tab="guv">📊 GuV</button>' +
 		'<button data-tab="crm">🤝 CRM</button>' +
+		'<button data-tab="buchhaltung">🧾 Buchhaltung</button>' +
 		'<button data-tab="assign">👤 Zuweisungen</button>' +
 		'</div>' +
 		'<div class="tab-panel active" id="pcb-tab-mail"><p class="muted">Lade Daten …</p></div>' +
@@ -150,6 +151,7 @@ PCBBoard.prototype.shellHtml = function () {
 		'<div class="tab-panel" id="pcb-tab-warenausgang"></div>' +
 		'<div class="tab-panel" id="pcb-tab-guv"></div>' +
 		'<div class="tab-panel" id="pcb-tab-crm"></div>' +
+		'<div class="tab-panel" id="pcb-tab-buchhaltung"></div>' +
 		'<div class="tab-panel" id="pcb-tab-assign"><p class="muted">Lade Daten …</p></div>' +
 		'<p class="foot">Nur Vorschläge — es wird nichts automatisch gesendet oder gebucht. ' +
 		'Alle Beträge netto.</p>' +
@@ -394,6 +396,7 @@ PCBBoard.prototype.renderAll = function () {
 	this.$root.find('#pcb-tab-warenausgang').html(this.warenausgangTabHtml(m));
 	this.$root.find('#pcb-tab-guv').html(this.guvTabHtml(m));
 	this.$root.find('#pcb-tab-crm').html(this.crmTabHtml(m));
+	this.$root.find('#pcb-tab-buchhaltung').html(this.buchhaltungTabHtml(m));
 	this.bindMailInteractions();
 	this.bindWarenInteractions();
 	this.restoreFocus(keep);
@@ -696,6 +699,80 @@ PCBBoard.prototype.crmTabHtml = function (m) {
 	return '<section class="card"><div class="sec-h"><h2>🤝 CRM-Überblick</h2>' +
 		'<span class="muted">Angebote, Trefferquote und Kundenentwicklung</span></div>' + tiles +
 		'</section>' + followCard + convCard + byCustCard + openCard + newCard + dormCard + leadCard;
+};
+
+PCBBoard.prototype.piLink = function (name) {
+	return '<a href="/app/purchase-invoice/' + encodeURIComponent(name) + '" target="_blank">' +
+		this.esc(name) + '</a>';
+};
+
+PCBBoard.prototype.buchhaltungTabHtml = function (m) {
+	var self = this;
+	var pi = m.purchase_invoices;
+	if (!pi) {
+		return '<section class="card"><div class="sec-h"><h2>🧾 Buchhaltung</h2></div>' +
+			'<p class="muted">Die Buchhaltungsdaten kommen mit dem nächsten Datenabruf — ' +
+			'auf „⟳ Live aktualisieren" klicken.</p></section>';
+	}
+
+	var tiles =
+		'<div class="tiles" style="margin-bottom:12px">' +
+		'<div class="tile hero"><p class="k">Offene Eingangsrechnungen (netto)</p>' +
+		'<div class="v">' + self.eur(pi.total_net) + '</div>' +
+		'<div class="m">' + pi.rows.length + ' Rechnung(en) noch nicht bezahlt</div></div>' +
+		'<div class="tile"><p class="k">Überfällig</p>' +
+		'<div class="v" style="color:' + (pi.overdue.length ? 'var(--critical)' : 'var(--good)') + '">' +
+		self.eur(pi.overdue_net) + '</div>' +
+		'<div class="m">' + (pi.overdue.length
+			? pi.overdue.length + ' Rechnung(en) · älteste ' + pi.max_days_overdue + ' Tag(e)'
+			: 'keine überfällige Rechnung') + '</div></div>' +
+		'<div class="tile"><p class="k">Noch fristgerecht</p>' +
+		'<div class="v">' + self.eur(pi.upcoming_net) + '</div>' +
+		'<div class="m">' + pi.upcoming.length + ' Rechnung(en)</div></div>' +
+		(pi.held.length
+			? '<div class="tile"><p class="k">Zurückgehalten (on hold)</p>' +
+				'<div class="v">' + self.eur(pi.held_net) + '</div>' +
+				'<div class="m">' + pi.held.length + ' Rechnung(en) bewusst gesperrt</div></div>'
+			: '') +
+		'</div>';
+
+	function row(r) {
+		var due = r.due_date
+			? self.esc(frappe.datetime.str_to_user(r.due_date))
+			: '<span class="muted">—</span>';
+		var badge;
+		if (r.on_hold) {
+			badge = '<span class="pill" title="Rechnung ist im Einkauf/Buchhaltung gesperrt — ' +
+				'zählt nicht in die Fristen-Kacheln">⏸ on hold</span>';
+		} else if (r.overdue) {
+			badge = '<span class="dot-hi">' + r.days_overdue + ' Tag(e) überfällig</span>';
+		} else if (r.days_overdue != null) {
+			badge = '<span class="pill info">fällig in ' + Math.abs(r.days_overdue) + ' Tag(en)</span>';
+		} else {
+			badge = '<span class="muted">ohne Fälligkeitsdatum</span>';
+		}
+		return '<tr><td>' + self.piLink(r.name) + '</td>' +
+			'<td class="col-customer" title="' + self.esc(r.supplier || '') + '">' +
+			self.esc(r.supplier || '') + '</td>' +
+			'<td>' + self.esc(r.bill_no || '—') + '</td>' +
+			'<td>' + due + '</td>' +
+			'<td>' + badge + '</td>' +
+			'<td class="num">' + self.eur(r.outstanding_amount) + '</td></tr>';
+	}
+
+	var table = pi.rows.length
+		? '<table class="tbl"><thead><tr><th>Rechnung</th><th class="col-customer">Lieferant</th>' +
+			'<th>Belegnr.</th><th>Fällig am</th><th>Status</th>' +
+			'<th class="num">Offen (netto)</th></tr></thead><tbody>' +
+			pi.rows.map(row).join('') + '</tbody></table>' +
+			'<p class="muted" style="font-size:.78rem;margin:8px 0 0">Sortiert nach Fälligkeit, ' +
+			'die dringendste Zahlung zuerst. „Belegnr." ist die Rechnungsnummer des Lieferanten. ' +
+			'Gesperrte Rechnungen (⏸ on hold) zählen nicht in die Fristen-Kacheln oben.</p>'
+		: '<p class="muted">Keine offene Eingangsrechnung. ✅</p>';
+
+	return '<section class="card"><div class="sec-h"><h2>🧾 Buchhaltung</h2>' +
+		'<span class="muted">Offene Eingangsrechnungen</span></div>' + tiles + '</section>' +
+		'<section class="card">' + table + '</section>';
 };
 
 PCBBoard.prototype.deliveryDatesHtml = function (m) {

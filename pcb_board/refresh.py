@@ -329,6 +329,34 @@ def _fetch_erpnext(config: dict) -> dict:
     crm = _optional("CRM-Daten", _fetch_crm,
                     {"quotations": [], "leads": [], "opportunities": []})
 
+    def _fetch_purchase_invoices() -> list[dict]:
+        """Eingangsrechnungen (Purchase Invoice) für den Buchhaltungs-Reiter —
+        nur noch nicht vollständig bezahlte, gebuchte Rechnungen (offener Betrag
+        > 0 statt über den Status zu filtern, da „Overdue"/„Unpaid"/„Partly Paid"
+        je Site anders heißen können)."""
+        return [{
+            "name": r["name"],
+            "supplier": r.get("supplier_name") or r.get("supplier"),
+            "bill_no": r.get("bill_no"),
+            "bill_date": str(r["bill_date"])[:10] if r.get("bill_date") else None,
+            "posting_date": str(r["posting_date"])[:10] if r.get("posting_date") else None,
+            "due_date": str(r["due_date"])[:10] if r.get("due_date") else None,
+            "grand_total": round(float(r.get("base_grand_total") or 0), 2),
+            "outstanding_amount": round(float(r.get("outstanding_amount") or 0), 2),
+            "on_hold": bool(r.get("on_hold")),
+            "status": r.get("status"),
+        } for r in frappe.get_all(
+            "Purchase Invoice",
+            filters=[["docstatus", "=", 1], ["outstanding_amount", ">", 0]],
+            fields=["name", "supplier", "supplier_name", "bill_no", "bill_date",
+                    "posting_date", "due_date", "base_grand_total",
+                    "outstanding_amount", "on_hold", "status"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        )]
+
+    purchase_invoices = _optional("Eingangsrechnungen", _fetch_purchase_invoices, [])
+
     def _fetch_production() -> tuple[list[dict], list[dict], list[dict]]:
         """Fertigungsaufträge, Materialbedarf, EKT-Nummern und der LIVE-Lagerbestand
         — optionaler Block."""
@@ -658,6 +686,7 @@ def _fetch_erpnext(config: dict) -> dict:
         "ekt_components": ekt_components,
         "stock_bins": stock_bins,
         "crm": crm,
+        "purchase_invoices": purchase_invoices,
         "purchase_receipts": purchase_receipts,
         "invoice_items": invoice_items,
         "invoice_items_year": invoice_items_year,

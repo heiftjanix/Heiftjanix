@@ -335,6 +335,55 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertEqual(d["rows"][0]["customer"], "Kunde 00")     # groesster Umsatz
         self.assertLess(d["top_share_pct"], 1.0)                   # nicht alle enthalten
 
+    def test_top_suppliers_year_ranks_and_compares(self):
+        data = self._data()
+        data["purchase_receipts"] = [
+            {"name": "WE-1", "supplier_name": "Lief A", "base_net_total": 30000,
+             "posting_date": "2026-02-10"},
+            {"name": "WE-2", "supplier_name": "Lief A", "base_net_total": 10000,
+             "posting_date": "2026-06-10"},
+            {"name": "WE-3", "supplier_name": "Lief B", "base_net_total": 25000,
+             "posting_date": "2026-03-10"},
+            {"name": "WE-4", "supplier_name": "Lief C", "base_net_total": 5000,
+             "posting_date": "2026-07-01"},
+            # Nach dem Stichtag: darf nicht mitzaehlen
+            {"name": "WE-SPAETER", "supplier_name": "Lief A", "base_net_total": 77000,
+             "posting_date": "2026-08-01"},
+            # Vorjahr: nur Vergleichsspalte, nicht Jahreseinkauf
+            {"name": "WE-V1", "supplier_name": "Lief A", "base_net_total": 20000,
+             "posting_date": "2025-05-01"},
+            {"name": "WE-V2", "supplier_name": "Lief B", "base_net_total": 50000,
+             "posting_date": "2025-05-01"},
+        ]
+        d = m.build_metrics(data, CONFIG, date(2026, 7, 15))["top_suppliers_year"]
+        self.assertEqual((d["year"], d["prev_year"]), (2026, 2025))
+        self.assertEqual([r["supplier"] for r in d["rows"]], ["Lief A", "Lief B", "Lief C"])
+        a = d["rows"][0]
+        self.assertAlmostEqual(a["net_total"], 40000, delta=0.01)
+        self.assertEqual(a["receipts"], 2)
+        self.assertAlmostEqual(a["share_pct"], 40000 / 70000, delta=0.0001)
+        self.assertAlmostEqual(a["prev_net_total"], 20000, delta=0.01)
+        self.assertAlmostEqual(a["delta_pct"], 1.0, delta=0.0001)
+        self.assertAlmostEqual(d["rows"][1]["delta_pct"], (25000 - 50000) / 50000, delta=0.0001)
+        self.assertIsNone(d["rows"][2]["prev_net_total"])
+        self.assertIsNone(d["rows"][2]["delta_pct"])
+        self.assertAlmostEqual(d["year_total"], 70000, delta=0.01)
+        self.assertAlmostEqual(d["top_share_pct"], 1.0, delta=0.0001)
+        self.assertEqual(d["supplier_count"], 3)
+
+    def test_top_suppliers_year_limited_to_ten(self):
+        data = self._data()
+        data["purchase_receipts"] = [
+            {"name": "WE-%d" % i, "supplier_name": "Lief %02d" % i,
+             "base_net_total": 1000 * (20 - i), "posting_date": "2026-03-01"}
+            for i in range(15)
+        ]
+        d = m.build_metrics(data, CONFIG, date(2026, 7, 15))["top_suppliers_year"]
+        self.assertEqual(len(d["rows"]), 10)
+        self.assertEqual(d["supplier_count"], 15)
+        self.assertEqual(d["rows"][0]["supplier"], "Lief 00")
+        self.assertLess(d["top_share_pct"], 1.0)
+
     def test_billing_shipment_date_prefers_ups_then_note(self):
         data = self._data()
         data["to_bill_delivery_notes"][0]["shipment_date"] = "2026-07-09"
@@ -1049,20 +1098,59 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertEqual(wo["FA-2"]["awaiting"], [])
         self.assertEqual(len(wo["FA-2"]["missing_items"]), 1)
 
-    def test_todo_orders_carry_followup_date(self):
-        """Wiedervorlage aus dem Kundenauftrag (Custom Field) wird durchgereicht;
-        ohne Eintrag bleibt sie leer."""
+    def test_todo_orders_followup_controls_visibility(self):
+        """Die Wiedervorlage entscheidet, OB ein Auftrag in der Liste steht — der
+        Liefertermin bleibt für Status und Gruppierung maßgeblich.
+        Heute = Mi 15.07.2026, Woche bis So 19.07."""
+        data = self._data()
+        data["open_sales_orders"] = [
+            # verzögert, aber auf den 05.08. zurückgelegt -> ruht, nicht in der Liste
+            {"name": "AB-RUHT", "customer_name": "Kunde A", "delivery_date": "2026-07-17",
+             "net_open": 500, "followup_date": "2026-08-05"},
+            # ohne Wiedervorlage: unverändert nach Liefertermin
+            {"name": "AB-WOCHE", "customer_name": "Kunde B", "delivery_date": "2026-07-17",
+             "net_open": 300},
+            # überfällig, Wiedervorlage diese Woche -> wieder auf den Tisch
+            {"name": "AB-ALT", "customer_name": "Kunde C", "delivery_date": "2026-06-01",
+             "net_open": 900, "followup_date": "2026-07-16"},
+            # Liefertermin erst im Dezember, aber heute zur Wiedervorlage
+            {"name": "AB-FRUEH", "customer_name": "Kunde D", "delivery_date": "2026-12-01",
+             "net_open": 700, "followup_date": "2026-07-15"},
+        ]
+        todo = m.build_metrics(data, CONFIG, date(2026, 7, 15))["todo"]
+        listed = {r["name"]: r for r in todo["overdue"] + todo["due_this_week"]}
+        self.assertNotIn("AB-RUHT", listed, "zurückgelegter Auftrag darf nicht erscheinen")
+        self.assertEqual(sorted(listed), ["AB-ALT", "AB-FRUEH", "AB-WOCHE"])
+
+        # Gruppierung und Status hängen am Liefertermin, nicht an der Wiedervorlage
+        self.assertEqual([r["name"] for r in todo["overdue"]], ["AB-ALT"])
+        self.assertEqual(listed["AB-ALT"]["days_overdue"], 44)
+        self.assertEqual(listed["AB-ALT"]["due_state"], "overdue")
+        self.assertEqual(listed["AB-ALT"]["listed_by"], "followup")
+        # Dezember-Termin: nur wegen der Wiedervorlage hier, Status entsprechend
+        self.assertEqual(listed["AB-FRUEH"]["due_state"], "later")
+        self.assertEqual(listed["AB-FRUEH"]["listed_by"], "followup")
+        self.assertLess(listed["AB-FRUEH"]["days_overdue"], 0)
+        # ohne Wiedervorlage unverändert
+        self.assertEqual(listed["AB-WOCHE"]["due_state"], "week")
+        self.assertEqual(listed["AB-WOCHE"]["listed_by"], "delivery")
+
+        # Kacheln bleiben ehrlich: überfällig zählt nur den echten Rückstand
+        self.assertAlmostEqual(todo["overdue_net"], 900, delta=0.01)
+        self.assertAlmostEqual(todo["avg_overdue_days"], 44, delta=0.01)
+        self.assertAlmostEqual(todo["due_this_week_net"], 1000, delta=0.01)   # 300 + 700
+
+    def test_todo_orders_followup_equal_to_delivery_is_not_marked(self):
+        """Wiedervorlage = Liefertermin ändert nichts und wird nicht als Grund
+        für die Listung ausgewiesen."""
         data = self._data()
         data["open_sales_orders"] = [
             {"name": "AB-1", "customer_name": "Kunde A", "delivery_date": "2026-07-17",
-             "net_open": 500, "followup_date": "2026-08-05"},
-            {"name": "AB-2", "customer_name": "Kunde B", "delivery_date": "2026-07-17",
-             "net_open": 300},
+             "net_open": 500, "followup_date": "2026-07-17"},
         ]
-        rows = {r["name"]: r for r in
-                m.build_metrics(data, CONFIG, date(2026, 7, 15))["todo"]["due_this_week"]}
-        self.assertEqual(rows["AB-1"]["followup_date"], "2026-08-05")
-        self.assertIsNone(rows["AB-2"]["followup_date"])
+        row = m.build_metrics(data, CONFIG, date(2026, 7, 15))["todo"]["due_this_week"][0]
+        self.assertEqual(row["listed_by"], "delivery")
+        self.assertEqual(row["followup_date"], "2026-07-17")
 
     def test_todo_orders_attach_work_orders_and_material_flag(self):
         data = self._wo_data()

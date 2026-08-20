@@ -248,7 +248,9 @@ def top_products(data: dict, limit: int = 5) -> list[dict]:
 def todo_orders(data: dict, today: date, work_orders: list[dict] | None = None) -> dict:
     """Offene Aufträge nach Liefertermin: überfällig (heute oder überschritten)
     und diese Woche fällig (Rest der laufenden Kalenderwoche, Mo–So). Aufträge
-    ohne Liefertermin oder ohne offenen Restwert werden übersprungen.
+    ohne Liefertermin, ohne offenen Restwert oder bereits vollständig ausgeliefert
+    (Lieferschein gebucht) werden übersprungen — letztere stehen bei den
+    ausgehenden Paketen.
 
     work_orders (aus work_order_material): hängt je Auftrag die verknüpften
     Produktionsaufträge samt Materialstand an — damit im Board sichtbar ist, ob
@@ -280,7 +282,25 @@ def todo_orders(data: dict, today: date, work_orders: list[dict] | None = None) 
             d = date.fromisoformat(str(raw)[:10])
         except ValueError:
             continue
-        net_open = float(so.get("net_open", 0) or 0)
+        # Ist zu einem Auftrag schon ein Lieferschein gebucht, gehört der geliefert
+        # Teil nicht mehr hierher — er steckt bei den ausgehenden Paketen. Ein
+        # vollständig ausgelieferter Auftrag verschwindet deshalb komplett aus der
+        # Liste, auch wenn die Rechnung noch offen ist.
+        #
+        # TEILLIEFERUNGEN bleiben stehen: der Restwert ist noch nicht beim Kunden
+        # und keine andere Liste zeigt ihn. Sie werden als „teilgeliefert x %"
+        # markiert; wer sie ruhen lassen will, setzt die Wiedervorlage — dafür ist
+        # das Feld da.
+        delivered_pct = float(so.get("delivered_pct") or 0)
+        if delivered_pct >= 99.995:
+            continue
+        # Maßstab dieser Liste ist der noch nicht AUSGELIEFERTE Wert. Ältere
+        # Cache-Stände kennen das Feld nicht, dort gilt weiter der offene
+        # (unberechnete) Wert.
+        net_undelivered = so.get("net_undelivered")
+        if net_undelivered is None:
+            net_undelivered = so.get("net_open", 0)
+        net_open = float(net_undelivered or 0)
         if net_open <= 0:
             continue
         # Die Wiedervorlage entscheidet, OB der Auftrag jetzt in der Liste steht:
@@ -314,6 +334,7 @@ def todo_orders(data: dict, today: date, work_orders: list[dict] | None = None) 
             "listed_by": "followup" if (followup and followup != d) else "delivery",
             "due_state": due_state,
             "net_open": round(net_open, 2),
+            "delivered_pct": round(delivered_pct, 2),
             "days_overdue": (today - d).days,
             "work_orders": wos,
             "material_ok": bool(wos) and all(w["material_ok"] for w in wos),

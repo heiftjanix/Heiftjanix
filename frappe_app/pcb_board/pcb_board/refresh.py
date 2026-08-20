@@ -179,8 +179,11 @@ def _fetch_erpnext(config: dict) -> dict:
         r["tracking_number"] = r.pop("custom_tracking_numbers", None)
         r["shipment_date"] = r.pop("custom_ups_shipment_date", None)
 
+    # per_delivered: von ERPNext aus den gebuchten Lieferscheinen gepflegt — daran
+    # hängt, ob ein Auftrag noch in der Liefertermin-Liste steht oder schon bei den
+    # ausgehenden Paketen.
     so_fields = ["name", "customer", "customer_name", "base_net_total", "per_billed",
-                 "delivery_date"]
+                 "per_delivered", "delivery_date"]
     # Wiedervorlage ist ein Custom Field (siehe setup.py). Vor dem Abfragen prüfen:
     # auf einer Site ohne das Feld würde die Abfrage sonst komplett scheitern.
     has_followup = frappe.get_meta("Sales Order").has_field("custom_wiedervorlage")
@@ -195,7 +198,13 @@ def _fetch_erpnext(config: dict) -> dict:
     )
     open_sales_orders = []
     for r in sos:
-        net_open = float(r.get("base_net_total") or 0) * (1.0 - float(r.get("per_billed") or 0) / 100.0)
+        total = float(r.get("base_net_total") or 0)
+        net_open = total * (1.0 - float(r.get("per_billed") or 0) / 100.0)
+        # Zwei verschiedene „offen": net_open ist der noch nicht BERECHNETE Wert
+        # (Geldsicht, Abrechnungs-Tipps), net_undelivered der noch nicht
+        # AUSGELIEFERTE (Liefertermin-Liste). Bei teilberechneten Aufträgen laufen
+        # die beiden auseinander, deshalb bleiben sie getrennt.
+        delivered_pct = float(r.get("per_delivered") or 0)
         followup = r.get("custom_wiedervorlage")
         open_sales_orders.append({
             "name": r["name"],
@@ -204,6 +213,8 @@ def _fetch_erpnext(config: dict) -> dict:
             "delivery_date": str(r["delivery_date"]) if r.get("delivery_date") else None,
             "followup_date": str(followup)[:10] if followup else None,
             "net_open": round(net_open, 2),
+            "delivered_pct": round(delivered_pct, 2),
+            "net_undelivered": round(total * (1.0 - delivered_pct / 100.0), 2),
         })
 
     # Kosten: Wareneingänge (Purchase Receipt) — Netto-Basiswert, gebucht.

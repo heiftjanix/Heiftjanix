@@ -737,6 +737,13 @@ PCBBoard.prototype.deliveryDatesHtml = function (m) {
 			badge += ' <span class="fu-mark" title="Wegen Wiedervorlage ' +
 				self.esc(frappe.datetime.str_to_user(r.followup_date)) + ' in der Liste">📌</span>';
 		}
+		// Teilgelieferte Aufträge bleiben in der Liste (der Rest ist noch nicht
+		// beim Kunden) — der Anteil sagt, wie viel schon raus ist.
+		if (r.delivered_pct > 0) {
+			badge += ' <span class="pill info" title="Zu diesem Auftrag ist schon ein ' +
+				'Lieferschein gebucht; der Restwert steht noch aus">teilgeliefert ' +
+				Math.round(r.delivered_pct) + ' %</span>';
+		}
 		// Wiedervorlage: im Auftrag gepflegt (Custom Field), hier nur angezeigt.
 		var followup = r.followup_date
 			? '<span class="followup" title="Wiedervorlage laut Kundenauftrag">📌 ' +
@@ -755,7 +762,7 @@ PCBBoard.prototype.deliveryDatesHtml = function (m) {
 		? '<table class="tbl"><thead><tr><th>Auftrag</th><th class="col-customer">Kunde</th>' +
 			'<th>Wiedervorlage</th><th>Liefertermin</th>' +
 			'<th>Status</th><th class="col-wo">Produktionsauftrag</th>' +
-			'<th class="num">Offen (netto)</th></tr></thead>' +
+			'<th class="num">Offen (nicht geliefert)</th></tr></thead>' +
 			'<tbody>' + body + '</tbody></table>' +
 			'<p class="muted" style="font-size:.78rem;margin:8px 0 0">Sortiert nach Liefertermin, ' +
 			'neuester zuerst. „Wiedervorlage" wird im Kundenauftrag gepflegt (Feld ' +
@@ -763,6 +770,9 @@ PCBBoard.prototype.deliveryDatesHtml = function (m) {
 			'Verzögerung eintragen. Ist eine Wiedervorlage gesetzt, bestimmt SIE, ob der Auftrag ' +
 			'hier auftaucht (📌); der Auftrag ruht bis dahin. Status und Kacheln bleiben am ' +
 			'Liefertermin, damit die Zusage an den Kunden sichtbar bleibt. ' +
+			'Ist ein Auftrag komplett ausgeliefert (Lieferschein gebucht), steht er nicht mehr ' +
+			'hier, sondern bei den ausgehenden Paketen; bei Teillieferung bleibt der noch ' +
+			'nicht gelieferte Rest sichtbar („teilgeliefert x %"). ' +
 			'✅ hinter dem Produktionsauftrag = ' +
 			'Material vollständig (Bestand reicht bzw. ist bereits umgelagert). 🚚 = Material noch im ' +
 			'Zulauf, ⛔ = es fehlt Material, das noch nicht bestellt ist.</p>'
@@ -1225,6 +1235,14 @@ PCBBoard.prototype.prodRows = function (m) {
 	});
 	var sort = this._woSort || { key: 'customer_due_date', dir: 1 };
 	rows.sort(function (a, z) {
+		// Gesperrte Aufträge (⏸ On Hold) rutschen immer ans Ende der Liste: an
+		// ihnen wird gerade nicht gearbeitet, sie sollen die Arbeitsliste nicht
+		// verstopfen. Ausnahme: wird ausdrücklich nach der Sperr-Spalte sortiert,
+		// gilt die dort gewählte Richtung — sonst käme man an sie nicht mehr
+		// gezielt heran.
+		if (sort.key !== 'hold' && !!a.on_hold !== !!z.on_hold) {
+			return a.on_hold ? 1 : -1;
+		}
 		var va = self.prodSortValue(a, sort.key), vz = self.prodSortValue(z, sort.key);
 		if (va < vz) return -sort.dir;
 		if (va > vz) return sort.dir;

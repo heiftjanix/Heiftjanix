@@ -136,6 +136,46 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertAlmostEqual(todo["overdue_net"], 800, delta=0.01)
         self.assertAlmostEqual(todo["due_this_week_net"], 200, delta=0.01)
 
+    def test_todo_orders_skips_fully_delivered_orders(self):
+        # Ist der Lieferschein gebucht, steht der Auftrag bei den ausgehenden
+        # Paketen — nicht mehr in der Liefertermin-Liste. Teillieferungen bleiben
+        # mit ihrem Restwert stehen.
+        data = self._data()
+        data["open_sales_orders"] = [
+            # komplett ausgeliefert, Rechnung noch offen -> raus
+            {"name": "AB-GELIEFERT", "delivery_date": "2026-07-10", "net_open": 4000,
+             "delivered_pct": 100.0, "net_undelivered": 0.0},
+            # Rundungsrest aus ERPNext (99.999...) gilt als vollständig -> raus
+            {"name": "AB-RUNDUNG", "delivery_date": "2026-07-10", "net_open": 1000,
+             "delivered_pct": 99.999, "net_undelivered": 0.01},
+            # halb geliefert -> bleibt, aber nur mit dem offenen Rest
+            {"name": "AB-TEIL", "delivery_date": "2026-07-14", "net_open": 2000,
+             "delivered_pct": 50.0, "net_undelivered": 1000.0},
+            # nichts geliefert, aber schon voll berechnet -> gehört in die Liste,
+            # denn die Ware muss noch raus (net_open waere hier 0)
+            {"name": "AB-BEZAHLT", "delivery_date": "2026-07-13", "net_open": 0.0,
+             "delivered_pct": 0.0, "net_undelivered": 5000.0},
+        ]
+        todo = m.build_metrics(data, CONFIG, date(2026, 7, 15))["todo"]
+        names = [o["name"] for o in todo["overdue"] + todo["due_this_week"]]
+        self.assertEqual(sorted(names), ["AB-BEZAHLT", "AB-TEIL"])
+        by_name = {o["name"]: o for o in todo["overdue"]}
+        self.assertAlmostEqual(by_name["AB-TEIL"]["net_open"], 1000, delta=0.01)
+        self.assertAlmostEqual(by_name["AB-TEIL"]["delivered_pct"], 50.0, delta=0.01)
+        self.assertAlmostEqual(by_name["AB-BEZAHLT"]["net_open"], 5000, delta=0.01)
+        # Kachel-Summe rechnet mit dem nicht gelieferten Wert
+        self.assertAlmostEqual(todo["overdue_net"], 6000, delta=0.01)
+
+    def test_todo_orders_without_delivery_fields_uses_open_value(self):
+        # Aelterer Cache-Stand ohne die neuen Felder darf nicht plötzlich leer sein.
+        data = self._data()
+        data["open_sales_orders"] = [
+            {"name": "AB-ALT-CACHE", "delivery_date": "2026-07-10", "net_open": 700},
+        ]
+        todo = m.build_metrics(data, CONFIG, date(2026, 7, 15))["todo"]
+        self.assertEqual([o["name"] for o in todo["overdue"]], ["AB-ALT-CACHE"])
+        self.assertAlmostEqual(todo["overdue_net"], 700, delta=0.01)
+
     def test_top_purchases_aggregates_and_limits(self):
         data = self._data()
         data["purchase_receipt_items"] = [

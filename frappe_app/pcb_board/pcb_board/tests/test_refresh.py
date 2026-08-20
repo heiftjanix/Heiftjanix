@@ -64,6 +64,9 @@ class TestFetchErpnext(unittest.TestCase):
             if doctype == "Sales Invoice":
                 return [{"name": "RE-1", "base_net_total": 100,
                          "posting_date": date.today().replace(month=1, day=5).isoformat()}]
+            if doctype == "Sales Order":
+                return [{"name": "AB-1", "base_net_total": 1000, "per_billed": 100,
+                         "per_delivered": 40, "delivery_date": date.today().isoformat()}]
             if doctype == "Sales Invoice Item":
                 return [{"item_code": "A", "item_name": "Artikel A",
                          "base_net_amount": 60, "qty": 3},
@@ -114,6 +117,19 @@ class TestFetchErpnext(unittest.TestCase):
             asked = any("custom_wiedervorlage" in (c.get("fields") or []) for c in so_calls)
             self.assertEqual(asked, expected,
                              "Feldabfrage passt nicht zum Vorhandensein des Custom Fields")
+
+    def test_sales_orders_carry_billing_and_delivery_open_values_apart(self):
+        """Nicht berechnet und nicht geliefert sind zwei verschiedene Zahlen: die
+        Liefertermin-Liste rechnet mit der Lieferung, die Abrechnungs-Tipps mit der
+        Rechnung. Bei einem voll berechneten, halb gelieferten Auftrag muessen
+        beide Werte auseinanderlaufen."""
+        data, calls, _ = self._run()
+        so_calls = [c for c in calls if c["doctype"] == "Sales Order"]
+        self.assertTrue(any("per_delivered" in (c.get("fields") or []) for c in so_calls))
+        row = data["open_sales_orders"][0]
+        self.assertEqual(row["net_open"], 0.0)          # 100 % berechnet
+        self.assertEqual(row["delivered_pct"], 40.0)
+        self.assertEqual(row["net_undelivered"], 600.0)  # 60 % noch nicht geliefert
 
     def test_failing_production_block_does_not_kill_refresh(self):
         """Fällt die Fertigungsabfrage aus, fehlt nur dieser Abschnitt."""

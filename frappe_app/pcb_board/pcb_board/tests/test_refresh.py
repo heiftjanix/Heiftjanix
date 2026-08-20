@@ -207,12 +207,15 @@ class TestWorkOrderNotes(unittest.TestCase):
         }
         self._attach(view, [{"work_order": "FA-1", "revised_date": "2026-08-20",
                              "remark": "Kunde informiert", "updated_by": "u@x",
-                             "on_hold": 1, "on_hold_since": "2026-07-10"}])
+                             "assignee": "MM", "on_hold": 1,
+                             "on_hold_since": "2026-07-10"}])
         prod = {w["name"]: w for w in view["purchasing"]["work_orders"]}
         self.assertTrue(prod["FA-1"]["on_hold"])
         self.assertEqual(prod["FA-1"]["on_hold_since"], "2026-07-10")
         self.assertEqual(prod["FA-1"]["note_date"], "2026-08-20")
         self.assertEqual(prod["FA-1"]["note_remark"], "Kunde informiert")
+        self.assertEqual(prod["FA-1"]["assignee"], "MM")
+        self.assertIsNone(prod["FA-2"]["assignee"])
         self.assertFalse(prod["FA-2"]["on_hold"])
         self.assertIsNone(prod["FA-2"]["note_date"])
         # dieselbe Sperre muss auch an der Liefertermin-Liste haengen

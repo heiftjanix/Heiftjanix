@@ -924,20 +924,13 @@ PCBBoard.prototype.poDetailRow = function (r, open) {
 		'bestellt ist</p></td></tr>';
 };
 
-PCBBoard.prototype.purchaseOrdersHtml = function (m) {
+// Eine Tabelle, zwei Verwendungen: „im Zulauf" und „überfällig" zeigen dieselben
+// Spalten, damit der Blick nicht umlernen muss.
+PCBBoard.prototype.poTableHtml = function (rows, emptyText) {
 	var self = this;
-	// Fehlt der Block komplett, ist der gecachte Stand älter als dieses Feature —
-	// dann keine leere Erfolgsmeldung zeigen, sondern auf den Refresh verweisen.
-	if (!m.purchasing) {
-		return '<section class="card"><div class="sec-h"><h2>🛒 Aktuelle Bestellungen &amp; erwarteter Wareneingang</h2></div>' +
-			'<p class="muted">Die Bestelldaten kommen mit dem nächsten Datenabruf — ' +
-			'auf „⟳ Live aktualisieren" klicken.</p></section>';
+	if (!rows.length) {
+		return '<p class="muted">' + emptyText + '</p>';
 	}
-	var p = m.purchasing;
-	var rows = p.open || [];
-	var et = p.expected_today || {};
-	var lt = p.lead_times || {};
-
 	var body = rows.map(function (r) {
 		var late = r.days_late > 0 && !r.on_hold;
 		var open = !!self._openPos[r.name];
@@ -954,15 +947,39 @@ PCBBoard.prototype.purchaseOrdersHtml = function (m) {
 			'<td>' + self.poStatusBadge(r) + '</td></tr>' +
 			self.poDetailRow(r, open);
 	}).join('');
-	var table = rows.length
-		? '<table class="tbl po-tbl"><thead><tr><th>Bestellung</th><th>Lieferant</th><th>Bestellt am</th>' +
-			'<th class="num">Ø Lieferzeit</th><th>Erwartet am</th><th class="num">Positionen</th>' +
-			'<th>Für Fertigung</th><th class="num">Offen (netto)</th><th>Status</th></tr></thead><tbody>' + body +
-			'</tbody><tfoot><tr><td colspan="5">Summe (' + rows.length + ')</td>' +
-			'<td class="num">' + rows.reduce(function (a, r) { return a + (r.positions || 0); }, 0) + '</td>' +
-			'<td colspan="1"></td>' +
-			'<td class="num">' + self.eur(p.open_net) + '</td><td></td></tr></tfoot></table>'
-		: '<p class="muted">Keine offenen Bestellungen. ✅</p>';
+	var netSum = rows.reduce(function (a, r) { return a + (r.net_open || 0); }, 0);
+	var posSum = rows.reduce(function (a, r) { return a + (r.positions || 0); }, 0);
+	return '<table class="tbl po-tbl"><thead><tr><th>Bestellung</th><th>Lieferant</th>' +
+		'<th>Bestellt am</th><th class="num">Ø Lieferzeit</th><th>Erwartet am</th>' +
+		'<th class="num">Positionen</th><th>Für Fertigung</th><th class="num">Offen (netto)</th>' +
+		'<th>Status</th></tr></thead><tbody>' + body +
+		'</tbody><tfoot><tr><td colspan="5">Summe (' + rows.length + ')</td>' +
+		'<td class="num">' + posSum + '</td><td></td>' +
+		'<td class="num">' + self.eur(netSum) + '</td><td></td></tr></tfoot></table>';
+};
+
+PCBBoard.prototype.purchaseOrdersHtml = function (m) {
+	var self = this;
+	// Fehlt der Block komplett, ist der gecachte Stand älter als dieses Feature —
+	// dann keine leere Erfolgsmeldung zeigen, sondern auf den Refresh verweisen.
+	if (!m.purchasing) {
+		return '<section class="card"><div class="sec-h"><h2>🛒 Bestellungen</h2></div>' +
+			'<p class="muted">Die Bestelldaten kommen mit dem nächsten Datenabruf — ' +
+			'auf „⟳ Live aktualisieren" klicken.</p></section>';
+	}
+	var p = m.purchasing;
+	var all = p.open || [];
+	var et = p.expected_today || {};
+	var lt = p.lead_times || {};
+
+	// Überfällig = Termin überschritten und nicht bewusst pausiert (dieselbe
+	// Auswahl, die metrics.py fürs Nachfassen bildet). Alles andere ist im Zulauf,
+	// „On Hold" eingeschlossen — dort ist nichts anzumahnen.
+	var lateNames = {};
+	(p.follow_up || []).forEach(function (r) { lateNames[r.name] = true; });
+	var incoming = all.filter(function (r) { return !lateNames[r.name]; });
+	var overdue = p.follow_up || [];
+	var incomingNet = incoming.reduce(function (a, r) { return a + (r.net_open || 0); }, 0);
 
 	// Kachel „heute erwartet": Artikel stehen im Vordergrund, nicht der Betrag.
 	// Gelistet wird der Item-Code, der Klartextname steckt im Tooltip.
@@ -974,24 +991,17 @@ PCBBoard.prototype.purchaseOrdersHtml = function (m) {
 	var namesLine = names.length
 		? names.slice(0, 3).join(' · ') + (names.length > 3 ? ' · +' + (names.length - 3) + ' weitere' : '')
 		: 'heute wird nichts erwartet';
-	var todayTile =
+
+	var incomingTiles =
+		'<div class="tiles" style="margin-bottom:12px">' +
 		'<div class="tile"><p class="k">Heute erwartete Artikel</p>' +
 		'<div class="v" style="color:' + (et.positions ? 'var(--series-1)' : 'var(--text-primary)') + '">' +
 		(et.positions || 0) + '</div>' +
 		'<div class="m">' + (et.orders ? 'aus ' + et.orders + ' Bestellung(en) · ' + self.eur(et.net) +
-			'<br>' + namesLine : namesLine) + '</div></div>';
-
-	var tiles =
-		'<div class="tiles" style="margin-bottom:12px">' + todayTile +
-		'<div class="tile"><p class="k">Offene Bestellungen</p>' +
-		'<div class="v">' + (p.open_count || 0) + '</div>' +
-		'<div class="m">' + self.eur(p.open_net) + ' noch nicht eingegangen</div></div>' +
-		'<div class="tile"><p class="k">Wareneingang überfällig</p>' +
-		'<div class="v" style="color:' + (p.follow_up_count ? 'var(--critical)' : 'var(--good)') + '">' +
-		(p.follow_up_count || 0) + '</div>' +
-		'<div class="m">' + (p.follow_up_count
-			? self.eur(p.follow_up_net) + ' · in der Liste rot markiert — nachfassen'
-			: 'alle Bestellungen im Zeitplan') + '</div></div>' +
+			'<br>' + namesLine : namesLine) + '</div></div>' +
+		'<div class="tile"><p class="k">Im Zulauf</p>' +
+		'<div class="v">' + incoming.length + '</div>' +
+		'<div class="m">' + self.eur(incomingNet) + ' · Termin noch nicht überschritten</div></div>' +
 		'<div class="tile"><p class="k">Fertigung wartet auf Material</p>' +
 		'<div class="v" style="color:' + (p.wo_waiting_count ? 'var(--warning)' : 'var(--good)') + '">' +
 		(p.wo_waiting_count || 0) + '</div>' +
@@ -1007,13 +1017,40 @@ PCBBoard.prototype.purchaseOrdersHtml = function (m) {
 			: 'noch keine Bestellung mit Wareneingang verknüpft') + '</div></div>' +
 		'</div>';
 
-	return '<section class="card"><div class="sec-h"><h2>🛒 Aktuelle Bestellungen &amp; erwarteter Wareneingang</h2>' +
-		'<span class="muted">Termin je Lieferant aus der eigenen Lieferzeit-Historie</span></div>' +
-		tiles + table +
+	var incomingCard =
+		'<section class="card"><div class="sec-h"><h2>🚚 Aktuell im Zulauf</h2>' +
+		'<span class="muted">Termin je Lieferant aus der eigenen Lieferzeit-Historie — ' +
+		'nächster Termin oben</span></div>' + incomingTiles +
+		self.poTableHtml(incoming, 'Keine Bestellung im Zulauf.') +
 		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Erwartet am = Bestelldatum + ' +
 		'Median-Lieferzeit dieses Lieferanten (Bestellung → erster Wareneingang). Ohne eigene ' +
 		'Historie greift der Median über alle Lieferanten, ohne jede Historie der Wunschtermin ' +
-		'der Bestellung.</p></section>';
+		'der Bestellung. Bewusst pausierte Bestellungen („On Hold") stehen hier mit, weil bei ' +
+		'ihnen nichts anzumahnen ist.</p></section>';
+
+	var overdueTiles =
+		'<div class="tiles" style="margin-bottom:12px">' +
+		'<div class="tile"><p class="k">Überfällige Bestellungen</p>' +
+		'<div class="v" style="color:' + (overdue.length ? 'var(--critical)' : 'var(--good)') + '">' +
+		overdue.length + '</div>' +
+		'<div class="m">' + (overdue.length
+			? self.eur(p.follow_up_net) + ' · beim Lieferanten nachfassen'
+			: 'alle Bestellungen im Zeitplan') + '</div></div>' +
+		'<div class="tile"><p class="k">Längste Überschreitung</p>' +
+		'<div class="v" style="color:' + (overdue.length ? 'var(--critical)' : 'var(--good)') + '">' +
+		(overdue.length ? overdue[0].days_late + ' Tage' : '—') + '</div>' +
+		'<div class="m">' + (overdue.length
+			? self.esc(overdue[0].name) + ' · ' + self.esc(overdue[0].supplier || '')
+			: 'kein Termin überschritten') + '</div></div>' +
+		'</div>';
+
+	var overdueCard =
+		'<section class="card"><div class="sec-h"><h2>⏰ Überfällige Bestellungen</h2>' +
+		'<span class="muted">erwarteter Wareneingang überschritten — längste Überschreitung oben</span>' +
+		'</div>' + overdueTiles +
+		self.poTableHtml(overdue, 'Keine überfällige Bestellung. ✅') + '</section>';
+
+	return incomingCard + overdueCard;
 };
 
 // Alle Produktionsaufträge mit ihrem Materialstand. Ersetzt die frühere Rubrik
@@ -1031,6 +1068,7 @@ PCBBoard.PROD_COLS = [
 	{ key: 'sales_order', label: 'Kundenauftrag' },
 	{ key: 'material', label: 'Material' },
 	{ key: 'ready', label: 'Vollständigkeit / Warten auf' },
+	{ key: 'assignee', label: 'Zuständig' },
 	{ key: 'note', label: 'Bemerkung' },
 ];
 
@@ -1043,6 +1081,8 @@ PCBBoard.prototype.prodSortValue = function (w, key) {
 		case 'material': return (w.missing_items || []).length ? 0 : (w.material_ok ? 2 : 1);
 		case 'hold': return w.on_hold ? 0 : 1;
 		case 'ready': return w.ready_pct == null ? -1 : w.ready_pct;
+		// Ohne Zuständigen nach hinten: die Zeilen brauchen jemanden.
+		case 'assignee': return (w.assignee || '\uffff').toLowerCase();
 		case 'note': return String(w.note_date || w.note_remark || '').toLowerCase();
 		case 'customer_due_date': return w.customer_due_date || '9999-12-31';
 		default: return String(w[key] == null ? '' : w[key]).toLowerCase();
@@ -1157,7 +1197,7 @@ PCBBoard.prototype.prodRows = function (m) {
 		if (f === 'ok' && !w.material_ok) return false;
 		if (!q) return true;
 		var hay = [w.name, w.production_item, w.item_name, w.sales_order, w.status, w.note_remark,
-			(w.on_hold ? 'gesperrt on hold' : '')]
+			w.assignee, (w.on_hold ? 'gesperrt on hold' : '')]
 			.concat((w.awaiting || []).map(function (a) {
 				return [a.supplier, a.po].concat((a.items || []).map(function (i) { return i.item_code; })).join(' ');
 			}))
@@ -1230,6 +1270,9 @@ PCBBoard.prototype.prodTableHtml = function (m) {
 			'<td><span style="color:' + st.color + ';font-weight:650" title="' + self.esc(matTitle) + '">' +
 			st.icon + ' ' + self.esc(st.text) + '</span></td>' +
 			'<td>' + waitCell + '</td>' +
+			'<td class="assignee-cell"><button class="assignee-btn' + (w.assignee ? ' set' : '') +
+			'" type="button" data-wo="' + self.esc(w.name) + '" title="Kürzel des Zuständigen ' +
+			'eintragen oder ändern">' + (w.assignee ? self.esc(w.assignee) : '＋') + '</button></td>' +
 			'<td class="note-cell"><button class="note-btn" type="button" data-wo="' + self.esc(w.name) +
 			'" title="Liefertermin korrigieren / Bemerkung erfassen">' +
 			(note || '<span class="muted">✎ Bemerkung</span>') + '</button></td></tr>';
@@ -1303,6 +1346,9 @@ PCBBoard.prototype.bindProdTable = function () {
 	root.find('.note-btn').on('click', function () {
 		self.openWorkOrderNote($(this).data('wo'));
 	});
+	root.find('.assignee-btn').on('click', function () {
+		self.openWorkOrderAssignee($(this).data('wo'));
+	});
 	root.find('.hold-btn').on('click', function () {
 		self.toggleWorkOrderHold($(this).data('wo'), $(this).data('hold') ? 1 : 0);
 	});
@@ -1317,6 +1363,36 @@ PCBBoard.prototype.bindProdTable = function () {
 		if (open) self._openWos[wo] = true;
 		else delete self._openWos[wo];
 	});
+};
+
+// Kürzel des Zuständigen — kurzer Dialog, damit es beim Durchgehen der Liste
+// schnell geht. Gespeichert wird in der Board-Notiz, nicht am ERPNext-Beleg.
+PCBBoard.prototype.openWorkOrderAssignee = function (woName) {
+	var self = this;
+	var wo = null;
+	(((this.metrics || {}).purchasing || {}).work_orders || []).forEach(function (w) {
+		if (w.name === woName) wo = w;
+	});
+	if (!wo) return;
+	frappe.prompt(
+		[{ fieldname: 'assignee', fieldtype: 'Data', label: 'Zuständig (Kürzel)',
+		   default: wo.assignee || '',
+		   description: 'Kürzel der Person, die den Auftrag betreut. Leer lassen entfernt die Zuständigkeit.' }],
+		function (values) {
+			frappe.call({
+				method: 'pcb_board.api.set_work_order_assignee',
+				type: 'POST',
+				args: { work_order: woName, assignee: values.assignee || '' },
+			}).then(function (r) {
+				var res = (r && r.message) || {};
+				self.eachWorkOrder(woName, function (w) { w.assignee = res.assignee || null; });
+				self.toast(res.assignee ? 'Zuständig: ' + res.assignee : 'Zuständigkeit entfernt');
+				self.renderProdTable();
+			});
+		},
+		'Produktionsauftrag ' + woName,
+		'Speichern'
+	);
 };
 
 PCBBoard.prototype.toggleWorkOrderHold = function (woName, hold) {
@@ -2492,6 +2568,11 @@ var PCB_BOARD_CSS =
 	'.sort-ind{opacity:.55;margin-left:4px;font-size:.72rem}' +
 	'.tbl th.sorted .sort-ind{opacity:1}' +
 	'.prod-tbl{font-size:.86rem}.prod-tbl td{vertical-align:top}' +
+	'.assignee-btn{border:1px dashed var(--border);background:transparent;color:var(--muted);' +
+	'border-radius:999px;min-width:30px;padding:2px 8px;font-size:.78rem;font-weight:700;cursor:pointer}' +
+	'.assignee-btn:hover{border-color:var(--brand-teal);color:var(--brand-teal)}' +
+	'.assignee-btn.set{border-style:solid;background:color-mix(in srgb,var(--brand-teal) 12%,transparent);' +
+	'color:var(--brand-teal)}' +
 	'.note-btn{border:1px dashed var(--border);background:transparent;color:var(--text-primary);' +
 	'border-radius:8px;padding:3px 8px;font-size:.8rem;cursor:pointer;text-align:left;max-width:220px}' +
 	'.note-btn:hover{border-color:var(--brand-teal);border-style:solid}' +

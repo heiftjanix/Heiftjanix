@@ -118,6 +118,23 @@ class TestFetchErpnext(unittest.TestCase):
             self.assertEqual(asked, expected,
                              "Feldabfrage passt nicht zum Vorhandensein des Custom Fields")
 
+    def test_purchase_invoices_only_fetches_open_ones(self):
+        """Buchhaltungs-Reiter: nur gebuchte, noch nicht vollständig bezahlte
+        Eingangsrechnungen (outstanding_amount > 0) werden abgefragt."""
+        data, calls, _ = self._run()
+        pi_calls = [c for c in calls if c["doctype"] == "Purchase Invoice"]
+        self.assertTrue(pi_calls)
+        filters = pi_calls[0].get("filters") or []
+        self.assertIn(["docstatus", "=", 1], filters)
+        self.assertIn(["outstanding_amount", ">", 0], filters)
+        self.assertIn("purchase_invoices", data)
+
+    def test_failing_purchase_invoices_do_not_kill_refresh(self):
+        data, _, frappe = self._run(failing_doctypes=("Purchase Invoice",))
+        self.assertEqual(data["purchase_invoices"], [])
+        self.assertIn("as_of", data)
+        self.assertTrue(any("übersprungen" in t for t in frappe.logged))
+
     def test_sales_orders_carry_billing_and_delivery_open_values_apart(self):
         """Nicht berechnet und nicht geliefert sind zwei verschiedene Zahlen: die
         Liefertermin-Liste rechnet mit der Lieferung, die Abrechnungs-Tipps mit der

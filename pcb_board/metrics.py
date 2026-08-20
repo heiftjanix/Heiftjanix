@@ -235,8 +235,12 @@ def top_products(data: dict, limit: int = 5) -> list[dict]:
             "net_total": 0.0,
         })
         entry["net_total"] += float(row.get("base_net_amount") or 0)
+    # Anteil am Gesamtwert ALLER Positionen des Zeitraums (nicht nur der Top-N) —
+    # sonst summierten sich die Anteile in der Tabelle immer auf 100 %.
+    grand = sum(r["net_total"] for r in totals.values())
     ranked = sorted(totals.values(), key=lambda r: r["net_total"], reverse=True)
     for r in ranked:
+        r["share_pct"] = round(r["net_total"] / grand, 4) if grand else 0.0
         r["net_total"] = round(r["net_total"], 2)
     return ranked[:limit]
 
@@ -279,13 +283,36 @@ def todo_orders(data: dict, today: date, work_orders: list[dict] | None = None) 
         net_open = float(so.get("net_open", 0) or 0)
         if net_open <= 0:
             continue
+        # Die Wiedervorlage entscheidet, OB der Auftrag jetzt in der Liste steht:
+        # ist eine gesetzt, zählt sie statt des Liefertermins. Ein verzögerter
+        # Auftrag mit Wiedervorlage in drei Wochen verschwindet damit bis dahin aus
+        # der Liste — genau dafür ist das Feld da. Der Liefertermin bleibt
+        # unangetastet und bestimmt weiter Status und Gruppierung, damit die
+        # Kacheln „überfällig"/„diese Woche" die Zusage an den Kunden abbilden und
+        # nicht die interne Wiedervorlage.
+        followup = _to_date(so.get("followup_date"))
+        ref = followup or d
+        if ref > week_end:
+            continue
         wos = by_so.get(so.get("name")) or []
+        if d < today:
+            due_state = "overdue"
+        elif d == today:
+            due_state = "today"
+        elif d <= week_end:
+            due_state = "week"
+        else:
+            # Nur wegen der Wiedervorlage in der Liste — der Liefertermin liegt
+            # noch weiter vorne.
+            due_state = "later"
         item = {
             "name": so.get("name"),
             "customer": so.get("customer_name") or so.get("customer"),
             "delivery_date": d.isoformat(),
             # Wiedervorlage aus dem Auftrag (Custom Field), vom Team gepflegt.
-            "followup_date": so.get("followup_date"),
+            "followup_date": followup.isoformat() if followup else None,
+            "listed_by": "followup" if (followup and followup != d) else "delivery",
+            "due_state": due_state,
             "net_open": round(net_open, 2),
             "days_overdue": (today - d).days,
             "work_orders": wos,
@@ -293,7 +320,7 @@ def todo_orders(data: dict, today: date, work_orders: list[dict] | None = None) 
         }
         if d <= today:
             overdue.append(item)
-        elif d <= week_end:
+        else:
             due_this_week.append(item)
     overdue.sort(key=lambda x: x["delivery_date"])
     due_this_week.sort(key=lambda x: x["delivery_date"])
@@ -752,8 +779,10 @@ def top_purchases(data: dict, limit: int = 5) -> list[dict]:
             "net_total": 0.0,
         })
         entry["net_total"] += float(row.get("base_net_amount") or 0)
+    grand = sum(r["net_total"] for r in totals.values())
     ranked = sorted(totals.values(), key=lambda r: r["net_total"], reverse=True)
     for r in ranked:
+        r["share_pct"] = round(r["net_total"] / grand, 4) if grand else 0.0
         r["net_total"] = round(r["net_total"], 2)
     return ranked[:limit]
 
@@ -850,6 +879,58 @@ def top_suppliers(data: dict, today: date, limit: int = 5) -> list[dict]:
     } for name, amt in ranked]
 
 
+def top_suppliers_year(data: dict, today: date, limit: int = 10) -> dict:
+    """Top-N Lieferanten des laufenden Jahres nach Netto-Einkaufswert (gebuchte
+    Wareneingänge, Jahresanfang bis heute), mit Anteil am Jahres-Einkauf und dem
+    Vorjahreswert desselben Lieferanten — Gegenstück zu top_customers_year().
+
+    Wie dort ist der Vorjahresbetrag das KOMPLETTE Vorjahr, der Vergleich stellt
+    also einen laufenden Zeitraum einem abgeschlossenen Jahr gegenüber. Beide
+    Jahre kommen aus derselben Liste (purchase_receipts reicht bis zum
+    Vorjahresanfang zurück), deshalb wird hier nach Jahr gefiltert statt zwei
+    Datenquellen zu mischen.
+    """
+    totals: dict[str, float] = defaultdict(float)
+    counts: dict[str, int] = defaultdict(int)
+    prev: dict[str, float] = defaultdict(float)
+    year_total = 0.0
+    for pr in data.get("purchase_receipts", []) or []:
+        d = _pdate(pr)
+        if not d:
+            continue
+        key = pr.get("supplier_name") or pr.get("supplier") or "?"
+        if d.year == today.year and d <= today:
+            amt = _net(pr)
+            totals[key] += amt
+            counts[key] += 1
+            year_total += amt
+        elif d.year == today.year - 1:
+            prev[key] += _net(pr)
+
+    rows = []
+    for name, amt in sorted(totals.items(), key=lambda kv: kv[1], reverse=True)[:limit]:
+        prev_amt = prev.get(name)
+        rows.append({
+            "supplier": name,
+            "net_total": round(amt, 2),
+            "receipts": counts[name],
+            "share_pct": round(amt / year_total, 4) if year_total else 0.0,
+            "prev_net_total": round(prev_amt, 2) if prev_amt is not None else None,
+            "delta_pct": (round((amt - prev_amt) / prev_amt, 4)
+                          if prev_amt and prev_amt > 0 else None),
+        })
+    return {
+        "year": today.year,
+        "prev_year": today.year - 1,
+        "rows": rows,
+        "year_total": round(year_total, 2),
+        # Anteil der Top-N am Jahreseinkauf = Lieferantenabhängigkeit in einer Zahl.
+        "top_share_pct": (round(sum(r["net_total"] for r in rows) / year_total, 4)
+                          if year_total else 0.0),
+        "supplier_count": len(totals),
+    }
+
+
 def _unit_costs(data: dict) -> tuple[dict[str, float], dict[str, float]]:
     """Stückkosten je Artikel: (letzter Einkaufspreis, Stücklistenwert je Einheit)."""
     rates: dict[str, float] = {}
@@ -915,12 +996,20 @@ def _with_margin(entry: dict, rates: dict, bom_rates: dict) -> dict:
     return entry
 
 
+def _with_share(rows: list[dict], grand: float) -> list[dict]:
+    """Anteil am Gesamtumsatz des Zeitraums an jede Zeile hängen."""
+    for r in rows:
+        r["share_pct"] = round(r["revenue"] / grand, 4) if grand else 0.0
+    return rows
+
+
 def product_margins(data: dict, limit: int = 5) -> list[dict]:
     """Deckungsbeitrag der Top-Umsatzprodukte des laufenden Monats."""
     rates, bom_rates = _unit_costs(data)
     totals = _aggregate_items(data.get("invoice_items"))
+    grand = sum(e["revenue"] for e in totals.values())
     ranked = sorted(totals.values(), key=lambda r: r["revenue"], reverse=True)[:limit]
-    return [_with_margin(e, rates, bom_rates) for e in ranked]
+    return _with_share([_with_margin(e, rates, bom_rates) for e in ranked], grand)
 
 
 def product_flops(data: dict, limit: int = 5) -> list[dict]:
@@ -931,10 +1020,12 @@ def product_flops(data: dict, limit: int = 5) -> list[dict]:
     bewerten und bleiben deshalb außen vor (sie stünden sonst mit „Marge 100 %"
     ganz oben oder ganz unten, je nach Zufall)."""
     rates, bom_rates = _unit_costs(data)
-    rows = [_with_margin(e, rates, bom_rates) for e in _aggregate_items(data.get("invoice_items")).values()]
+    totals = _aggregate_items(data.get("invoice_items"))
+    grand = sum(e["revenue"] for e in totals.values())
+    rows = [_with_margin(e, rates, bom_rates) for e in totals.values()]
     scored = [r for r in rows if r["margin"] is not None]
     scored.sort(key=lambda r: (r["margin"], r["margin_pct"] if r["margin_pct"] is not None else 0))
-    return scored[:limit]
+    return _with_share(scored[:limit], grand)
 
 
 def product_margins_year(data: dict, today: date, limit: int = 5) -> dict:
@@ -952,6 +1043,8 @@ def product_margins_year(data: dict, today: date, limit: int = 5) -> dict:
            for c, e in _aggregate_items(data.get("invoice_items_year")).items()}
     prev = {c: _with_margin(e, rates, bom_rates)
             for c, e in _aggregate_items(data.get("invoice_items_prev_year")).items()}
+    year_grand = sum(r["revenue"] for r in cur.values())
+    prev_grand = sum(r["revenue"] for r in prev.values())
     ranked = sorted([r for r in cur.values() if r["margin"] is not None],
                     key=lambda r: r["margin"], reverse=True)[:limit]
     rows = []
@@ -960,6 +1053,9 @@ def product_margins_year(data: dict, today: date, limit: int = 5) -> dict:
         pm = p.get("margin")
         rows.append(dict(
             r,
+            share_pct=round(r["revenue"] / year_grand, 4) if year_grand else 0.0,
+            prev_share_pct=(round(p["revenue"] / prev_grand, 4)
+                            if p.get("revenue") is not None and prev_grand else None),
             prev_revenue=p.get("revenue"),
             prev_qty=p.get("qty"),
             prev_margin=pm,
@@ -1470,6 +1566,7 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
         "top_customers": top_customers(data, today),
         "top_customers_year": top_customers_year(data, today),
         "top_suppliers": top_suppliers(data, today),
+        "top_suppliers_year": top_suppliers_year(data, today),
         "product_margins": product_margins(data),
         "product_flops": product_flops(data),
         "product_margins_year": product_margins_year(data, today),

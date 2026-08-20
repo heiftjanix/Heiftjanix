@@ -431,7 +431,7 @@ PCBBoard.prototype.restoreFocus = function (keep) {
 // Wareneingang = was hereinkommt: Bestellungen mit erwartetem Termin. Die
 // Fertigungsaufträge stehen im eigenen Reiter „Produktion".
 PCBBoard.prototype.wareneingangTabHtml = function (m) {
-	return this.purchaseOrdersHtml(m);
+	return this.purchaseOrdersHtml(m) + this.recentReceiptsHtml(m);
 };
 
 // Warenausgang = was hinausgeht: Liefertermine der Kundenaufträge und die
@@ -719,11 +719,24 @@ PCBBoard.prototype.deliveryDatesHtml = function (m) {
 	});
 	var body = rows.map(function (o) {
 		var r = o.r;
-		var badge = o.kind === 'overdue'
-			? (r.days_overdue > 0
-				? '<span class="dot-hi">' + r.days_overdue + ' Tag(e) überfällig</span>'
-				: '<span class="dot-hi">heute fällig</span>')
-			: '<span class="pill info">diese Woche</span>';
+		// Status hängt am ORIGINAL-Liefertermin, nicht an der Wiedervorlage.
+		var badge;
+		if (r.due_state === 'overdue') {
+			badge = '<span class="dot-hi">' + r.days_overdue + ' Tag(e) überfällig</span>';
+		} else if (r.due_state === 'today') {
+			badge = '<span class="dot-hi">heute fällig</span>';
+		} else if (r.due_state === 'later') {
+			badge = '<span class="pill">Liefertermin ' +
+				self.esc(frappe.datetime.str_to_user(r.delivery_date)) + '</span>';
+		} else {
+			badge = '<span class="pill info">diese Woche</span>';
+		}
+		// Steht der Auftrag nur wegen der Wiedervorlage hier, sagt das ein Zeichen
+		// im Status — dafür braucht es keine eigene Spalte.
+		if (r.listed_by === 'followup') {
+			badge += ' <span class="fu-mark" title="Wegen Wiedervorlage ' +
+				self.esc(frappe.datetime.str_to_user(r.followup_date)) + ' in der Liste">📌</span>';
+		}
 		// Wiedervorlage: im Auftrag gepflegt (Custom Field), hier nur angezeigt.
 		var followup = r.followup_date
 			? '<span class="followup" title="Wiedervorlage laut Kundenauftrag">📌 ' +
@@ -747,7 +760,10 @@ PCBBoard.prototype.deliveryDatesHtml = function (m) {
 			'<p class="muted" style="font-size:.78rem;margin:8px 0 0">Sortiert nach Liefertermin, ' +
 			'neuester zuerst. „Wiedervorlage" wird im Kundenauftrag gepflegt (Feld ' +
 			'<code>Wiedervorlage</code>, auch nach Freigabe änderbar) — bei Teillieferung oder ' +
-			'Verzögerung eintragen. ✅ hinter dem Produktionsauftrag = ' +
+			'Verzögerung eintragen. Ist eine Wiedervorlage gesetzt, bestimmt SIE, ob der Auftrag ' +
+			'hier auftaucht (📌); der Auftrag ruht bis dahin. Status und Kacheln bleiben am ' +
+			'Liefertermin, damit die Zusage an den Kunden sichtbar bleibt. ' +
+			'✅ hinter dem Produktionsauftrag = ' +
 			'Material vollständig (Bestand reicht bzw. ist bereits umgelagert). 🚚 = Material noch im ' +
 			'Zulauf, ⛔ = es fehlt Material, das noch nicht bestellt ist.</p>'
 		: '<p class="muted">Nichts diese Woche oder überfällig — alles im Plan. ✅</p>';
@@ -1496,7 +1512,8 @@ PCBBoard.prototype.costsTabHtml = function (m) {
 		'</div>';
 	return '<section class="card"><div class="sec-h"><h2>Kosten</h2>' +
 		'<span class="muted">laufender Monat</span></div>' + tiles + '</section>' +
-		this.recentReceiptsHtml(m) + this.topPurchasesHtml(m) + this.topSuppliersHtml(m) +
+		this.topPurchasesHtml(m) + this.topSuppliersHtml(m) +
+		this.topSuppliersYearHtml(m) +
 		this.productMarginsHtml(m) + this.productFlopsHtml(m) +
 		this.productMarginsYearHtml(m) + this.profitHistoryHtml(m);
 };
@@ -1528,12 +1545,14 @@ PCBBoard.prototype.productMarginsHtml = function (m) {
 		return '<tr><td title="' + self.esc(p.item_name || '') + '">' +
 			self.esc(p.item_code || p.item_name) + '</td>' +
 			'<td class="num">' + self.eur(p.revenue) + '</td>' +
+			'<td class="num">' + self.pct(p.share_pct) + '</td>' +
 			'<td class="num">' + c.cost + '</td>' +
 			'<td class="num">' + c.margin + '</td>' +
 			'<td class="num">' + c.marginPct + '</td></tr>';
 	}).join('');
 	return '<section class="card"><figcaption>Deckungsbeitrag Top-Produkte (Monat)</figcaption>' +
 		'<table class="tbl"><thead><tr><th>Produkt</th><th class="num">Umsatz</th>' +
+		'<th class="num">Anteil</th>' +
 		'<th class="num">Wareneinsatz</th><th class="num">DB</th><th class="num">DB %</th></tr></thead>' +
 		'<tbody>' + rows + '</tbody></table>' +
 		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Wareneinsatz = verkaufte Menge × ' +
@@ -1574,6 +1593,7 @@ PCBBoard.prototype.productFlopsHtml = function (m) {
 			'<td title="' + self.esc(p.item_name || '') + '">' +
 			self.esc(p.item_code || p.item_name) + '</td>' +
 			'<td class="num">' + self.eur(p.revenue) + '</td>' +
+			'<td class="num">' + self.pct(p.share_pct) + '</td>' +
 			'<td class="num">' + c.cost + '</td>' +
 			'<td class="num">' + c.margin + '</td>' +
 			'<td class="num">' + c.marginPct + '</td></tr>';
@@ -1582,6 +1602,7 @@ PCBBoard.prototype.productFlopsHtml = function (m) {
 		' nach Deckungsbeitrag <i class="muted" style="font-size:.78rem;font-weight:400">' +
 		'— schwächster Beitrag zuerst</i></figcaption>' +
 		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th><th class="num">Umsatz</th>' +
+		'<th class="num">Anteil</th>' +
 		'<th class="num">Wareneinsatz</th><th class="num">DB</th><th class="num">DB %</th></tr></thead>' +
 		'<tbody>' + rows + '</tbody></table>' +
 		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Sortiert nach absolutem ' +
@@ -1610,11 +1631,15 @@ PCBBoard.prototype.productMarginsYearHtml = function (m) {
 			'<td title="' + self.esc(p.item_name || '') + '">' +
 			self.esc(p.item_code || p.item_name) + '</td>' +
 			'<td class="num">' + self.eur(p.revenue) + '</td>' +
+			'<td class="num">' + self.pct(p.share_pct) + '</td>' +
 			'<td class="num">' + c.cost + '</td>' +
 			'<td class="num">' + c.margin + '</td>' +
 			'<td class="num">' + c.marginPct + '</td>' +
 			'<td class="num">' + (p.prev_revenue == null
-				? '<span class="muted">—</span>' : self.eur(p.prev_revenue)) + '</td>' +
+				? '<span class="muted">—</span>' : self.eur(p.prev_revenue) +
+					(p.prev_share_pct != null
+						? ' <span class="muted" style="font-size:.76rem">(' +
+							self.pct(p.prev_share_pct) + ')</span>' : '')) + '</td>' +
 			'<td class="num">' + (p.prev_margin == null
 				? '<span class="muted">—</span>'
 				: '<span style="color:' + (p.prev_margin >= 0 ? 'var(--good)' : 'var(--critical)') +
@@ -1626,6 +1651,7 @@ PCBBoard.prototype.productMarginsYearHtml = function (m) {
 		'</figcaption>' +
 		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th>' +
 		'<th class="num">Umsatz ' + self.esc(String(d.year || '')) + '</th>' +
+		'<th class="num">Anteil</th>' +
 		'<th class="num">Wareneinsatz</th><th class="num">DB</th><th class="num">DB %</th>' +
 		'<th class="num">Umsatz ' + self.esc(String(d.prev_year || '')) + '</th>' +
 		'<th class="num">DB ' + self.esc(String(d.prev_year || '')) + '</th>' +
@@ -1646,12 +1672,17 @@ PCBBoard.prototype.topPurchasesHtml = function (m) {
 			'<p class="muted">Noch keine Wareneingangspositionen in diesem Monat.</p></section>';
 	}
 	var rows = items.map(function (p, idx) {
-		return '<tr><td>' + (idx + 1) + '</td><td>' + self.esc(p.item_name || p.item_code) + '</td>' +
-			'<td class="num">' + self.eur(p.net_total) + '</td></tr>';
+		return '<tr><td>' + (idx + 1) + '</td><td title="' + self.esc(p.item_name || '') + '">' +
+			self.esc(p.item_code || p.item_name) + '</td>' +
+			'<td class="num">' + self.eur(p.net_total) + '</td>' +
+			'<td class="num">' + self.pct(p.share_pct) + '</td></tr>';
 	}).join('');
 	return '<section class="card"><figcaption>Top 5 Einkäufe (Monat, Netto-Warenwert)</figcaption>' +
-		'<table class="tbl"><thead><tr><th>#</th><th>Artikel</th><th class="num">Warenwert</th></tr></thead>' +
-		'<tbody>' + rows + '</tbody></table></section>';
+		'<table class="tbl"><thead><tr><th>#</th><th>Artikel</th><th class="num">Warenwert</th>' +
+		'<th class="num">Anteil</th></tr></thead>' +
+		'<tbody>' + rows + '</tbody></table>' +
+		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Anteil = am gesamten ' +
+		'Wareneingangswert des Monats.</p></section>';
 };
 
 PCBBoard.prototype.profitHistoryHtml = function (m) {
@@ -2232,6 +2263,53 @@ PCBBoard.prototype.topCustomersYearHtml = function (m) {
 		'gegenüber dem Vorjahresergebnis, nicht den Trend.</p></section>';
 };
 
+PCBBoard.prototype.topSuppliersYearHtml = function (m) {
+	var self = this;
+	var d = m.top_suppliers_year || {};
+	var items = d.rows || [];
+	if (!items.length) {
+		return '';
+	}
+	var rows = items.map(function (s, idx) {
+		var medal = idx === 0 ? '🥇 ' : (idx === 1 ? '🥈 ' : (idx === 2 ? '🥉 ' : ''));
+		var prev = s.prev_net_total == null
+			? '<span class="muted" title="Kein Wareneingang im Vorjahr — neuer Lieferant">neu</span>'
+			: self.eur(s.prev_net_total);
+		var delta = '<span class="muted">—</span>';
+		if (s.delta_pct != null) {
+			// Beim Einkauf ist „mehr" nicht automatisch gut, deshalb neutral
+			// gefärbt: die Richtung wird gezeigt, nicht bewertet.
+			var up = s.delta_pct >= 0;
+			delta = '<span style="font-weight:650">' + (up ? '▲ +' : '▼ −') +
+				Math.abs(Math.round(s.delta_pct * 100)) + ' %</span>';
+		}
+		return '<tr><td>' + medal + (idx + 1) + '</td>' +
+			'<td class="col-customer" title="' + self.esc(s.supplier) + '">' +
+			self.esc(s.supplier) + '</td>' +
+			'<td class="num">' + self.eur(s.net_total) + '</td>' +
+			'<td class="num">' + self.pct(s.share_pct) + '</td>' +
+			'<td class="num">' + s.receipts + '</td>' +
+			'<td class="num">' + prev + '</td>' +
+			'<td class="num">' + delta + '</td></tr>';
+	}).join('');
+	return '<section class="card"><figcaption>Top 10 Lieferanten ' + self.esc(String(d.year || '')) +
+		' nach Netto-Einkauf <i class="muted" style="font-size:.78rem;font-weight:400">— ' +
+		'Jahresanfang bis heute</i></figcaption>' +
+		'<p class="m" style="margin:0 0 8px">Diese ' + items.length + ' Lieferanten stehen für <b>' +
+		self.pct(d.top_share_pct) + '</b> des Jahres-Einkaufs (' + self.eur(d.year_total) +
+		' von ' + (d.supplier_count || 0) + ' Lieferanten insgesamt).</p>' +
+		'<table class="tbl"><thead><tr><th>#</th><th class="col-customer">Lieferant</th>' +
+		'<th class="num">Einkauf ' + self.esc(String(d.year || '')) + '</th>' +
+		'<th class="num">Anteil</th><th class="num">Wareneingänge</th>' +
+		'<th class="num">' + self.esc(String(d.prev_year || '')) + ' gesamt</th>' +
+		'<th class="num">Entwicklung</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Grundlage sind gebuchte ' +
+		'Wareneingänge (Netto), nicht Bestellungen. Die Spalte „' +
+		self.esc(String(d.prev_year || '')) + ' gesamt" ist das KOMPLETTE Vorjahr — die ' +
+		'Entwicklung stellt einen laufenden Zeitraum einem abgeschlossenen Jahr gegenüber ' +
+		'und fällt früh im Jahr zwangsläufig negativ aus.</p></section>';
+};
+
 PCBBoard.prototype.monthLabel = function (m) {
 	var names = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli',
 		'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -2249,13 +2327,18 @@ PCBBoard.prototype.topProductsHtml = function (m) {
 			'<p class="muted">Noch keine Rechnungspositionen in diesem Monat.</p></section>';
 	}
 	var rows = items.map(function (p, idx) {
-		return '<tr><td>' + (idx + 1) + '</td><td>' + self.esc(p.item_name || p.item_code) + '</td>' +
-			'<td class="num">' + self.eur(p.net_total) + '</td></tr>';
+		return '<tr><td>' + (idx + 1) + '</td><td title="' + self.esc(p.item_name || '') + '">' +
+			self.esc(p.item_code || p.item_name) + '</td>' +
+			'<td class="num">' + self.eur(p.net_total) + '</td>' +
+			'<td class="num">' + self.pct(p.share_pct) + '</td></tr>';
 	}).join('');
 	return '<section class="card"><figcaption>Top 5 Produkte im ' + self.esc(this.monthLabel(m)) +
 		' nach Netto-Umsatz</figcaption>' +
-		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th><th class="num">Umsatz</th></tr></thead>' +
-		'<tbody>' + rows + '</tbody></table></section>';
+		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th><th class="num">Umsatz</th>' +
+		'<th class="num">Anteil</th></tr></thead>' +
+		'<tbody>' + rows + '</tbody></table>' +
+		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Anteil = am gesamten ' +
+		'Monatsumsatz aller Artikel, nicht nur der gezeigten fünf.</p></section>';
 };
 
 PCBBoard.prototype.coverageBarHtml = function (m) {
@@ -2588,6 +2671,8 @@ var PCB_BOARD_CSS =
 	'.tbl tr.held td:not(.hold-cell){opacity:.62}' +
 	'.wo-chip.held{border-color:var(--warning);border-style:dashed}' +
 	'.followup{font-weight:650;color:var(--brand-teal);white-space:nowrap}' +
+	'.fu-mark{cursor:help}' +
+	'.pill{background:var(--grid);color:var(--text-secondary)}' +
 	// Schmalere Spalten in der Liefertermin-Liste: Kundenname 25 % schmaler
 	// (240 -> 180 px) und bei Bedarf gekürzt (voller Name im Tooltip),
 	// Produktionsauftrag 40 % schmaler (200 -> 120 px), Kürzel brechen um.

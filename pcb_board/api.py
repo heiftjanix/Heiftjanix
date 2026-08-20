@@ -111,35 +111,73 @@ def list_assignments():
     )
 
 
+NOTE_DT = "PCB Board Work Order Note"
+
+
+def _note_doc(work_order: str):
+    """Notiz zum Produktionsauftrag holen oder neu anlegen."""
+    work_order = (work_order or "").strip()
+    if not work_order:
+        frappe.throw("work_order ist erforderlich.")
+    if frappe.db.exists(NOTE_DT, work_order):
+        return frappe.get_doc(NOTE_DT, work_order)
+    doc = frappe.new_doc(NOTE_DT)
+    doc.work_order = work_order
+    return doc
+
+
+def _note_state(doc) -> dict:
+    return {
+        "ok": True,
+        "work_order": doc.work_order,
+        "revised_date": str(doc.revised_date) if doc.revised_date else None,
+        "remark": doc.remark or None,
+        "assignee": doc.assignee or None,
+        "on_hold": bool(int(doc.on_hold or 0)),
+        "on_hold_since": (str(doc.on_hold_since)
+                          if (int(doc.on_hold or 0) and doc.on_hold_since) else None),
+    }
+
+
+def _save_note(doc) -> dict:
+    """Speichern — und die Notiz wieder wegräumen, wenn NICHTS mehr drinsteht.
+
+    Die Prüfung schaut auf alle Felder. Vorher hing sie nur an Termin und
+    Bemerkung: ein leer gespeichertes Bemerkungsfeld hat damit die Notiz gelöscht
+    und dabei still auch die On-Hold-Markierung mitgenommen.
+    """
+    state = _note_state(doc)
+    empty = not (state["revised_date"] or state["remark"] or state["assignee"]
+                 or state["on_hold"])
+    if empty:
+        if not doc.is_new():
+            frappe.delete_doc(NOTE_DT, doc.work_order, ignore_permissions=True)
+        frappe.db.commit()
+        return dict(state, revised_date=None, remark=None, assignee=None,
+                    on_hold=False, on_hold_since=None)
+    doc.updated_by = frappe.session.user
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    return _note_state(doc)
+
+
 @frappe.whitelist()
 def set_work_order_note(work_order: str, revised_date: str | None = None,
                         remark: str | None = None):
     """Korrigierter Liefertermin + Bemerkung zu einem Produktionsauftrag.
-    Beides leer = Notiz löschen. Ändert nichts am ERPNext-Beleg selbst."""
-    work_order = (work_order or "").strip()
-    if not work_order:
-        frappe.throw("work_order ist erforderlich.")
-    revised_date = (revised_date or "").strip() or None
-    remark = (remark or "").strip() or None
-    exists = frappe.db.exists("PCB Board Work Order Note", work_order)
-    if not revised_date and not remark:
-        if exists:
-            frappe.delete_doc("PCB Board Work Order Note", work_order, ignore_permissions=True)
-            frappe.db.commit()
-        return {"ok": True, "work_order": work_order, "revised_date": None, "remark": None}
-    if exists:
-        doc = frappe.get_doc("PCB Board Work Order Note", work_order)
-    else:
-        doc = frappe.new_doc("PCB Board Work Order Note")
-        doc.work_order = work_order
-    doc.revised_date = revised_date
-    doc.remark = remark
-    doc.updated_by = frappe.session.user
-    doc.save(ignore_permissions=True)
-    frappe.db.commit()
-    return {"ok": True, "work_order": work_order,
-            "revised_date": str(doc.revised_date) if doc.revised_date else None,
-            "remark": doc.remark}
+    Zuständigkeit und Sperre bleiben unberührt. Ändert nichts am ERPNext-Beleg."""
+    doc = _note_doc(work_order)
+    doc.revised_date = (revised_date or "").strip() or None
+    doc.remark = (remark or "").strip() or None
+    return _save_note(doc)
+
+
+@frappe.whitelist()
+def set_work_order_assignee(work_order: str, assignee: str | None = None):
+    """Kürzel des Zuständigen am Produktionsauftrag (leer = Zuständigkeit weg)."""
+    doc = _note_doc(work_order)
+    doc.assignee = (assignee or "").strip()[:20] or None
+    return _save_note(doc)
 
 
 @frappe.whitelist()
@@ -147,38 +185,14 @@ def set_work_order_hold(work_order: str, on_hold: int | str = 1):
     """Produktionsauftrag im Board als „zur Bearbeitung gesperrt" markieren bzw.
     wieder freigeben. Rein informativ: der ERPNext-Beleg bleibt unberührt (Regel
     „nur Vorschläge"), gesperrt wird also die Sicht des Teams, nicht der Auftrag
-    selbst. Eine vorhandene Bemerkung bleibt beim Freigeben erhalten."""
-    work_order = (work_order or "").strip()
-    if not work_order:
-        frappe.throw("work_order ist erforderlich.")
+    selbst. Bemerkung und Zuständigkeit bleiben beim Freigeben erhalten."""
     hold = str(on_hold).strip().lower() not in ("0", "false", "", "none")
-    exists = frappe.db.exists("PCB Board Work Order Note", work_order)
-    if not hold and not exists:
-        return {"ok": True, "work_order": work_order, "on_hold": False, "on_hold_since": None}
-    if exists:
-        doc = frappe.get_doc("PCB Board Work Order Note", work_order)
-    else:
-        doc = frappe.new_doc("PCB Board Work Order Note")
-        doc.work_order = work_order
+    doc = _note_doc(work_order)
     doc.on_hold = 1 if hold else 0
     # „seit wann" nicht bei jedem Klick neu setzen — sonst verliert man beim
     # zweimaligen Drücken die eigentliche Sperrdauer.
-    if hold:
-        doc.on_hold_since = doc.on_hold_since or frappe.utils.today()
-    else:
-        doc.on_hold_since = None
-    doc.updated_by = frappe.session.user
-    doc.save(ignore_permissions=True)
-    # Freigegeben und sonst nichts gepflegt: Notiz wieder wegräumen.
-    if not hold and not doc.revised_date and not (doc.remark or "").strip():
-        frappe.delete_doc("PCB Board Work Order Note", work_order, ignore_permissions=True)
-    frappe.db.commit()
-    return {
-        "ok": True,
-        "work_order": work_order,
-        "on_hold": hold,
-        "on_hold_since": str(doc.on_hold_since) if hold and doc.on_hold_since else None,
-    }
+    doc.on_hold_since = (doc.on_hold_since or frappe.utils.today()) if hold else None
+    return _save_note(doc)
 
 
 @frappe.whitelist()

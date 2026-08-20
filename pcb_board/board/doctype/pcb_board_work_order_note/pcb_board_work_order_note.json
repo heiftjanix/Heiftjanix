@@ -28,6 +28,12 @@
       "label": "Korrigierter Liefertermin"
     },
     {
+      "fieldname": "assignee",
+      "fieldtype": "Data",
+      "label": "Zuständig (Kürzel)",
+      "length": 20
+    },
+    {
       "fieldname": "on_hold",
       "fieldtype": "Check",
       "default": "0",

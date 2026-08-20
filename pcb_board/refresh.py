@@ -857,7 +857,8 @@ def attach_work_order_notes(view: dict) -> None:
         return
     rows = frappe.get_all(
         "PCB Board Work Order Note",
-        fields=["work_order", "revised_date", "remark", "updated_by", "on_hold", "on_hold_since"],
+        fields=["work_order", "revised_date", "remark", "assignee", "updated_by",
+                "on_hold", "on_hold_since"],
         limit_page_length=0,
         ignore_permissions=True,
     )
@@ -867,5 +868,6 @@ def attach_work_order_notes(view: dict) -> None:
         wo["note_date"] = str(row["revised_date"]) if row.get("revised_date") else None
         wo["note_remark"] = row.get("remark")
         wo["note_by"] = row.get("updated_by")
+        wo["assignee"] = row.get("assignee")
         wo["on_hold"] = bool(row.get("on_hold"))
         wo["on_hold_since"] = str(row["on_hold_since"]) if row.get("on_hold_since") else None

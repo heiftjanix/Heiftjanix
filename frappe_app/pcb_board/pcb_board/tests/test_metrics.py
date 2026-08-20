@@ -424,6 +424,57 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertEqual(d["rows"][0]["supplier"], "Lief 00")
         self.assertLess(d["top_share_pct"], 1.0)
 
+    def test_purchase_invoices_splits_overdue_upcoming_and_held(self):
+        data = self._data()
+        data["purchase_invoices"] = [
+            # überfällig, aktiv
+            {"name": "PINV-1", "supplier": "Mouser", "bill_no": "88779332",
+             "due_date": "2026-07-01", "grand_total": 500, "outstanding_amount": 500,
+             "on_hold": False},
+            # noch fristgerecht
+            {"name": "PINV-2", "supplier": "TME", "bill_no": "7261013852",
+             "due_date": "2026-07-20", "grand_total": 300, "outstanding_amount": 300,
+             "on_hold": False},
+            # überfällig, aber gesperrt -> zaehlt nicht in die Fristen-Kacheln
+            {"name": "PINV-3", "supplier": "Farnell", "bill_no": "620736",
+             "due_date": "2026-06-01", "grand_total": 200, "outstanding_amount": 200,
+             "on_hold": True},
+            # bereits vollstaendig bezahlt -> raus
+            {"name": "PINV-4", "supplier": "Würth", "bill_no": "R26DE031012",
+             "due_date": "2026-07-01", "grand_total": 400, "outstanding_amount": 0,
+             "on_hold": False},
+            # ohne Faelligkeitsdatum -> weder ueberfaellig noch "upcoming"-Kachel,
+            # bleibt aber in der Gesamtliste sichtbar
+            {"name": "PINV-5", "supplier": "Reichelt", "bill_no": "2221697",
+             "due_date": None, "grand_total": 100, "outstanding_amount": 100,
+             "on_hold": False},
+        ]
+        pi = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchase_invoices"]
+        self.assertEqual([r["name"] for r in pi["overdue"]], ["PINV-1"])
+        self.assertEqual([r["name"] for r in pi["upcoming"]], ["PINV-2", "PINV-5"])
+        self.assertEqual([r["name"] for r in pi["held"]], ["PINV-3"])
+        self.assertAlmostEqual(pi["overdue_net"], 500, delta=0.01)
+        self.assertAlmostEqual(pi["upcoming_net"], 400, delta=0.01)
+        self.assertAlmostEqual(pi["held_net"], 200, delta=0.01)
+        # total_net zaehlt AUCH die gesperrten mit (900 aktiv + 200 gehalten) -
+        # bezahlte (PINV-4) sind schon vorher raus
+        self.assertAlmostEqual(pi["total_net"], 1100, delta=0.01)
+        self.assertEqual(pi["max_days_overdue"], 14)
+        # Sortierung: aelteste Faelligkeit zuerst, offenes Datum ans Ende; PINV-4
+        # ist bezahlt (outstanding_amount 0) und taucht gar nicht erst auf
+        self.assertEqual([r["name"] for r in pi["rows"]],
+                         ["PINV-3", "PINV-1", "PINV-2", "PINV-5"])
+        # ohne Faelligkeitsdatum sortiert wie eine sehr weit entfernte Faelligkeit
+        # ans Ende, laeuft aber trotzdem in der Gesamtliste mit
+
+    def test_purchase_invoices_empty_when_nothing_open(self):
+        data = self._data()
+        data["purchase_invoices"] = []
+        pi = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchase_invoices"]
+        self.assertEqual(pi["rows"], [])
+        self.assertEqual(pi["total_net"], 0.0)
+        self.assertEqual(pi["max_days_overdue"], 0)
+
     def test_billing_shipment_date_prefers_ups_then_note(self):
         data = self._data()
         data["to_bill_delivery_notes"][0]["shipment_date"] = "2026-07-09"

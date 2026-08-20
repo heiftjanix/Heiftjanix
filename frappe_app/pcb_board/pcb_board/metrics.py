@@ -1094,6 +1094,52 @@ QUOTE_EXPIRED = ("Expired",)
 QUOTE_OPEN = ("Open", "Replied")
 
 
+def purchase_invoices_summary(data: dict, today: date) -> dict:
+    """Offene Eingangsrechnungen für den Buchhaltungs-Reiter: überfällig (Fällig-
+    keitsdatum vor heute) und noch fristgerecht, je mit dem offenen (nicht
+    bezahlten) Betrag. Gesperrte Rechnungen (on_hold, z. B. wegen Klärfall) laufen
+    separat mit — sie zählen nicht in die Fristen-Kacheln, sonst würde ein
+    bewusst zurückgehaltener Betrag wie eine vergessene Zahlung aussehen."""
+    rows = []
+    for r in data.get("purchase_invoices", []) or []:
+        due = _to_date(r.get("due_date"))
+        outstanding = float(r.get("outstanding_amount") or 0)
+        if outstanding <= 0:
+            continue
+        days_overdue = (today - due).days if due else None
+        rows.append({
+            "name": r.get("name"),
+            "supplier": r.get("supplier"),
+            "bill_no": r.get("bill_no"),
+            "bill_date": r.get("bill_date"),
+            "due_date": r.get("due_date"),
+            "grand_total": round(float(r.get("grand_total") or 0), 2),
+            "outstanding_amount": round(outstanding, 2),
+            "on_hold": bool(r.get("on_hold")),
+            "days_overdue": days_overdue,
+            "overdue": bool(due and due < today),
+        })
+    # Älteste Fälligkeit zuerst: die dringendsten Zahlungen oben.
+    rows.sort(key=lambda r: (r["due_date"] or "9999-12-31", r["name"]))
+
+    active = [r for r in rows if not r["on_hold"]]
+    overdue = [r for r in active if r["overdue"]]
+    upcoming = [r for r in active if not r["overdue"]]
+    held = [r for r in rows if r["on_hold"]]
+
+    return {
+        "rows": rows,
+        "overdue": overdue,
+        "upcoming": upcoming,
+        "held": held,
+        "overdue_net": round(sum(r["outstanding_amount"] for r in overdue), 2),
+        "upcoming_net": round(sum(r["outstanding_amount"] for r in upcoming), 2),
+        "held_net": round(sum(r["outstanding_amount"] for r in held), 2),
+        "total_net": round(sum(r["outstanding_amount"] for r in rows), 2),
+        "max_days_overdue": max((r["days_overdue"] for r in overdue), default=0),
+    }
+
+
 def crm_summary(data: dict, today: date, expiring_days: int = 14,
                 dormant_days: int = 180) -> dict:
     """CRM-Überblick: Angebote (offen, nachzufassen, Trefferquote) und die
@@ -1602,6 +1648,7 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
         "purchasing": purchasing,
         "todo": todo_orders(data, today, purchasing.get("work_orders")),
         "crm": crm_summary(data, today),
+        "purchase_invoices": purchase_invoices_summary(data, today),
         "profit_history": profit_history(data, config, today),
         "forecast": fc.to_dict(),
         "daily_series": daily_series,

@@ -891,8 +891,12 @@ PCBBoard.prototype.deliveryDatesHtml = function (m) {
 		'<div class="m">' + week.length + ' Auftrag/Aufträge · sollten diese Woche fertig werden</div></div>' +
 		'</div>';
 
+	// Offene Kundenaufträge (noch nicht abgeschlossen) — dieselbe Grundmenge,
+	// aus der die Liste hier gespeist wird.
+	var soUrl = this.reportUrl('sales-order',
+		{ status: ['not in', ['Closed', 'Cancelled', 'Completed']], docstatus: 1 });
 	return '<section class="card" id="pcb-delivery-dates"><div class="sec-h">' +
-		'<h2>📅 Liefertermine: diese Woche oder überfällig</h2>' +
+		'<h2>📅 ' + this.figLink('Liefertermine: diese Woche oder überfällig', soUrl) + '</h2>' +
 		'<span class="muted">Handelsware & Aufträge nicht übersehen</span></div>' +
 		reliability + table + '</section>';
 };
@@ -1646,7 +1650,10 @@ PCBBoard.prototype.topSuppliersHtml = function (m) {
 			'<td class="num">' + self.eur(s.net_total) + '</td>' +
 			'<td class="num">' + self.pct(s.share_pct) + '</td></tr>';
 	}).join('');
-	return '<section class="card"><figcaption>Top 5 Lieferanten (Monat, Netto-Einkaufswert — Abhängigkeiten im Blick behalten)</figcaption>' +
+	var r1 = this.monthRange(m);
+	return '<section class="card"><figcaption>' + this.figLink('Top 5 Lieferanten',
+		this.reportUrl('purchase-receipt', { docstatus: 1, posting_date: ['between', [r1.start, r1.end]] })) +
+		' (Monat, Netto-Einkaufswert — Abhängigkeiten im Blick behalten)</figcaption>' +
 		'<table class="tbl"><thead><tr><th>#</th><th>Lieferant</th><th class="num">Einkaufswert</th>' +
 		'<th class="num">Anteil</th></tr></thead><tbody>' + rows + '</tbody></table></section>';
 };
@@ -1667,7 +1674,10 @@ PCBBoard.prototype.productMarginsHtml = function (m) {
 			'<td class="num">' + c.margin + '</td>' +
 			'<td class="num">' + c.marginPct + '</td></tr>';
 	}).join('');
-	return '<section class="card"><figcaption>Deckungsbeitrag Top-Produkte (Monat)</figcaption>' +
+	var r2 = this.monthRange(m);
+	return '<section class="card"><figcaption>' + this.figLink('Deckungsbeitrag Top-Produkte',
+		this.reportUrl('sales-invoice', { docstatus: 1, posting_date: ['between', [r2.start, r2.end]] })) +
+		' (Monat)</figcaption>' +
 		'<table class="tbl"><thead><tr><th>Produkt</th><th class="num">Umsatz</th>' +
 		'<th class="num">Anteil</th>' +
 		'<th class="num">Wareneinsatz</th><th class="num">DB</th><th class="num">DB %</th></tr></thead>' +
@@ -1715,8 +1725,11 @@ PCBBoard.prototype.productFlopsHtml = function (m) {
 			'<td class="num">' + c.margin + '</td>' +
 			'<td class="num">' + c.marginPct + '</td></tr>';
 	}).join('');
-	return '<section class="card"><figcaption>Flop 5 Produkte im ' + self.esc(this.monthLabel(m)) +
-		' nach Deckungsbeitrag <i class="muted" style="font-size:.78rem;font-weight:400">' +
+	var r3 = this.monthRange(m);
+	return '<section class="card"><figcaption>' + this.figLink('Flop 5 Produkte im ' + self.esc(this.monthLabel(m)) +
+		' nach Deckungsbeitrag',
+		this.reportUrl('sales-invoice', { docstatus: 1, posting_date: ['between', [r3.start, r3.end]] })) +
+		' <i class="muted" style="font-size:.78rem;font-weight:400">' +
 		'— schwächster Beitrag zuerst</i></figcaption>' +
 		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th><th class="num">Umsatz</th>' +
 		'<th class="num">Anteil</th>' +
@@ -1763,8 +1776,11 @@ PCBBoard.prototype.productMarginsYearHtml = function (m) {
 					'">' + self.eur(p.prev_margin) + '</span>') + '</td>' +
 			'<td class="num">' + deltaTag(p.delta_margin) + '</td></tr>';
 	}).join('');
-	return '<section class="card"><figcaption>Top 5 Produkte ' + self.esc(String(d.year || '')) +
-		' nach Deckungsbeitrag — Jahresvergleich mit ' + self.esc(String(d.prev_year || '')) +
+	var ry = this.yearRange(m);
+	return '<section class="card"><figcaption>' + this.figLink(
+		'Top 5 Produkte ' + self.esc(String(d.year || '')) +
+		' nach Deckungsbeitrag — Jahresvergleich mit ' + self.esc(String(d.prev_year || '')),
+		this.reportUrl('sales-invoice', { docstatus: 1, posting_date: ['between', [ry.start, ry.end]] })) +
 		'</figcaption>' +
 		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th>' +
 		'<th class="num">Umsatz ' + self.esc(String(d.year || '')) + '</th>' +
@@ -1784,8 +1800,12 @@ PCBBoard.prototype.productMarginsYearHtml = function (m) {
 PCBBoard.prototype.topPurchasesHtml = function (m) {
 	var self = this;
 	var items = m.top_purchases || [];
+	var rp = this.monthRange(m);
+	var purchasesUrl = this.reportUrl('purchase-receipt',
+		{ docstatus: 1, posting_date: ['between', [rp.start, rp.end]] });
 	if (!items.length) {
-		return '<section class="card"><figcaption>Top 5 Einkäufe (Monat)</figcaption>' +
+		return '<section class="card"><figcaption>' + this.figLink('Top 5 Einkäufe', purchasesUrl) +
+			' (Monat)</figcaption>' +
 			'<p class="muted">Noch keine Wareneingangspositionen in diesem Monat.</p></section>';
 	}
 	var rows = items.map(function (p, idx) {
@@ -1794,7 +1814,8 @@ PCBBoard.prototype.topPurchasesHtml = function (m) {
 			'<td class="num">' + self.eur(p.net_total) + '</td>' +
 			'<td class="num">' + self.pct(p.share_pct) + '</td></tr>';
 	}).join('');
-	return '<section class="card"><figcaption>Top 5 Einkäufe (Monat, Netto-Warenwert)</figcaption>' +
+	return '<section class="card"><figcaption>' + this.figLink('Top 5 Einkäufe', purchasesUrl) +
+		' (Monat, Netto-Warenwert)</figcaption>' +
 		'<table class="tbl"><thead><tr><th>#</th><th>Artikel</th><th class="num">Warenwert</th>' +
 		'<th class="num">Anteil</th></tr></thead>' +
 		'<tbody>' + rows + '</tbody></table>' +
@@ -2328,8 +2349,11 @@ PCBBoard.prototype.topCustomersHtml = function (m) {
 			'<td class="num">' + self.eur(c.net_total) + '</td>' +
 			'<td class="num">' + self.pct(c.share_pct) + '</td></tr>';
 	}).join('');
-	return '<section class="card"><figcaption>Top 5 Kunden im ' + self.esc(this.monthLabel(m)) +
-		' nach Netto-Umsatz <i class="muted" style="font-size:.78rem;font-weight:400">— Klumpenrisiko im Blick behalten</i></figcaption>' +
+	var rc = this.monthRange(m);
+	return '<section class="card"><figcaption>' + this.figLink(
+		'Top 5 Kunden im ' + self.esc(this.monthLabel(m)) + ' nach Netto-Umsatz',
+		this.reportUrl('sales-invoice', { docstatus: 1, posting_date: ['between', [rc.start, rc.end]] })) +
+		' <i class="muted" style="font-size:.78rem;font-weight:400">— Klumpenrisiko im Blick behalten</i></figcaption>' +
 		'<table class="tbl"><thead><tr><th>#</th><th>Kunde</th><th class="num">Umsatz</th>' +
 		'<th class="num">Anteil</th></tr></thead><tbody>' + rows + '</tbody></table></section>';
 };
@@ -2362,8 +2386,11 @@ PCBBoard.prototype.topCustomersYearHtml = function (m) {
 			'<td class="num">' + prev + '</td>' +
 			'<td class="num">' + delta + '</td></tr>';
 	}).join('');
-	return '<section class="card"><figcaption>Top 10 Kunden ' + self.esc(String(d.year || '')) +
-		' nach Netto-Umsatz <i class="muted" style="font-size:.78rem;font-weight:400">— ' +
+	var rcy = this.yearRange(m);
+	return '<section class="card"><figcaption>' + this.figLink(
+		'Top 10 Kunden ' + self.esc(String(d.year || '')) + ' nach Netto-Umsatz',
+		this.reportUrl('sales-invoice', { docstatus: 1, posting_date: ['between', [rcy.start, rcy.end]] })) +
+		' <i class="muted" style="font-size:.78rem;font-weight:400">— ' +
 		'Jahresanfang bis heute</i></figcaption>' +
 		'<p class="m" style="margin:0 0 8px">Diese ' + items.length + ' Kunden stehen für <b>' +
 		self.pct(d.top_share_pct) + '</b> des Jahresumsatzes (' + self.eur(d.year_total) +
@@ -2409,8 +2436,11 @@ PCBBoard.prototype.topSuppliersYearHtml = function (m) {
 			'<td class="num">' + prev + '</td>' +
 			'<td class="num">' + delta + '</td></tr>';
 	}).join('');
-	return '<section class="card"><figcaption>Top 10 Lieferanten ' + self.esc(String(d.year || '')) +
-		' nach Netto-Einkauf <i class="muted" style="font-size:.78rem;font-weight:400">— ' +
+	var rsy = this.yearRange(m);
+	return '<section class="card"><figcaption>' + this.figLink(
+		'Top 10 Lieferanten ' + self.esc(String(d.year || '')) + ' nach Netto-Einkauf',
+		this.reportUrl('purchase-receipt', { docstatus: 1, posting_date: ['between', [rsy.start, rsy.end]] })) +
+		' <i class="muted" style="font-size:.78rem;font-weight:400">— ' +
 		'Jahresanfang bis heute</i></figcaption>' +
 		'<p class="m" style="margin:0 0 8px">Diese ' + items.length + ' Lieferanten stehen für <b>' +
 		self.pct(d.top_share_pct) + '</b> des Jahres-Einkaufs (' + self.eur(d.year_total) +
@@ -2435,12 +2465,47 @@ PCBBoard.prototype.monthLabel = function (m) {
 	return (names[mi - 1] || '') + ' ' + iso.slice(0, 4);
 };
 
+// Zeitraum-Grenzen für die Report-Links der Top/Flop-Karten — dieselben
+// Zeiträume, die auch die zugrundeliegenden Kennzahlen benutzen (Monat = seit
+// Monatsanfang bis heute, Jahr = seit Jahresanfang bis heute).
+PCBBoard.prototype.monthRange = function (m) {
+	var iso = m.as_of || '';
+	return { start: iso.slice(0, 7) + '-01', end: iso };
+};
+PCBBoard.prototype.yearRange = function (m) {
+	var iso = m.as_of || '';
+	return { start: iso.slice(0, 4) + '-01-01', end: iso };
+};
+
+// Baut die ERPNext-Listenansicht-URL zu einem Doctype mit Filtern. Werte, die
+// keine einfache Gleichheit sind (Zeiträume, "not in" …), werden als
+// [operator, wert]-Array übergeben — das JSON-kodiert Frappe im Query-String.
+PCBBoard.prototype.reportUrl = function (doctype, filters) {
+	var qs = Object.keys(filters || {}).map(function (k) {
+		var v = filters[k];
+		var raw = (v && typeof v === 'object') ? JSON.stringify(v) : v;
+		return encodeURIComponent(k) + '=' + encodeURIComponent(raw);
+	}).join('&');
+	return '/app/' + doctype + (qs ? '?' + qs : '');
+};
+
+// Überschrift, die auf den zugehörigen ERPNext-Report verlinkt — die Karte
+// zeigt eine berechnete Kennzahl, der Link führt zu den Rohdaten dahinter.
+PCBBoard.prototype.figLink = function (label, href) {
+	return '<a class="fig-link" href="' + href + '" target="_blank" ' +
+		'title="Zugrundeliegende Daten in ERPNext öffnen">' + label + '</a>';
+};
+
 PCBBoard.prototype.topProductsHtml = function (m) {
 	var self = this;
 	var items = m.top_products || [];
+	var rpr = this.monthRange(m);
+	var topProductsUrl = this.reportUrl('sales-invoice',
+		{ docstatus: 1, posting_date: ['between', [rpr.start, rpr.end]] });
 	if (!items.length) {
-		return '<section class="card"><figcaption>Top 5 Produkte im ' + self.esc(this.monthLabel(m)) +
-			' nach Netto-Umsatz</figcaption>' +
+		return '<section class="card"><figcaption>' +
+			this.figLink('Top 5 Produkte im ' + self.esc(this.monthLabel(m)) + ' nach Netto-Umsatz', topProductsUrl) +
+			'</figcaption>' +
 			'<p class="muted">Noch keine Rechnungspositionen in diesem Monat.</p></section>';
 	}
 	var rows = items.map(function (p, idx) {
@@ -2449,8 +2514,9 @@ PCBBoard.prototype.topProductsHtml = function (m) {
 			'<td class="num">' + self.eur(p.net_total) + '</td>' +
 			'<td class="num">' + self.pct(p.share_pct) + '</td></tr>';
 	}).join('');
-	return '<section class="card"><figcaption>Top 5 Produkte im ' + self.esc(this.monthLabel(m)) +
-		' nach Netto-Umsatz</figcaption>' +
+	return '<section class="card"><figcaption>' +
+		this.figLink('Top 5 Produkte im ' + self.esc(this.monthLabel(m)) + ' nach Netto-Umsatz', topProductsUrl) +
+		'</figcaption>' +
 		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th><th class="num">Umsatz</th>' +
 		'<th class="num">Anteil</th></tr></thead>' +
 		'<tbody>' + rows + '</tbody></table>' +
@@ -2716,6 +2782,12 @@ var PCB_BOARD_CSS =
 	'.tile .m{font-size:.82rem;color:var(--muted);margin-top:4px}' +
 	'.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:.82rem;font-weight:600;color:#fff}' +
 	'.pcb-root figure{margin:0}.pcb-root figcaption{font-weight:600;margin-bottom:8px;font-size:.98rem}' +
+	// Verlinkte Überschriften bleiben optisch normaler Text — nur die
+	// gestrichelte Unterstreichung zeigt „hier gibt's mehr" (kein Link-Blau,
+	// das würde neben den echten Datenlinks in den Tabellen verwirren).
+	'.pcb-root .fig-link{color:inherit;text-decoration:none;border-bottom:1px dashed var(--muted)}' +
+	'.pcb-root .fig-link:hover{border-bottom-color:var(--brand-teal);color:var(--brand-teal)}' +
+	'.pcb-root h2 .fig-link{border-bottom-width:2px}' +
 	'.meter-wrap{margin-top:10px}.meter{position:relative;height:26px;border-radius:8px;background:var(--grid);overflow:hidden}' +
 	'.meter .fill{height:100%;border-radius:8px 0 0 8px}.meter .proj{height:100%;opacity:.45}.meter-row{display:flex;height:100%}' +
 	'.meter .mk{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--text-primary)}' +

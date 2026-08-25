@@ -1164,7 +1164,8 @@ PCBBoard.prototype.purchaseOrdersHtml = function (m) {
 PCBBoard.PROD_COLS = [
 	{ key: 'name', label: 'Produktionsauftrag' },
 	{ key: 'item', label: 'Artikel' },
-	{ key: 'qty', label: 'Menge', cls: 'num' },
+	{ key: 'qty', label: 'Gesamtmenge', cls: 'num' },
+	{ key: 'delivered', label: 'Bereits geliefert', cls: 'num' },
 	{ key: 'status', label: 'Status' },
 	{ key: 'customer_due_date', label: 'Wunschtermin Kunde' },
 	{ key: 'hold', label: 'Bearbeitung' },
@@ -1181,6 +1182,7 @@ PCBBoard.prototype.prodSortValue = function (w, key) {
 	switch (key) {
 		case 'item': return String(w.production_item || w.item_name || '').toLowerCase();
 		case 'qty': return Number(w.qty || 0);
+		case 'delivered': return Number(w.delivered_qty || 0);
 		case 'material': return (w.missing_items || []).length ? 0 : (w.material_ok ? 2 : 1);
 		case 'hold': return w.on_hold ? 0 : 1;
 		case 'ready': return w.ready_pct == null ? -1 : w.ready_pct;
@@ -1205,6 +1207,22 @@ PCBBoard.prototype.ektTag = function (it) {
 			: ' — Anfrage für diesen Artikel (neueste)');
 	return ' · <a class="ekt-link" href="/app/einkaufstool/' + encodeURIComponent(it.ekt) +
 		'" target="_blank" title="' + this.esc(title) + '">' + this.esc(it.ekt) + '</a>';
+};
+
+// Spalte „Bereits geliefert": Menge aus der verknüpften Kundenauftrags-Position
+// (nicht aus dem Produktionsauftrag selbst — der weiß nichts vom Versand).
+// Ohne Kundenauftrag/-position bleibt die volle Gesamtmenge offen.
+PCBBoard.prototype.deliveredCell = function (w) {
+	if (w.qty == null) {
+		return '<span class="muted">—</span>';
+	}
+	var delivered = w.delivered_qty || 0;
+	var open = w.open_qty != null ? w.open_qty : Math.max(w.qty - delivered, 0);
+	var fmt = function (v) { return String(v).replace('.', ','); };
+	if (!delivered) {
+		return '<span class="muted">noch nichts · offen ' + fmt(open) + '</span>';
+	}
+	return fmt(delivered) + ' <span class="muted">(offen ' + fmt(open) + ')</span>';
 };
 
 // Schalter „Bearbeitung gesperrt": markiert den Auftrag nur im Board (der
@@ -1369,6 +1387,7 @@ PCBBoard.prototype.prodTableHtml = function (m) {
 			'<td title="' + self.esc(w.item_name || '') + '">' +
 			self.esc(w.production_item || w.item_name || '') + '</td>' +
 			'<td class="num">' + (w.qty != null ? String(w.qty).replace('.', ',') : '—') + '</td>' +
+			'<td class="num">' + self.deliveredCell(w) + '</td>' +
 			'<td>' + self.esc(w.status || '') + '</td>' +
 			'<td>' + (w.customer_due_date
 				? self.esc(frappe.datetime.str_to_user(w.customer_due_date))
@@ -1435,7 +1454,10 @@ PCBBoard.prototype.productionOrdersHtml = function (m) {
 		'Wareneingängen. Als Beistellung gekennzeichnete Positionen (Kunde liefert bei) bleiben ' +
 		'außen vor. Fehlt ein Artikel und ist nichts bestellt, steht die EKT-Nummer der ' +
 		'passenden Einkaufstool-Anfrage daneben. Bestand und Zulauf werden nur einmal verplant: bei knapper Menge bekommt ' +
-		'der Auftrag mit dem früheren Bedarfstermin den Vorrang. Spalte „Bemerkung": frei ' +
+		'der Auftrag mit dem früheren Bedarfstermin den Vorrang. Spalte „Bereits geliefert": Menge, ' +
+		'die vom zugehörigen Kundenauftrag schon ausgeliefert wurde — die noch offene Menge daneben ' +
+		'ist der Rest davon, nicht der Rest der Fertigung. Ohne Kundenauftrag bleibt die ' +
+		'Gesamtmenge komplett offen. Spalte „Bemerkung": frei ' +
 		'pflegbar, ändert nichts am ERPNext-Beleg.</p></section>';
 };
 
@@ -2621,12 +2643,18 @@ var PCB_BOARD_CSS =
 	'.pcb-root .btn.ghost{color:var(--text-secondary);font-weight:500}' +
 	'.userchip{display:inline-flex;align-items:center;gap:6px;font-size:.82rem;font-weight:600;color:var(--text-secondary);' +
 	'background:var(--surface-1);border:1px solid var(--border);border-radius:999px;padding:6px 12px}' +
-	'.pcb-root .tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin:4px 0 2px}' +
+	// Auf mobilen Geräten und kleinen Monitoren sind Tab-Leiste und Tabellen oft
+	// breiter als der Bildschirm — statt das Layout zu quetschen, scrollen beide
+	// horizontal innerhalb ihres eigenen Rahmens (overflow-x:auto), der Rest der
+	// Seite bleibt fixiert.
+	'.pcb-root .tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin:4px 0 2px;' +
+	'overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}' +
 	'.pcb-root .tabs button{background:none;border:0;border-bottom:2px solid transparent;color:var(--text-secondary);' +
-	'padding:9px 14px;font-size:.92rem;font-weight:600;cursor:pointer;margin-bottom:-1px}' +
+	'padding:9px 14px;font-size:.92rem;font-weight:600;cursor:pointer;margin-bottom:-1px;flex:0 0 auto;white-space:nowrap}' +
 	'.pcb-root .tabs button.active{color:var(--brand-teal);border-bottom-color:var(--brand-teal)}' +
 	'.pcb-root .tab-panel{display:none}.pcb-root .tab-panel.active{display:block}' +
-	'.pcb-root .card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:18px;margin-top:16px}' +
+	'.pcb-root .card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:18px;' +
+	'margin-top:16px;overflow-x:auto;-webkit-overflow-scrolling:touch}' +
 	'.sec-h{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}' +
 	'.sec-h h2{font-size:1.05rem;color:var(--text-primary)!important;font-weight:700}' +
 	'.connectbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--plane);border:1px solid var(--border);' +
@@ -2721,7 +2749,11 @@ var PCB_BOARD_CSS =
 	'.tips{margin:0;padding:0;list-style:none}.tips li{display:flex;gap:14px;align-items:baseline;padding:10px 0;border-top:1px solid var(--border)}' +
 	'.tips li:first-child{border-top:0}.tip-eur{font-weight:680;color:var(--series-2);min-width:96px;text-align:right;font-variant-numeric:tabular-nums}' +
 	'.tip-body{display:flex;flex-direction:column}.tip-detail{color:var(--text-secondary);font-size:.88rem}' +
-	'.tbl{width:100%;border-collapse:collapse;font-size:.9rem}.tbl th,.tbl td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)}' +
+	// width:100% + min-width:max-content: die Tabelle füllt die Karte, wenn der
+	// Inhalt hineinpasst, wird aber nie zusammengequetscht — braucht sie mehr
+	// Platz, gewinnt max-content und die Karte scrollt (siehe .card oben).
+	'.tbl{width:100%;min-width:max-content;border-collapse:collapse;font-size:.9rem}' +
+	'.tbl th,.tbl td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)}' +
 	'.tbl th{color:var(--text-secondary);font-weight:600}.tbl .num{text-align:right;font-variant-numeric:tabular-nums}' +
 	'.tbl a{color:var(--blue-500,#2490ef);text-decoration:none;font-weight:600}.tbl a:hover{text-decoration:underline}' +
 	'.tbl tfoot td{font-weight:650;border-top:2px solid var(--baseline)}' +

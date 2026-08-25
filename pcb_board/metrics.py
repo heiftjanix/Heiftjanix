@@ -647,11 +647,20 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
         awaiting.sort(key=lambda a: (a["expected_date"] is None, a["expected_date"] or "", a["po"] or ""))
 
         waiting = bool(links) or bool(missing)
+        qty = float(wo.get("qty") or 0)
+        # Bereits an den Kunden ausgeliefert (aus der Kundenauftrags-Position,
+        # nicht aus dem Produktionsauftrag selbst) — die noch offene Menge ist der
+        # Rest davon, nicht der Rest der Fertigung. Ohne verknüpfte Position (kein
+        # Kundenauftrag) bleibt die Menge komplett offen.
+        delivered_qty = float(wo.get("delivered_qty") or 0)
+        open_qty = round(max(qty - delivered_qty, 0.0), 4)
         out.append({
             "name": wo.get("name"),
             "item_name": wo.get("item_name"),
             "production_item": wo.get("production_item"),
             "qty": wo.get("qty"),
+            "delivered_qty": round(delivered_qty, 4),
+            "open_qty": open_qty,
             "status": wo.get("status"),
             "sales_order": wo.get("sales_order"),
             "need_date": wo.get("planned_start_date") or wo.get("expected_delivery_date"),

@@ -949,6 +949,32 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertEqual((p["wo_waiting_count"], p["wo_unblockable_count"],
                           p["wo_need_order_count"]), (2, 1, 1))
 
+    def test_work_orders_open_qty_is_total_minus_delivered(self):
+        """Bereits geliefert kommt von der Kundenauftrags-Position, nicht vom
+        Produktionsauftrag — die offene Menge ist der Rest davon."""
+        data = self._wo_data()
+        data["work_orders"][0]["qty"] = 20
+        data["work_orders"][0]["delivered_qty"] = 8
+        # FA-2 ohne delivered_qty (altes Cache-Format oder kein Kundenauftrag
+        # verknüpft) -> komplett offen, nicht kaputt
+        p = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]
+        wo = {w["name"]: w for w in p["work_orders"]}
+        self.assertAlmostEqual(wo["FA-1"]["delivered_qty"], 8, delta=0.001)
+        self.assertAlmostEqual(wo["FA-1"]["open_qty"], 12, delta=0.001)
+        self.assertAlmostEqual(wo["FA-2"]["delivered_qty"], 0, delta=0.001)
+        self.assertAlmostEqual(wo["FA-2"]["open_qty"], 1, delta=0.001)
+
+    def test_work_orders_open_qty_never_negative(self):
+        """Mehr geliefert als die aktuelle Gesamtmenge (z. B. nach einer
+        Mengenkorrektur am Produktionsauftrag) darf keine negative offene Menge
+        ergeben."""
+        data = self._wo_data()
+        data["work_orders"][0]["qty"] = 1
+        data["work_orders"][0]["delivered_qty"] = 5
+        p = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]
+        wo = {w["name"]: w for w in p["work_orders"]}
+        self.assertEqual(wo["FA-1"]["open_qty"], 0.0)
+
     def test_work_orders_scarce_stock_allocated_once(self):
         """Zwei Aufträge brauchen denselben Artikel, geliefert wird nur für einen:
         der früher startende Auftrag bekommt die Menge, der zweite bleibt blockiert."""

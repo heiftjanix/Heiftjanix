@@ -371,7 +371,7 @@ def _fetch_erpnext(config: dict) -> dict:
             filters=[["docstatus", "=", 1],
                      ["status", "not in", ["Completed", "Cancelled", "Stopped", "Closed"]]],
             fields=["name", "production_item", "item_name", "qty", "status", "sales_order",
-                    "planned_start_date", "expected_delivery_date"],
+                    "sales_order_item", "planned_start_date", "expected_delivery_date"],
             limit_page_length=0,
             ignore_permissions=True,
         )
@@ -457,6 +457,23 @@ def _fetch_erpnext(config: dict) -> dict:
             ):
                 if row.get("delivery_date"):
                     so_due[row["name"]] = str(row["delivery_date"])[:10]
+
+        # Bereits an den Kunden ausgelieferte Menge: steht nicht am Produktions-
+        # auftrag selbst, sondern an der verknüpften Kundenauftrags-Position
+        # (sales_order_item = Name der Sales-Order-Item-Zeile). So lässt sich neben
+        # der Gesamtmenge zeigen, wie viel davon noch offen ist.
+        soi_names = sorted({w["sales_order_item"] for w in wos if w.get("sales_order_item")})
+        delivered_by_soi: dict[str, float] = {}
+        if soi_names:
+            for row in frappe.get_all(
+                "Sales Order Item",
+                filters=[["name", "in", soi_names]],
+                fields=["name", "delivered_qty"],
+                limit_page_length=0,
+                ignore_permissions=True,
+            ):
+                delivered_by_soi[row["name"]] = float(row.get("delivered_qty") or 0)
+
         work_orders = []
         for w in wos:
             work_orders.append({
@@ -470,6 +487,7 @@ def _fetch_erpnext(config: dict) -> dict:
                 "expected_delivery_date": (
                     str(w["expected_delivery_date"])[:10] if w.get("expected_delivery_date") else None),
                 "customer_due_date": so_due.get(w.get("sales_order")),
+                "delivered_qty": delivered_by_soi.get(w.get("sales_order_item"), 0.0),
                 "beistellung_count": wo_beistellung.get(w["name"], 0),
                 "required_items": wo_required.get(w["name"], []),
             })

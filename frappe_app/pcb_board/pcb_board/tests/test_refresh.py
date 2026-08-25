@@ -72,6 +72,13 @@ class TestFetchErpnext(unittest.TestCase):
                          "base_net_amount": 60, "qty": 3},
                         {"item_code": "A", "item_name": "Artikel A",
                          "base_net_amount": 40, "qty": 2}]
+            if doctype == "Work Order":
+                return [{"name": "P-1", "production_item": "ITEM-1", "item_name": "Item 1",
+                         "qty": 20, "status": "Not Started", "sales_order": "AB-1",
+                         "sales_order_item": "SOI-1", "planned_start_date": None,
+                         "expected_delivery_date": None}]
+            if doctype == "Sales Order Item":
+                return [{"name": "SOI-1", "delivered_qty": 8}]
             return []
 
         frappe = _install_frappe_stub(get_all, has_field=has_field)
@@ -147,6 +154,17 @@ class TestFetchErpnext(unittest.TestCase):
         self.assertEqual(row["net_open"], 0.0)          # 100 % berechnet
         self.assertEqual(row["delivered_pct"], 40.0)
         self.assertEqual(row["net_undelivered"], 600.0)  # 60 % noch nicht geliefert
+
+    def test_work_order_carries_delivered_qty_from_sales_order_item(self):
+        """Bereits geliefert steht an der Kundenauftrags-Position (sales_order_item),
+        nicht am Produktionsauftrag selbst — muss über den Verweis nachgeschlagen
+        werden, sonst zeigt das Board immer 0."""
+        data, calls, _ = self._run()
+        wo_calls = [c for c in calls if c["doctype"] == "Work Order"]
+        self.assertTrue(any("sales_order_item" in (c.get("fields") or []) for c in wo_calls))
+        soi_calls = [c for c in calls if c["doctype"] == "Sales Order Item"]
+        self.assertTrue(soi_calls)
+        self.assertEqual(data["work_orders"][0]["delivered_qty"], 8.0)
 
     def test_failing_production_block_does_not_kill_refresh(self):
         """Fällt die Fertigungsabfrage aus, fehlt nur dieser Abschnitt."""

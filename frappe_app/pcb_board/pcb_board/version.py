@@ -7,4 +7,4 @@ enthält — der Stempel-Commit selbst kommt naturgemäß eine Ebene später).
 """
 
 BUILD_TIME = "2026-08-26T12:29:15+00:00"
-BUILD_COMMIT = "5da22017c389399a90c211da3850a587a5cc5f96"
+BUILD_COMMIT = "6062e30cd5f1e3f7968564a18f8f632f77ddc19b"

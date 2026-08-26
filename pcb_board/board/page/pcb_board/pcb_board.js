@@ -434,7 +434,9 @@ PCBBoard.prototype.restoreFocus = function (keep) {
 // Wareneingang = was hereinkommt: Bestellungen mit erwartetem Termin. Die
 // Fertigungsaufträge stehen im eigenen Reiter „Produktion".
 PCBBoard.prototype.wareneingangTabHtml = function (m) {
-	return this.purchaseOrdersHtml(m) + this.recentReceiptsHtml(m);
+	return this.purchaseOrdersHtml(m) + this.recentReceiptsHtml(m) +
+		this.costsCardHtml(m) + this.topPurchasesHtml(m) + this.topSuppliersHtml(m) +
+		this.topSuppliersYearHtml(m);
 };
 
 // Warenausgang = was hinausgeht: Liefertermine der Kundenaufträge und die
@@ -445,7 +447,7 @@ PCBBoard.prototype.warenausgangTabHtml = function (m) {
 
 // GuV = frühere Tabs „Umsatz" + „Kosten".
 PCBBoard.prototype.guvTabHtml = function (m) {
-	return this.revenueTabHtml(m) + this.costsTabHtml(m);
+	return this.revenueTabHtml(m) + this.productMarginsTabHtml(m);
 };
 
 // Materialstand eines Produktionsauftrags als Symbol + Klartext:
@@ -1607,7 +1609,10 @@ PCBBoard.prototype.openWorkOrderNote = function (woName) {
 	);
 };
 
-PCBBoard.prototype.costsTabHtml = function (m) {
+// Kosten-Kachelzeile — eigene Karte, damit sie sowohl aus dem Wareneingang-
+// Reiter (dort steht sie jetzt) als auch bei Bedarf anderswo eingebunden
+// werden kann, ohne die Zahlen zweimal zu berechnen.
+PCBBoard.prototype.costsCardHtml = function (m) {
 	var self = this;
 	var c = m.costs || {};
 	var ph = m.profit_history || {};
@@ -1632,10 +1637,14 @@ PCBBoard.prototype.costsTabHtml = function (m) {
 		'<div class="m">kumulierter Gewinn/Verlust der abgeschlossenen Monate</div></div>' +
 		'</div>';
 	return '<section class="card"><div class="sec-h"><h2>Kosten</h2>' +
-		'<span class="muted">laufender Monat</span></div>' + tiles + '</section>' +
-		this.topPurchasesHtml(m) + this.topSuppliersHtml(m) +
-		this.topSuppliersYearHtml(m) +
-		this.productMarginsHtml(m) + this.productFlopsHtml(m) +
+		'<span class="muted">laufender Monat</span></div>' + tiles + '</section>';
+};
+
+// Zweiter Teil des GuV-Reiters: die Deckungsbeitrags-Tabellen und der
+// Monatsverlauf. Kosten-Kachel, Top-Einkäufe und Top-Lieferanten sind in den
+// Wareneingang-Reiter umgezogen (dort gehören sie inhaltlich hin).
+PCBBoard.prototype.productMarginsTabHtml = function (m) {
+	return this.productMarginsHtml(m) + this.productFlopsHtml(m) +
 		this.productMarginsYearHtml(m) + this.profitHistoryHtml(m);
 };
 
@@ -1676,7 +1685,8 @@ PCBBoard.prototype.productMarginsHtml = function (m) {
 	}).join('');
 	var r2 = this.monthRange(m);
 	return '<section class="card"><figcaption>' + this.figLink('Deckungsbeitrag Top-Produkte',
-		this.reportUrl('sales-invoice', { docstatus: 1, posting_date: ['between', [r2.start, r2.end]] })) +
+		this.queryReportUrl('Item-wise Sales Register',
+			{ company: m.company, from_date: r2.start, to_date: r2.end })) +
 		' (Monat)</figcaption>' +
 		'<table class="tbl"><thead><tr><th>Produkt</th><th class="num">Umsatz</th>' +
 		'<th class="num">Anteil</th>' +
@@ -1728,7 +1738,8 @@ PCBBoard.prototype.productFlopsHtml = function (m) {
 	var r3 = this.monthRange(m);
 	return '<section class="card"><figcaption>' + this.figLink('Flop 5 Produkte im ' + self.esc(this.monthLabel(m)) +
 		' nach Deckungsbeitrag',
-		this.reportUrl('sales-invoice', { docstatus: 1, posting_date: ['between', [r3.start, r3.end]] })) +
+		this.queryReportUrl('Item-wise Sales Register',
+			{ company: m.company, from_date: r3.start, to_date: r3.end })) +
 		' <i class="muted" style="font-size:.78rem;font-weight:400">' +
 		'— schwächster Beitrag zuerst</i></figcaption>' +
 		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th><th class="num">Umsatz</th>' +
@@ -1780,7 +1791,8 @@ PCBBoard.prototype.productMarginsYearHtml = function (m) {
 	return '<section class="card"><figcaption>' + this.figLink(
 		'Top 5 Produkte ' + self.esc(String(d.year || '')) +
 		' nach Deckungsbeitrag — Jahresvergleich mit ' + self.esc(String(d.prev_year || '')),
-		this.reportUrl('sales-invoice', { docstatus: 1, posting_date: ['between', [ry.start, ry.end]] })) +
+		this.queryReportUrl('Item-wise Sales Register',
+			{ company: m.company, from_date: ry.start, to_date: ry.end })) +
 		'</figcaption>' +
 		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th>' +
 		'<th class="num">Umsatz ' + self.esc(String(d.year || '')) + '</th>' +
@@ -1801,8 +1813,10 @@ PCBBoard.prototype.topPurchasesHtml = function (m) {
 	var self = this;
 	var items = m.top_purchases || [];
 	var rp = this.monthRange(m);
-	var purchasesUrl = this.reportUrl('purchase-receipt',
-		{ docstatus: 1, posting_date: ['between', [rp.start, rp.end]] });
+	// Einkaufsvolumen je Artikel — Grundlage für Einsparungsgespräche mit
+	// Lieferanten, deshalb der Report statt der reinen Belegliste.
+	var purchasesUrl = this.queryReportUrl('Item-wise Purchase Register',
+		{ company: m.company, from_date: rp.start, to_date: rp.end });
 	if (!items.length) {
 		return '<section class="card"><figcaption>' + this.figLink('Top 5 Einkäufe', purchasesUrl) +
 			' (Monat)</figcaption>' +
@@ -1831,7 +1845,6 @@ PCBBoard.prototype.profitHistoryHtml = function (m) {
 		return '';
 	}
 	var names = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
-	var medals = { 1: '🥇', 2: '🥈', 3: '🥉' };
 	var rows = months.map(function (r) {
 		var mi = parseInt(r.month.slice(5), 10) - 1;
 		var lbl = (names[mi] || r.month) + ' ' + r.month.slice(0, 4);
@@ -1843,7 +1856,7 @@ PCBBoard.prototype.profitHistoryHtml = function (m) {
 		var rank = '<td class="num muted">—</td>';
 		if (r.rank) {
 			rank = '<td class="num"' + (r.rank <= 3 ? ' style="font-weight:650"' : '') + '>' +
-				(medals[r.rank] || '') + ' ' + r.rank + '.' +
+				r.rank + '.' +
 				(r.ratio != null ? ' <span class="muted" style="font-size:.78rem">(' +
 					String(r.ratio.toFixed(2)).replace('.', ',') + '×)</span>' : '') + '</td>';
 		}
@@ -2182,8 +2195,13 @@ PCBBoard.prototype.lblRowsHtml = function (rowCls, items) {
 		}
 		rows.push([it]);
 	});
-	return rows.map(function (r) {
-		return '<div class="mlbl-row ' + rowCls + '">' +
+	return rows.map(function (r, i) {
+		// Erste "bot"-Zeile hängt direkt am Balken (Standardabstand aus CSS);
+		// eine zweite (bei Kollision, z. B. Ist/Prognose dicht beieinander)
+		// rutscht sonst eine ganze Zeilenhöhe weiter runter als nötig — mit
+		// engerem Abstand bleibt sie sichtbar näher am Balken.
+		var style = (rowCls === 'bot' && i > 0) ? ' style="margin-top:1px"' : '';
+		return '<div class="mlbl-row ' + rowCls + '"' + style + '>' +
 			r.map(function (o) { return self.markerLbl(o.pct, o.html); }).join('') + '</div>';
 	}).join('');
 };
@@ -2239,7 +2257,7 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 		'<div class="m">' + fc.bd_elapsed + ' von ' + fc.bd_total + ' Werktagen</div></div>' +
 		'<div class="tile"><p class="k">Prognose Monatsende</p><div class="v">' + self.eur(fc.forecast) + '</div>' +
 		'<div class="m"><span class="badge" style="background:' + st[0] + '">' + st[2] + ' ' + st[1] + ' · ' + self.pct(fc.attainment_pct) + '</span></div></div>' +
-		'<div class="tile"><p class="k">Nötig je Restwerktag</p><div class="v">' + self.eur(fc.required_daily) + '</div>' +
+		'<div class="tile"><p class="k">Umsatz je Restwerktag für Zielerreichung</p><div class="v">' + self.eur(fc.required_daily) + '</div>' +
 		'<div class="m">an ' + fc.bd_remaining + ' Werktagen</div></div>' +
 		'</div>';
 
@@ -2310,8 +2328,12 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 
 	// Beschriftung direkt an den Balken-/Marker-Positionen: Ziel (schwarz) und
 	// Kosten (rot) mittig über ihrem Strich, Ist/Prognose unter dem Balkenende.
+	// Der Kommentar („noch X bis zur Kostendeckung") steht rechts neben der
+	// Überschrift statt unter dem Balken — dort war er leicht zu übersehen.
 	var meter =
-		'<figcaption>Zielerreichung</figcaption><div class="meter-wrap">' +
+		'<div class="sec-h"><figcaption style="margin:0">Zielerreichung</figcaption>' +
+		'<span class="hd-note" style="color:' + gvCol(profitMtd) + '">' + verdictText + '</span></div>' +
+		'<div class="meter-wrap">' +
 		this.lblRowsHtml('top', [
 			{ pct: targetPos, html: '<span class="target-lbl">Ziel ' + self.eur(m.target) + '</span>' },
 			{ pct: costsPos, html: '<span class="costs-lbl">Kosten ' + self.eur(costsTotal) + '</span>' },
@@ -2324,16 +2346,22 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 		this.lblRowsHtml('bot', [
 			{ pct: mtdW, html: '<span style="color:var(--series-1)">Ist ' + self.eur(fc.mtd) + '</span>' },
 			{ pct: mtdW + projW, html: '<span style="color:' + st[0] + '">Prognose ' + self.eur(fc.forecast) + '</span>' },
-		]) +
-		'<p class="meter-verdict" style="color:' + gvCol(profitMtd) + '">' + verdictText + '</p></div>';
+		]) + '</div>';
 
 	// Zieldeckung direkt unter der Zielerreichung — gleiche Karte, gleiche
-	// Beschriftungs-Logik (Ziel schwarz, mittig über dem Strich).
+	// Beschriftungs-Logik (Ziel schwarz, mittig über dem Strich); derselbe
+	// Wortlaut wie im Balken kommt aus coverageVerdictText.
 	var bars = '<section class="card">' + meter +
-		'<figcaption class="bar2">Zieldeckung inkl. Pipeline</figcaption>' +
+		'<div class="sec-h" style="margin-top:26px"><figcaption style="margin:0">Zieldeckung inkl. Pipeline</figcaption>' +
+		'<span class="hd-note">' + self.esc(this.coverageVerdictText(m)) + '</span></div>' +
 		this.coverageBarHtml(m) + '</section>';
 
-	return tiles + vcards + bars + this.topProductsHtml(m) + this.topCustomersHtml(m) +
+	// Top 5 Produkte und Top 5 Kunden (laufender Monat) nebeneinander statt
+	// untereinander — beide sind kompakt genug, um sich eine Zeile zu teilen.
+	var sideBySide = '<div class="rev-side-by-side">' +
+		this.topProductsHtml(m) + this.topCustomersHtml(m) + '</div>';
+
+	return tiles + vcards + bars + sideBySide +
 		this.topCustomersYearHtml(m) +
 		this.tipsHtml(m);
 };
@@ -2350,9 +2378,16 @@ PCBBoard.prototype.topCustomersHtml = function (m) {
 			'<td class="num">' + self.pct(c.share_pct) + '</td></tr>';
 	}).join('');
 	var rc = this.monthRange(m);
-	return '<section class="card"><figcaption>' + this.figLink(
+	// Kunden mit Gesamtumsatz — Sales Analytics statt der Rechnungsliste:
+	// zeigt je Kunde direkt die Summe, nicht einzelne Belege.
+	// "compact": steht im Monatsvergleich mit Top 5 Produkte nebeneinander
+	// (siehe .rev-side-by-side), deshalb kleiner statt volle Kartenbreite.
+	return '<section class="card compact"><figcaption>' + this.figLink(
 		'Top 5 Kunden im ' + self.esc(this.monthLabel(m)) + ' nach Netto-Umsatz',
-		this.reportUrl('sales-invoice', { docstatus: 1, posting_date: ['between', [rc.start, rc.end]] })) +
+		this.queryReportUrl('Sales Analytics', {
+			company: m.company, from_date: rc.start, to_date: rc.end,
+			tree_type: 'Customer', doc_type: 'Sales Invoice',
+		})) +
 		' <i class="muted" style="font-size:.78rem;font-weight:400">— Klumpenrisiko im Blick behalten</i></figcaption>' +
 		'<table class="tbl"><thead><tr><th>#</th><th>Kunde</th><th class="num">Umsatz</th>' +
 		'<th class="num">Anteil</th></tr></thead><tbody>' + rows + '</tbody></table></section>';
@@ -2366,7 +2401,6 @@ PCBBoard.prototype.topCustomersYearHtml = function (m) {
 		return '';
 	}
 	var rows = items.map(function (c, idx) {
-		var medal = idx === 0 ? '🥇 ' : (idx === 1 ? '🥈 ' : (idx === 2 ? '🥉 ' : ''));
 		var prev = c.prev_net_total == null
 			? '<span class="muted" title="Kein Umsatz im Vorjahr — neuer oder reaktivierter Kunde">neu</span>'
 			: self.eur(c.prev_net_total);
@@ -2377,7 +2411,7 @@ PCBBoard.prototype.topCustomersYearHtml = function (m) {
 				';font-weight:650">' + (up ? '▲ +' : '▼ −') +
 				Math.abs(Math.round(c.delta_pct * 100)) + ' %</span>';
 		}
-		return '<tr><td>' + medal + (idx + 1) + '</td>' +
+		return '<tr><td>' + (idx + 1) + '</td>' +
 			'<td class="col-customer" title="' + self.esc(c.customer) + '">' +
 			self.esc(c.customer) + '</td>' +
 			'<td class="num">' + self.eur(c.net_total) + '</td>' +
@@ -2389,7 +2423,10 @@ PCBBoard.prototype.topCustomersYearHtml = function (m) {
 	var rcy = this.yearRange(m);
 	return '<section class="card"><figcaption>' + this.figLink(
 		'Top 10 Kunden ' + self.esc(String(d.year || '')) + ' nach Netto-Umsatz',
-		this.reportUrl('sales-invoice', { docstatus: 1, posting_date: ['between', [rcy.start, rcy.end]] })) +
+		this.queryReportUrl('Sales Analytics', {
+			company: m.company, from_date: rcy.start, to_date: rcy.end,
+			tree_type: 'Customer', doc_type: 'Sales Invoice',
+		})) +
 		' <i class="muted" style="font-size:.78rem;font-weight:400">— ' +
 		'Jahresanfang bis heute</i></figcaption>' +
 		'<p class="m" style="margin:0 0 8px">Diese ' + items.length + ' Kunden stehen für <b>' +
@@ -2415,7 +2452,6 @@ PCBBoard.prototype.topSuppliersYearHtml = function (m) {
 		return '';
 	}
 	var rows = items.map(function (s, idx) {
-		var medal = idx === 0 ? '🥇 ' : (idx === 1 ? '🥈 ' : (idx === 2 ? '🥉 ' : ''));
 		var prev = s.prev_net_total == null
 			? '<span class="muted" title="Kein Wareneingang im Vorjahr — neuer Lieferant">neu</span>'
 			: self.eur(s.prev_net_total);
@@ -2427,7 +2463,7 @@ PCBBoard.prototype.topSuppliersYearHtml = function (m) {
 			delta = '<span style="font-weight:650">' + (up ? '▲ +' : '▼ −') +
 				Math.abs(Math.round(s.delta_pct * 100)) + ' %</span>';
 		}
-		return '<tr><td>' + medal + (idx + 1) + '</td>' +
+		return '<tr><td>' + (idx + 1) + '</td>' +
 			'<td class="col-customer" title="' + self.esc(s.supplier) + '">' +
 			self.esc(s.supplier) + '</td>' +
 			'<td class="num">' + self.eur(s.net_total) + '</td>' +
@@ -2489,6 +2525,20 @@ PCBBoard.prototype.reportUrl = function (doctype, filters) {
 	return '/app/' + doctype + (qs ? '?' + qs : '');
 };
 
+// Dasselbe für einen ausgewerteten ERPNext-Report (Query/Script Report) statt
+// einer rohen Belegliste — für Top-Kunden/-Produkte/-Einkäufe gibt es fertige
+// Auswertungen (Sales Analytics, Item-wise Sales/Purchase Register), die genau
+// das zeigen, was die Karte auch zeigt: Kunden bzw. Artikel mit Summe, nicht
+// einzelne Belege.
+PCBBoard.prototype.queryReportUrl = function (reportName, filters) {
+	var qs = Object.keys(filters || {}).map(function (k) {
+		var v = filters[k];
+		var raw = (v && typeof v === 'object') ? JSON.stringify(v) : v;
+		return encodeURIComponent(k) + '=' + encodeURIComponent(raw);
+	}).join('&');
+	return '/app/query-report/' + encodeURIComponent(reportName) + (qs ? '?' + qs : '');
+};
+
 // Überschrift, die auf den zugehörigen ERPNext-Report verlinkt — die Karte
 // zeigt eine berechnete Kennzahl, der Link führt zu den Rohdaten dahinter.
 PCBBoard.prototype.figLink = function (label, href) {
@@ -2500,10 +2550,11 @@ PCBBoard.prototype.topProductsHtml = function (m) {
 	var self = this;
 	var items = m.top_products || [];
 	var rpr = this.monthRange(m);
-	var topProductsUrl = this.reportUrl('sales-invoice',
-		{ docstatus: 1, posting_date: ['between', [rpr.start, rpr.end]] });
+	// Artikelumsatzliste statt Rechnungsliste — zeigt direkt Umsatz je Artikel.
+	var topProductsUrl = this.queryReportUrl('Item-wise Sales Register',
+		{ company: m.company, from_date: rpr.start, to_date: rpr.end });
 	if (!items.length) {
-		return '<section class="card"><figcaption>' +
+		return '<section class="card compact"><figcaption>' +
 			this.figLink('Top 5 Produkte im ' + self.esc(this.monthLabel(m)) + ' nach Netto-Umsatz', topProductsUrl) +
 			'</figcaption>' +
 			'<p class="muted">Noch keine Rechnungspositionen in diesem Monat.</p></section>';
@@ -2514,14 +2565,23 @@ PCBBoard.prototype.topProductsHtml = function (m) {
 			'<td class="num">' + self.eur(p.net_total) + '</td>' +
 			'<td class="num">' + self.pct(p.share_pct) + '</td></tr>';
 	}).join('');
-	return '<section class="card"><figcaption>' +
+	return '<section class="card compact"><figcaption>' +
 		this.figLink('Top 5 Produkte im ' + self.esc(this.monthLabel(m)) + ' nach Netto-Umsatz', topProductsUrl) +
 		'</figcaption>' +
 		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th><th class="num">Umsatz</th>' +
-		'<th class="num">Anteil</th></tr></thead>' +
-		'<tbody>' + rows + '</tbody></table>' +
-		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Anteil = am gesamten ' +
-		'Monatsumsatz aller Artikel, nicht nur der gezeigten fünf.</p></section>';
+		'<th class="num" title="Anteil am gesamten Monatsumsatz aller Artikel, nicht nur der gezeigten fünf">Anteil</th>' +
+		'</tr></thead>' +
+		'<tbody>' + rows + '</tbody></table></section>';
+};
+
+// Text für „Zieldeckung inkl. Pipeline" — eigene Funktion, damit die
+// Überschriftenzeile (rechts daneben) und der Balken denselben Wortlaut
+// benutzen, ohne ihn zweimal zu berechnen.
+PCBBoard.prototype.coverageVerdictText = function (m) {
+	var pl = m.pipeline, target = m.target;
+	var coverage = pl.coverage_after_forecast;
+	return coverage >= target ? 'Pipeline deckt das Ziel ✓'
+		: 'Auch mit Pipeline noch ' + this.eur(target - coverage) + ' bis zum Ziel';
 };
 
 PCBBoard.prototype.coverageBarHtml = function (m) {
@@ -2548,7 +2608,6 @@ PCBBoard.prototype.coverageBarHtml = function (m) {
 		})
 		.join('');
 	var coverage = pl.coverage_after_forecast;
-	var verdict = coverage >= target ? 'Pipeline deckt das Ziel ✓' : 'Auch mit Pipeline noch ' + self.eur(target - coverage) + ' bis zum Ziel';
 	var targetPos = (target / scaleMax) * 100;
 	var covPos = (coverage / scaleMax) * 100;
 	return '<div class="meter-wrap">' +
@@ -2560,8 +2619,7 @@ PCBBoard.prototype.coverageBarHtml = function (m) {
 		this.lblRowsHtml('bot', [
 			{ pct: covPos, html: '<span class="cov-sum">Deckung ' + self.eur(coverage) + '</span>' },
 		]) +
-		'<div class="cov-legend">' + legend + '</div>' +
-		'<p class="cov-verdict">' + self.esc(verdict) + '</p></div>';
+		'<div class="cov-legend">' + legend + '</div></div>';
 };
 
 PCBBoard.prototype.tipsHtml = function (m) {
@@ -2779,6 +2837,9 @@ var PCB_BOARD_CSS =
 	'.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}' +
 	'.tile{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:16px}' +
 	'.tile .k{color:var(--text-secondary);font-size:.82rem;margin:0 0 6px}.tile .v{font-size:1.7rem;font-weight:680}' +
+	// GuV-Überschriften einheitlich groß — gleiche Größe/Gewicht wie die
+	// figcaption der Top-5-Karten (.98rem/600), statt der kleinen Tile-Beschriftung.
+	'.rev-tiles .k{font-size:.98rem;font-weight:600;color:var(--text-primary);margin:0 0 6px}' +
 	'.tile .m{font-size:.82rem;color:var(--muted);margin-top:4px}' +
 	'.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:.82rem;font-weight:600;color:#fff}' +
 	'.pcb-root figure{margin:0}.pcb-root figcaption{font-weight:600;margin-bottom:8px;font-size:.98rem}' +
@@ -2797,9 +2858,18 @@ var PCB_BOARD_CSS =
 	'.mlbl{position:absolute;white-space:nowrap;font-weight:650}' +
 	'.mlbl .costs-lbl{color:var(--critical)}' +
 	'.mlbl .target-lbl{color:var(--text-primary)}' +
-	'.pcb-root figcaption.bar2{margin-top:26px}' +
 	'.vcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px;margin-top:16px}' +
 	'.vcards .card{margin-top:0}' +
+	// Top 5 Produkte / Top 5 Kunden (laufender Monat) nebeneinander; unter
+	// ~560px pro Spalte rutschen sie wie die vcards untereinander.
+	'.rev-side-by-side{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;margin-top:16px}' +
+	'.rev-side-by-side .card{margin-top:0}' +
+	// Kompakte Karten (siehe .rev-side-by-side): engerer Innenabstand, kleinere
+	// Überschrift und dichtere Tabellenzeilen, damit zwei Karten nebeneinander
+	// nicht überladen wirken.
+	'.card.compact{padding:12px 14px}' +
+	'.card.compact figcaption{font-size:.9rem;margin-bottom:6px}' +
+	'.card.compact .tbl th,.card.compact .tbl td{padding:4px 8px;font-size:.83rem}' +
 	'.vcard figcaption{text-align:center}' +
 	'.vcard .vrow{display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:7px 0;border-bottom:1px solid var(--border)}' +
 	'.vcard .vrow:last-child{border-bottom:0;padding-bottom:0}' +
@@ -2811,12 +2881,13 @@ var PCB_BOARD_CSS =
 	'.rev-tiles .tile.hero .v{font-size:2.4rem}' +
 	'.rev-tiles .tile:not(.hero) .v{font-size:1.35rem}' +
 	'.rev-tiles .tile:not(.hero) .k,.rev-tiles .tile:not(.hero) .m{font-size:.78rem}' +
-	'.meter-verdict{font-size:.86rem;margin-top:8px;font-weight:650}' +
+	// Kommentar rechts neben der Zielerreichung-/Zieldeckung-Überschrift (siehe
+	// .sec-h) statt als Absatz unter dem Balken.
+	'.hd-note{font-size:.86rem;font-weight:650;color:var(--text-secondary)}' +
 	'.cov-track{position:relative;display:flex;height:30px;border-radius:8px;overflow:hidden;background:var(--grid);gap:2px}' +
 	'.cov-track .seg{height:100%}.cov-target{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--text-primary)}' +
 	'.cov-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.82rem;color:var(--text-secondary);margin-top:10px}' +
 	'.cov-legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-1px}' +
-	'.cov-verdict{font-size:.9rem;margin:8px 0 0;color:var(--text-secondary)}' +
 	'.cov-legend .lg{white-space:nowrap}.cov-sum{color:var(--text-secondary)}' +
 	'.tips{margin:0;padding:0;list-style:none}.tips li{display:flex;gap:14px;align-items:baseline;padding:10px 0;border-top:1px solid var(--border)}' +
 	'.tips li:first-child{border-top:0}.tip-eur{font-weight:680;color:var(--series-2);min-width:96px;text-align:right;font-variant-numeric:tabular-nums}' +

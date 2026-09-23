@@ -278,16 +278,84 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertAlmostEqual(a["margin"], 2800, delta=0.01)     # 7000 − 4200
         self.assertAlmostEqual(a["margin_pct"], 0.4, places=4)
         self.assertEqual(a["cost_source"], "ek")
+        # Zukaufteil: Arbeitszeiten sind unbekannt, DB II bleibt leer.
+        self.assertIsNone(a["cost_total"])
+        self.assertIsNone(a["margin_ii"])
         b = margins[1]
         self.assertEqual(b["item_code"], "PCB-B")
         self.assertAlmostEqual(b["cost"], 2000, delta=0.01)       # 10 Stk × 200 € Stückliste
         self.assertAlmostEqual(b["margin"], 1000, delta=0.01)
         self.assertEqual(b["cost_source"], "bom")
+        # Stückliste ohne Arbeitsgänge: kein Rückfall auf den Wareneinsatz.
+        self.assertIsNone(b["cost_total"])
+        self.assertIsNone(b["margin_ii"])
+        self.assertIsNone(b["margin_ii_pct"])
         c = margins[2]
         self.assertEqual(c["item_code"], "PCB-C")
         self.assertIsNone(c["cost"])
         self.assertIsNone(c["margin"])
         self.assertIsNone(c["cost_source"])
+        self.assertIsNone(c["cost_total"])
+        self.assertIsNone(c["margin_ii"])
+
+    def test_product_margins_db1_db2_from_bom_with_operations(self):
+        """Stückliste mit Losgröße und Arbeitsgängen: Wareneinsatz nur Material,
+        Gesamtkosten Material + Arbeit — beides je Stück, nicht je Los.
+
+        Zahlen aus der Standard-Stückliste von 1026-BG.0011/0012:
+        Losgröße 300, Material 704,991 €, Arbeit 2.440 € → 2,35 € / 10,48 € je Stück.
+        """
+        data = self._data()
+        data["invoice_items"] = [
+            {"item_code": "1026-BG.0011", "item_name": "Baugruppe",
+             "base_net_amount": 4500, "qty": 300},
+        ]
+        data["item_purchase_rates"] = [
+            {"name": "1026-BG.0011", "item_code": "1026-BG.0011", "last_purchase_rate": 0},
+        ]
+        data["item_bom_costs"] = [{
+            "item_code": "1026-BG.0011",
+            "cost_per_unit": 704.991 / 300,
+            "total_cost_per_unit": (704.991 + 2440.0) / 300,
+        }]
+        row = m.build_metrics(data, CONFIG, date(2026, 9, 15))["product_margins"][0]
+        self.assertEqual(row["cost_source"], "bom")
+        # Je Stück: 2,3500 € Material, 10,4833 € gesamt.
+        self.assertAlmostEqual(row["cost"] / 300, 2.35, places=2)
+        self.assertAlmostEqual(row["cost_total"] / 300, 10.48, places=2)
+        self.assertAlmostEqual(row["cost"], 704.991, delta=0.01)
+        self.assertAlmostEqual(row["cost_total"], 3144.991, delta=0.01)
+        # DB I = 4500 − 704,99 ; DB II = 4500 − 3144,99
+        self.assertAlmostEqual(row["margin"], 3795.01, delta=0.01)
+        self.assertAlmostEqual(row["margin_ii"], 1355.01, delta=0.01)
+        self.assertAlmostEqual(row["margin_pct"], 3795.01 / 4500, places=4)
+        self.assertAlmostEqual(row["margin_ii_pct"], 1355.01 / 4500, places=4)
+
+    def test_product_flops_rank_by_db1_even_when_db2_missing(self):
+        """Die Flop-Liste rangiert nach DB I, damit Artikel ohne erfasste
+        Arbeitszeiten nicht durch ein fehlendes DB II aus der Wertung fallen."""
+        data = self._data()
+        data["invoice_items"] = [
+            # Schlechtestes DB I (−500), aber kein DB II mangels Arbeitsgängen.
+            {"item_code": "LOSS", "item_name": "Verlustbringer",
+             "base_net_amount": 500, "qty": 10},
+            {"item_code": "OK", "item_name": "Solider Artikel",
+             "base_net_amount": 3000, "qty": 10},
+        ]
+        data["item_purchase_rates"] = [
+            {"name": "LOSS", "item_code": "LOSS", "last_purchase_rate": 0},
+            {"name": "OK", "item_code": "OK", "last_purchase_rate": 0},
+        ]
+        data["item_bom_costs"] = [
+            {"item_code": "LOSS", "cost_per_unit": 100, "total_cost_per_unit": None},
+            {"item_code": "OK", "cost_per_unit": 100, "total_cost_per_unit": 150},
+        ]
+        flops = m.build_metrics(data, CONFIG, date(2026, 9, 15))["product_flops"]
+        self.assertEqual([r["item_code"] for r in flops], ["LOSS", "OK"])
+        self.assertAlmostEqual(flops[0]["margin"], -500, delta=0.01)
+        self.assertIsNone(flops[0]["margin_ii"])
+        self.assertAlmostEqual(flops[1]["margin"], 2000, delta=0.01)
+        self.assertAlmostEqual(flops[1]["margin_ii"], 1500, delta=0.01)
 
     def test_prev_year_month_total_same_day_ytd_and_full_year(self):
         data = self._data()

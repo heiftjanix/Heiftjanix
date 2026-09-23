@@ -961,19 +961,28 @@ def top_suppliers_year(data: dict, today: date, limit: int = 10) -> dict:
     }
 
 
-def _unit_costs(data: dict) -> tuple[dict[str, float], dict[str, float]]:
-    """Stückkosten je Artikel: (letzter Einkaufspreis, Stücklistenwert je Einheit)."""
+def _unit_costs(data: dict) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
+    """Stückkosten je Artikel: (letzter Einkaufspreis, Stücklisten-Materialwert
+    je Einheit, Stücklisten-Gesamtkosten je Einheit).
+
+    Die Gesamtkosten fehlen bewusst für Stücklisten ohne Arbeitsgänge — dort
+    bleibt DB II leer statt auf den Wareneinsatz zurückzufallen."""
     rates: dict[str, float] = {}
     for row in data.get("item_purchase_rates", []) or []:
         code = row.get("item_code") or row.get("name")
         if code:
             rates[code] = float(row.get("last_purchase_rate") or 0)
     bom_rates: dict[str, float] = {}
+    bom_total_rates: dict[str, float] = {}
     for row in data.get("item_bom_costs", []) or []:
         code = row.get("item_code")
-        if code:
-            bom_rates[code] = float(row.get("cost_per_unit") or 0)
-    return rates, bom_rates
+        if not code:
+            continue
+        bom_rates[code] = float(row.get("cost_per_unit") or 0)
+        total = row.get("total_cost_per_unit")
+        if total not in (None, ""):
+            bom_total_rates[code] = float(total)
+    return rates, bom_rates, bom_total_rates
 
 
 def _aggregate_items(rows) -> dict[str, dict]:
@@ -996,19 +1005,31 @@ def _aggregate_items(rows) -> dict[str, dict]:
     return totals
 
 
-def _with_margin(entry: dict, rates: dict, bom_rates: dict) -> dict:
-    """Deckungsbeitrag an einen Artikel-Eintrag anhängen: Umsatz minus Wareneinsatz
-    (verkaufte Menge × Stückkosten). Stückkosten-Quelle: letzter Einkaufspreis
-    (Item.last_purchase_rate); fehlt der (Eigenfertigung), der Wert der aktiven
-    Standard-Stückliste je Einheit (BOM). cost_source sagt, welche Quelle griff
-    ("ek" | "bom"); ganz ohne beides bleiben Kosten/Marge leer statt 100 % zu
-    suggerieren."""
+def _with_margin(entry: dict, rates: dict, bom_rates: dict, bom_total_rates: dict) -> dict:
+    """Deckungsbeitrag an einen Artikel-Eintrag anhängen — zweistufig:
+
+    - DB I  (margin)    = Umsatz − Wareneinsatz  (verkaufte Menge × Materialkosten)
+    - DB II (margin_ii) = Umsatz − Gesamtkosten  (Material + Arbeit)
+
+    Stückkosten-Quelle für den Wareneinsatz: letzter Einkaufspreis
+    (Item.last_purchase_rate); fehlt der (Eigenfertigung), der Materialwert der
+    aktiven Standard-Stückliste je Einheit (BOM). cost_source sagt, welche Quelle
+    griff ("ek" | "bom"); ganz ohne beides bleiben Kosten/Marge leer statt 100 %
+    zu suggerieren.
+
+    Gesamtkosten und DB II gibt es nur bei Stücklisten mit Arbeitsgängen. Bei
+    Zukaufteilen (Quelle "ek") und bei Stücklisten ohne hinterlegte Zeiten
+    bleiben sie leer — das Board soll zeigen, wo Zeiten noch fehlen, statt die
+    Lücke mit dem Wareneinsatz zu kaschieren."""
     entry = dict(entry)
-    rate = rates.get(entry["item_code"]) or 0.0
+    code = entry["item_code"]
+    rate = rates.get(code) or 0.0
     source = "ek"
     if rate <= 0:
-        rate = bom_rates.get(entry["item_code"]) or 0.0
+        rate = bom_rates.get(code) or 0.0
         source = "bom"
+    # Arbeitskosten kennt nur die Stückliste; ein letzter EK enthält sie nicht.
+    total_rate = bom_total_rates.get(code) if source == "bom" else None
     entry["revenue"] = round(entry["revenue"], 2)
     entry["qty"] = round(entry["qty"], 2)
     if rate > 0 and entry["qty"] > 0:
@@ -1018,11 +1039,25 @@ def _with_margin(entry: dict, rates: dict, bom_rates: dict) -> dict:
         entry["margin"] = round(margin, 2)
         entry["margin_pct"] = round(margin / entry["revenue"], 4) if entry["revenue"] else 0.0
         entry["cost_source"] = source
+        if total_rate and total_rate > 0:
+            cost_total = entry["qty"] * total_rate
+            margin_ii = entry["revenue"] - cost_total
+            entry["cost_total"] = round(cost_total, 2)
+            entry["margin_ii"] = round(margin_ii, 2)
+            entry["margin_ii_pct"] = (
+                round(margin_ii / entry["revenue"], 4) if entry["revenue"] else 0.0)
+        else:
+            entry["cost_total"] = None
+            entry["margin_ii"] = None
+            entry["margin_ii_pct"] = None
     else:
         entry["cost"] = None
         entry["margin"] = None
         entry["margin_pct"] = None
         entry["cost_source"] = None
+        entry["cost_total"] = None
+        entry["margin_ii"] = None
+        entry["margin_ii_pct"] = None
     return entry
 
 
@@ -1035,24 +1070,27 @@ def _with_share(rows: list[dict], grand: float) -> list[dict]:
 
 def product_margins(data: dict, limit: int = 5) -> list[dict]:
     """Deckungsbeitrag der Top-Umsatzprodukte des laufenden Monats."""
-    rates, bom_rates = _unit_costs(data)
+    rates, bom_rates, bom_total_rates = _unit_costs(data)
     totals = _aggregate_items(data.get("invoice_items"))
     grand = sum(e["revenue"] for e in totals.values())
     ranked = sorted(totals.values(), key=lambda r: r["revenue"], reverse=True)[:limit]
-    return _with_share([_with_margin(e, rates, bom_rates) for e in ranked], grand)
+    return _with_share(
+        [_with_margin(e, rates, bom_rates, bom_total_rates) for e in ranked], grand)
 
 
 def product_flops(data: dict, limit: int = 5) -> list[dict]:
-    """Die schwächsten Produkte des laufenden Monats nach Deckungsbeitrag —
-    größter Verlust zuerst. Bewertet wird der ABSOLUTE DB, nicht die Prozentmarge:
+    """Die schwächsten Produkte des laufenden Monats nach DB I — größter Verlust
+    zuerst. Sortiert wird nach DB I (Umsatz − Wareneinsatz), weil der immer
+    vorliegt; DB II fehlt bei Stücklisten ohne Arbeitsgänge und taugt deshalb
+    nicht als Rangkriterium. Bewertet wird der ABSOLUTE DB, nicht die Prozentmarge:
     ein Cent-Verlust an einem Kleinteil ist harmlos, ein vierstelliger Verlust an
     einem Großauftrag nicht. Artikel ohne EK und ohne Stückliste lassen sich nicht
     bewerten und bleiben deshalb außen vor (sie stünden sonst mit „Marge 100 %"
     ganz oben oder ganz unten, je nach Zufall)."""
-    rates, bom_rates = _unit_costs(data)
+    rates, bom_rates, bom_total_rates = _unit_costs(data)
     totals = _aggregate_items(data.get("invoice_items"))
     grand = sum(e["revenue"] for e in totals.values())
-    rows = [_with_margin(e, rates, bom_rates) for e in totals.values()]
+    rows = [_with_margin(e, rates, bom_rates, bom_total_rates) for e in totals.values()]
     scored = [r for r in rows if r["margin"] is not None]
     scored.sort(key=lambda r: (r["margin"], r["margin_pct"] if r["margin_pct"] is not None else 0))
     return _with_share(scored[:limit], grand)
@@ -1068,10 +1106,10 @@ def product_margins_year(data: dict, today: date, limit: int = 5) -> dict:
     Entwicklung von Menge und Verkaufspreis bei heutigen Kosten, nicht die
     damalige Einkaufslage.
     """
-    rates, bom_rates = _unit_costs(data)
-    cur = {c: _with_margin(e, rates, bom_rates)
+    rates, bom_rates, bom_total_rates = _unit_costs(data)
+    cur = {c: _with_margin(e, rates, bom_rates, bom_total_rates)
            for c, e in _aggregate_items(data.get("invoice_items_year")).items()}
-    prev = {c: _with_margin(e, rates, bom_rates)
+    prev = {c: _with_margin(e, rates, bom_rates, bom_total_rates)
             for c, e in _aggregate_items(data.get("invoice_items_prev_year")).items()}
     year_grand = sum(r["revenue"] for r in cur.values())
     prev_grand = sum(r["revenue"] for r in prev.values())

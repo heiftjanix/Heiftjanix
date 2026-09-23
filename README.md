@@ -176,11 +176,26 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
 - **Top-Kunden (Umsatz) / Top-Lieferanten (Kosten):** je Top 5 nach Netto-Umsatz
   bzw. Netto-Einkaufswert im laufenden Monat, mit Anteils-Spalte
   (Klumpenrisiko/Lieferantenabhängigkeit).
-- **Deckungsbeitrag (Kosten):** Für die Top-Umsatzprodukte des Monats wird der
-  Wareneinsatz als verkaufte Menge × Stückkosten geschätzt: zuerst letzter
-  Einkaufspreis (`Item.last_purchase_rate`, Kennzeichen „EK"), sonst der Wert
-  der aktiven Standard-Stückliste je Einheit (BOM, Kennzeichen „SL"). Fehlt
-  beides, zeigt die Zeile bewusst „—" statt einer 100-%-Marge.
+- **Deckungsbeitrag (Kosten):** Die DB-Tabellen weisen zwei Kostenstufen aus.
+  - *Wareneinsatz* = verkaufte Menge × Materialkosten je Stück: zuerst letzter
+    Einkaufspreis (`Item.last_purchase_rate`, Kennzeichen „EK"), sonst
+    `BOM.raw_material_cost` der aktiven Standard-Stückliste (Kennzeichen „SL").
+  - *Gesamtkosten* = verkaufte Menge × (`raw_material_cost` + `operating_cost`)
+    je Stück, also Material **und** Arbeit.
+
+  Beide Stücklistenwerte werden durch `BOM.quantity` geteilt — die Kostenfelder
+  beziehen sich auf die Losgröße (z. B. 300 Stück), nicht auf ein Stück.
+  Maßgeblich ist die Standard-Stückliste (`is_default=1`, `is_active=1`,
+  `docstatus=1`); ältere Stücklisten desselben Artikels mit abweichender
+  Losgröße bleiben außen vor.
+
+  Daraus folgen **DB I** (Umsatz − Wareneinsatz) und **DB II** (Umsatz −
+  Gesamtkosten). Gesamtkosten und DB II bleiben leer, wenn die Stückliste keine
+  Arbeitsgänge hat (`with_operations = 0` oder `operating_cost = 0`) oder es
+  sich um ein Zukaufteil ohne Stückliste handelt — bewusst kein Rückfall auf den
+  Wareneinsatz, damit sichtbar bleibt, wo noch Zeiten zu erfassen sind. Fehlen
+  EK und Stückliste, zeigt die Zeile bewusst „—" statt einer 100-%-Marge. Die
+  Flop-5-Liste rangiert nach DB I, weil DB II nicht überall vorliegt.
 - **Mail-Vorschau:** Jede Mail-Karte lässt sich aufklappen und zeigt die
   Textvorschau der Mail (Graph `bodyPreview`); bei relevanten Mails steht der
   Antwortvorschlag mit Kopieren-Button direkt darunter.

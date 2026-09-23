@@ -1680,8 +1680,11 @@ PCBBoard.prototype.productMarginsHtml = function (m) {
 			'<td class="num">' + self.eur(p.revenue) + '</td>' +
 			'<td class="num">' + self.pct(p.share_pct) + '</td>' +
 			'<td class="num">' + c.cost + '</td>' +
+			'<td class="num">' + c.costTotal + '</td>' +
 			'<td class="num">' + c.margin + '</td>' +
-			'<td class="num">' + c.marginPct + '</td></tr>';
+			'<td class="num">' + c.marginPct + '</td>' +
+			'<td class="num">' + c.marginII + '</td>' +
+			'<td class="num">' + c.marginIIPct + '</td></tr>';
 	}).join('');
 	var r2 = this.monthRange(m);
 	return '<section class="card"><figcaption>' + this.figLink('Deckungsbeitrag Top-Produkte',
@@ -1690,14 +1693,31 @@ PCBBoard.prototype.productMarginsHtml = function (m) {
 		' (Monat)</figcaption>' +
 		'<table class="tbl"><thead><tr><th>Produkt</th><th class="num">Umsatz</th>' +
 		'<th class="num">Anteil</th>' +
-		'<th class="num">Wareneinsatz</th><th class="num">DB</th><th class="num">DB %</th></tr></thead>' +
+		'<th class="num">Wareneinsatz</th><th class="num">Gesamtkosten</th>' +
+		'<th class="num">DB I</th><th class="num">DB I %</th>' +
+		'<th class="num">DB II</th><th class="num">DB II %</th></tr></thead>' +
 		'<tbody>' + rows + '</tbody></table>' +
-		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Wareneinsatz = verkaufte Menge × ' +
-		'letzter Einkaufspreis (EK) des Artikels; ohne EK greift der Wert der aktiven ' +
-		'Standard-Stückliste je Einheit (SL). Fehlt beides, bleibt die Marge leer.</p></section>';
+		this.dbFootnote() + '</section>';
 };
 
-// Gemeinsame Zellen der DB-Tabellen: Wareneinsatz mit Quellen-Kürzel, DB farbig.
+// Gemeinsame Fußnote unter den DB-Tabellen — erklärt beide Kostenstufen und die
+// Leerstellen, damit die Spalten nicht falsch gelesen werden.
+PCBBoard.prototype.dbFootnote = function () {
+	return '<p class="muted" style="font-size:.82rem;margin:8px 0 0">' +
+		'<b>Wareneinsatz</b> = verkaufte Menge × Materialkosten je Stück: letzter ' +
+		'Einkaufspreis (EK); ohne EK der Materialwert der aktiven Standard-Stückliste ' +
+		'je Einheit (SL). <b>Gesamtkosten</b> = Material + Arbeit aus der Stückliste. ' +
+		'<b>DB I</b> = Umsatz − Wareneinsatz, <b>DB II</b> = Umsatz − Gesamtkosten. ' +
+		'Stücklistenkosten werden durch die Losgröße geteilt. Gesamtkosten und DB II ' +
+		'bleiben leer, wenn die Stückliste keine Arbeitszeiten hat oder es sich um ein ' +
+		'Zukaufteil handelt — dort sind die Zeiten noch zu erfassen. Fehlen EK und ' +
+		'Stückliste, bleibt die ganze Zeile unbewertet.</p>';
+};
+
+// Gemeinsame Zellen der DB-Tabellen: Wareneinsatz und Gesamtkosten mit
+// Quellen-Kürzel, DB I und DB II farbig. Gesamtkosten und DB II bleiben leer,
+// wenn die Stückliste keine Arbeitszeiten hat — bewusst kein Rückfall auf den
+// Wareneinsatz, damit sichtbar ist, wo Zeiten fehlen.
 PCBBoard.prototype.dbCells = function (p) {
 	var self = this;
 	var srcTag = p.cost_source === 'bom'
@@ -1706,16 +1726,35 @@ PCBBoard.prototype.dbCells = function (p) {
 			? ' <span class="muted" style="font-size:.75rem" title="Wareneinsatz aus letztem Einkaufspreis">EK</span>'
 			: '');
 	var cost = p.cost == null ? '<span class="muted">—</span>' : self.eur(p.cost) + srcTag;
-	var margin, marginPct;
-	if (p.margin == null) {
-		margin = '<span class="muted">—</span>';
-		marginPct = '<span class="muted">kein EK/keine Stückliste</span>';
-	} else {
-		var col = p.margin >= 0 ? 'var(--good)' : 'var(--critical)';
-		margin = '<span style="color:' + col + ';font-weight:650">' + self.eur(p.margin) + '</span>';
-		marginPct = '<span style="color:' + col + '">' + self.pct(p.margin_pct) + '</span>';
+	var noOpsTitle = p.cost_source === 'ek'
+		? 'Zukaufteil ohne Stückliste — keine Arbeitszeiten bekannt'
+		: 'Keine Arbeitszeiten in der Stückliste hinterlegt';
+	var costTotal = p.cost_total == null
+		? '<span class="muted" title="' + noOpsTitle + '">—</span>'
+		: self.eur(p.cost_total) + srcTag;
+	function dbPair(value, pct, emptyHint) {
+		if (value == null) {
+			return {
+				value: '<span class="muted"' + (emptyHint ? ' title="' + emptyHint + '"' : '') + '>—</span>',
+				pct: '<span class="muted">' + (emptyHint ? '—' : 'kein EK/keine Stückliste') + '</span>',
+			};
+		}
+		var col = value >= 0 ? 'var(--good)' : 'var(--critical)';
+		return {
+			value: '<span style="color:' + col + ';font-weight:650">' + self.eur(value) + '</span>',
+			pct: '<span style="color:' + col + '">' + self.pct(pct) + '</span>',
+		};
 	}
-	return { cost: cost, margin: margin, marginPct: marginPct };
+	var db1 = dbPair(p.margin, p.margin_pct, null);
+	var db2 = dbPair(p.margin_ii, p.margin_ii_pct, noOpsTitle);
+	return {
+		cost: cost,
+		costTotal: costTotal,
+		margin: db1.value,
+		marginPct: db1.pct,
+		marginII: db2.value,
+		marginIIPct: db2.pct,
+	};
 };
 
 PCBBoard.prototype.productFlopsHtml = function (m) {
@@ -1732,8 +1771,11 @@ PCBBoard.prototype.productFlopsHtml = function (m) {
 			'<td class="num">' + self.eur(p.revenue) + '</td>' +
 			'<td class="num">' + self.pct(p.share_pct) + '</td>' +
 			'<td class="num">' + c.cost + '</td>' +
+			'<td class="num">' + c.costTotal + '</td>' +
 			'<td class="num">' + c.margin + '</td>' +
-			'<td class="num">' + c.marginPct + '</td></tr>';
+			'<td class="num">' + c.marginPct + '</td>' +
+			'<td class="num">' + c.marginII + '</td>' +
+			'<td class="num">' + c.marginIIPct + '</td></tr>';
 	}).join('');
 	var r3 = this.monthRange(m);
 	return '<section class="card"><figcaption>' + this.figLink('Flop 5 Produkte im ' + self.esc(this.monthLabel(m)) +
@@ -1744,11 +1786,15 @@ PCBBoard.prototype.productFlopsHtml = function (m) {
 		'— schwächster Beitrag zuerst</i></figcaption>' +
 		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th><th class="num">Umsatz</th>' +
 		'<th class="num">Anteil</th>' +
-		'<th class="num">Wareneinsatz</th><th class="num">DB</th><th class="num">DB %</th></tr></thead>' +
+		'<th class="num">Wareneinsatz</th><th class="num">Gesamtkosten</th>' +
+		'<th class="num">DB I</th><th class="num">DB I %</th>' +
+		'<th class="num">DB II</th><th class="num">DB II %</th></tr></thead>' +
 		'<tbody>' + rows + '</tbody></table>' +
 		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Sortiert nach absolutem ' +
-		'Deckungsbeitrag: ein vierstelliger Verlust wiegt schwerer als ein Cent-Verlust am ' +
-		'Kleinteil. Produkte ohne EK und ohne Stückliste sind nicht bewertbar und bleiben außen vor.</p></section>';
+		'DB I: ein vierstelliger Verlust wiegt schwerer als ein Cent-Verlust am ' +
+		'Kleinteil. DB I liegt immer vor, DB II nicht — deshalb rangiert die Liste nach DB I. ' +
+		'Produkte ohne EK und ohne Stückliste sind nicht bewertbar und bleiben außen vor.</p>' +
+		this.dbFootnote() + '</section>';
 };
 
 PCBBoard.prototype.productMarginsYearHtml = function (m) {
@@ -1774,8 +1820,11 @@ PCBBoard.prototype.productMarginsYearHtml = function (m) {
 			'<td class="num">' + self.eur(p.revenue) + '</td>' +
 			'<td class="num">' + self.pct(p.share_pct) + '</td>' +
 			'<td class="num">' + c.cost + '</td>' +
+			'<td class="num">' + c.costTotal + '</td>' +
 			'<td class="num">' + c.margin + '</td>' +
 			'<td class="num">' + c.marginPct + '</td>' +
+			'<td class="num">' + c.marginII + '</td>' +
+			'<td class="num">' + c.marginIIPct + '</td>' +
 			'<td class="num">' + (p.prev_revenue == null
 				? '<span class="muted">—</span>' : self.eur(p.prev_revenue) +
 					(p.prev_share_pct != null
@@ -1797,10 +1846,13 @@ PCBBoard.prototype.productMarginsYearHtml = function (m) {
 		'<table class="tbl"><thead><tr><th>#</th><th>Produkt</th>' +
 		'<th class="num">Umsatz ' + self.esc(String(d.year || '')) + '</th>' +
 		'<th class="num">Anteil</th>' +
-		'<th class="num">Wareneinsatz</th><th class="num">DB</th><th class="num">DB %</th>' +
+		'<th class="num">Wareneinsatz</th><th class="num">Gesamtkosten</th>' +
+		'<th class="num">DB I</th><th class="num">DB I %</th>' +
+		'<th class="num">DB II</th><th class="num">DB II %</th>' +
 		'<th class="num">Umsatz ' + self.esc(String(d.prev_year || '')) + '</th>' +
-		'<th class="num">DB ' + self.esc(String(d.prev_year || '')) + '</th>' +
-		'<th class="num">DB-Veränderung</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+		'<th class="num">DB I ' + self.esc(String(d.prev_year || '')) + '</th>' +
+		'<th class="num">DB-I-Veränderung</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+		this.dbFootnote() +
 		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Umsatz ' +
 		self.esc(String(d.year || '')) + ' = Jahresanfang bis heute, Vorjahr = komplettes Jahr. ' +
 		'Achtung bei der Auslegung: der Wareneinsatz beider Jahre ist mit den HEUTIGEN Stückkosten ' +

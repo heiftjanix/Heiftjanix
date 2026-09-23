@@ -615,8 +615,9 @@ def _fetch_erpnext(config: dict) -> dict:
         "Jahres-Artikelumsätze", _fetch_year_items, ([], []))
 
     # Deckungsbeitrag: letzter Einkaufspreis je verkauftem Artikel (Wareneinsatz-
-    # Schätzung); für Eigenfertigung ohne Einkaufspreis dient der Wert der
-    # aktiven Standard-Stückliste (BOM-Kosten je Einheit) als Fallback.
+    # Schätzung); für Eigenfertigung ohne Einkaufspreis dienen die Werte der
+    # aktiven Standard-Stückliste je Einheit als Fallback — Material für den
+    # Wareneinsatz (DB I), Material + Arbeit für die Gesamtkosten (DB II).
     # Neben den Monatsartikeln auch die umsatzstärksten Jahresartikel — gedeckelt,
     # damit die Stammdatenabfrage nicht über Tausende Codes läuft. Der DB eines
     # Artikels kann seinen Umsatz nicht übersteigen, die DB-Rangliste steckt also
@@ -644,15 +645,28 @@ def _fetch_erpnext(config: dict) -> dict:
             "BOM",
             filters=[["item", "in", item_codes], ["is_active", "=", 1],
                      ["is_default", "=", 1], ["docstatus", "=", 1]],
-            fields=["item", "base_total_cost", "total_cost", "quantity"],
+            fields=["item", "quantity", "with_operations",
+                    "base_raw_material_cost", "raw_material_cost",
+                    "base_operating_cost", "operating_cost"],
             limit_page_length=0,
             ignore_permissions=True,
         )
         bom_costs = []
         for b in boms:
+            # Die Kostenfelder beziehen sich auf die Losgröße der Stückliste
+            # (quantity kann 300 sein), nicht auf ein Stück.
             qty = float(b.get("quantity") or 1) or 1.0
-            cost = float(b.get("base_total_cost") or b.get("total_cost") or 0)
-            bom_costs.append({"item_code": b["item"], "cost_per_unit": cost / qty})
+            raw = float(b.get("base_raw_material_cost") or b.get("raw_material_cost") or 0)
+            operating = float(b.get("base_operating_cost") or b.get("operating_cost") or 0)
+            # Ohne hinterlegte Arbeitsgänge bleiben die Gesamtkosten leer statt auf
+            # den Wareneinsatz zurückzufallen — so ist im Board sichtbar, wo noch
+            # Zeiten erfasst werden müssen.
+            has_operations = bool(b.get("with_operations")) and operating > 0
+            bom_costs.append({
+                "item_code": b["item"],
+                "cost_per_unit": raw / qty,
+                "total_cost_per_unit": (raw + operating) / qty if has_operations else None,
+            })
         return rates, bom_costs
 
     item_purchase_rates, item_bom_costs = _optional(

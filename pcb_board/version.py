@@ -6,5 +6,5 @@ Wird bei jeder relevanten Änderung an frappe_app/pcb_board von Hand aktualisier
 enthält — der Stempel-Commit selbst kommt naturgemäß eine Ebene später).
 """
 
-BUILD_TIME = "2026-08-26T12:29:15+00:00"
-BUILD_COMMIT = "6062e30cd5f1e3f7968564a18f8f632f77ddc19b"
+BUILD_TIME = "2026-09-23T08:45:04+00:00"
+BUILD_COMMIT = "a301c90635da077ff31ca96a7bec184568dbf813"

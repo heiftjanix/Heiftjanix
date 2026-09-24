@@ -205,6 +205,37 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
   Abrechnungstabellen (auch „Unterwegs" und „Alte Lieferscheine") zeigen
   jeweils eine Summenzeile.
 
+## Beigestellte Stücklistenpositionen (0-€-Bewertung)
+
+Die App überschreibt die BOM-Klasse (`hooks.override_doctype_class` →
+`pcb_board.bom_override.BeigestelltBOM`), damit Positionen mit
+`BOM Item.custom_beigestellt = 1` in der Kalkulation **immer mit 0 €** geführt
+werden — der Kunde liefert das Teil bei. Betroffen sind `rate`, `base_rate`,
+`amount`, `base_amount`, die Summe `raw_material_cost` und die Zeilen in
+`exploded_items`. Lagerbewegungen und Lagerbewertung bleiben unberührt.
+
+Angesetzt wird an `calculate_cost` und `update_exploded_items` — den äußeren
+Einstiegen, die Speichern/Submit, „Kosten aktualisieren" und das Stücklisten-
+Aktualisierungstool alle durchlaufen. Grund: ERPNext hat die Kalkulation in
+neueren Ständen in Service-Klassen ausgelagert, die sich untereinander aufrufen;
+ein Override der Einzelmethoden (`calculate_rm_cost`, `calculate_exploded_cost`)
+würde dort übersprungen.
+
+Zwei Dinge, die beim Pflegen wichtig sind:
+
+- **Unterstücklisten.** Hat eine beigestellte Zeile eine `bom_no`, holt ERPNext
+  den Satz aus der Explosion der Unterstückliste, nicht aus der Elternzeile.
+  Deshalb werden die Explosionszeilen zusätzlich über die Artikelnummer genullt.
+- **Gleicher Artikel doppelt verbaut.** `exploded_items` fasst je Artikelnummer
+  zusammen. Kommt ein Artikel in derselben Stückliste beigestellt *und* selbst
+  beschafft vor, steht er in der Explosion komplett auf 0 €. Die zusammengefasste
+  Tabelle gibt keine getrennte Zuordnung her; die Positionstabelle bleibt korrekt.
+
+ERPNext kennt mit `BOM Item.sourced_by_supplier` und
+`Item.is_customer_provided_item` zwei eingebaute Kennzeichen, die `get_rm_rate`
+ebenfalls auf 0 setzen. Sie decken den Unterstücklisten-Fall aber nicht ab und
+wirken zusätzlich auf Beschaffung und Fertigung — deshalb das eigene Feld.
+
 ## Grenzen
 
 - Ohne Azure-Registrierung: kein Posteingang, Umsatz/Abrechnung funktionieren trotzdem.

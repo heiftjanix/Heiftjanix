@@ -21,3 +21,11 @@ scheduler_events = {
 # Migrieren angelegt, falls es fehlt — so ist es auf einer neuen Site sofort da
 # und nicht nur dort, wo es einmal von Hand eingetragen wurde.
 after_migrate = ["pcb_board.setup.ensure_custom_fields"]
+
+# Beigestellte Stücklistenpositionen (BOM Item.custom_beigestellt) werden in der
+# Kalkulation mit 0 € geführt — der Kunde liefert das Teil bei. Siehe
+# pcb_board/bom_override.py für die Begründung, warum an calculate_cost und
+# update_exploded_items angesetzt wird und nicht an den Einzelmethoden.
+override_doctype_class = {
+    "BOM": "pcb_board.bom_override.BeigestelltBOM",
+}

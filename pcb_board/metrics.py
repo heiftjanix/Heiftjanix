@@ -661,6 +661,11 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
             "qty": wo.get("qty"),
             "delivered_qty": round(delivered_qty, 4),
             "open_qty": open_qty,
+            # Auftragswert aus der verknüpften Position der AB (siehe refresh.py).
+            # Muss hier ausdrücklich mitwandern: diese Liste wird Feld für Feld neu
+            # gebaut, alles Nicht-Genannte fiele sonst still weg.
+            "net_rate": wo.get("net_rate"),
+            "revenue": wo.get("revenue"),
             "status": wo.get("status"),
             "sales_order": wo.get("sales_order"),
             "need_date": wo.get("planned_start_date") or wo.get("expected_delivery_date"),

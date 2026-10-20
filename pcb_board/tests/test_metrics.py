@@ -1410,6 +1410,36 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertTrue(wo["material_ok"])
         self.assertEqual(wo["missing_items"], [])
 
+    def test_work_orders_revenue_reaches_the_board_list(self):
+        """Der Auftragswert muss bis in purchasing.work_orders durchkommen —
+        genau DAS liest die Produktionsliste. work_order_material() baut jeden
+        Auftrag Feld für Feld neu auf; was dort nicht steht, fällt still weg.
+        Ein Test nur auf den Rohdaten von refresh.py hat das nicht bemerkt."""
+        data = self._wo_data()
+        data["work_orders"] = [{
+            "name": "FA-U", "item_name": "Baugruppe U", "production_item": "BG.0009",
+            "qty": 300, "status": "Not Started", "sales_order": "AB-19566",
+            "planned_start_date": "2026-07-20", "customer_due_date": "2026-11-10",
+            "net_rate": 22.45, "revenue": 6735.0,
+            "required_items": [{"item_code": "A", "item_name": "Artikel A",
+                                "required_qty": 1, "transferred_qty": 0, "available_qty": 5}],
+        }]
+        wo = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"][0]
+        self.assertEqual(wo["revenue"], 6735.0)
+        self.assertEqual(wo["net_rate"], 22.45)
+
+    def test_work_orders_without_revenue_stay_none_in_board_list(self):
+        """Produktion auf Lager: kein Wert, aber auch keine 0 — der Bindestrich
+        im Board soll „unbekannt" heißen, nicht „wertlos"."""
+        data = self._wo_data()
+        for wo in data["work_orders"]:
+            wo.pop("revenue", None)
+            wo.pop("net_rate", None)
+        wos = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"]
+        self.assertTrue(wos)
+        self.assertTrue(all(w["revenue"] is None for w in wos))
+        self.assertTrue(all(w["net_rate"] is None for w in wos))
+
     def test_work_orders_customer_due_date_missing_stays_none(self):
         data = self._wo_data()
         for wo in data["work_orders"]:

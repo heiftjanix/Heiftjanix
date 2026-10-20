@@ -462,20 +462,35 @@ def _fetch_erpnext(config: dict) -> dict:
         # auftrag selbst, sondern an der verknüpften Kundenauftrags-Position
         # (sales_order_item = Name der Sales-Order-Item-Zeile). So lässt sich neben
         # der Gesamtmenge zeigen, wie viel davon noch offen ist.
+        # Aus derselben Position kommt auch der Wert: Netto-Einzelpreis der
+        # Auftragszeile. Mal der Auftragsmenge ergibt das, was dieser Fertigungs-
+        # auftrag einbringt — die Produktion kann danach priorisieren.
         soi_names = sorted({w["sales_order_item"] for w in wos if w.get("sales_order_item")})
         delivered_by_soi: dict[str, float] = {}
+        net_rate_by_soi: dict[str, float] = {}
         if soi_names:
             for row in frappe.get_all(
                 "Sales Order Item",
                 filters=[["name", "in", soi_names]],
-                fields=["name", "delivered_qty"],
+                fields=["name", "delivered_qty", "qty", "base_net_rate", "base_net_amount"],
                 limit_page_length=0,
                 ignore_permissions=True,
             ):
                 delivered_by_soi[row["name"]] = float(row.get("delivered_qty") or 0)
+                rate = float(row.get("base_net_rate") or 0)
+                if not rate:
+                    # Rabattierte oder manuell gesetzte Zeilen führen den Satz
+                    # gelegentlich nur als Summe — dann aus Betrag/Menge ableiten.
+                    soi_qty = float(row.get("qty") or 0)
+                    if soi_qty:
+                        rate = float(row.get("base_net_amount") or 0) / soi_qty
+                if rate:
+                    net_rate_by_soi[row["name"]] = rate
 
         work_orders = []
         for w in wos:
+            wo_qty = float(w.get("qty") or 0)
+            net_rate = net_rate_by_soi.get(w.get("sales_order_item"))
             work_orders.append({
                 "name": w["name"],
                 "production_item": w.get("production_item"),
@@ -488,6 +503,11 @@ def _fetch_erpnext(config: dict) -> dict:
                     str(w["expected_delivery_date"])[:10] if w.get("expected_delivery_date") else None),
                 "customer_due_date": so_due.get(w.get("sales_order")),
                 "delivered_qty": delivered_by_soi.get(w.get("sales_order_item"), 0.0),
+                # Auftragswert dieses Fertigungsauftrags (Netto). Ohne verknüpfte
+                # Auftragsposition — z. B. Produktion auf Lager — bleibt er leer
+                # statt 0, sonst sähe der Auftrag wertlos statt unbekannt aus.
+                "net_rate": round(net_rate, 4) if net_rate else None,
+                "revenue": round(net_rate * wo_qty, 2) if net_rate else None,
                 "beistellung_count": wo_beistellung.get(w["name"], 0),
                 "required_items": wo_required.get(w["name"], []),
             })

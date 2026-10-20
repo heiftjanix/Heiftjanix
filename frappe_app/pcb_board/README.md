@@ -123,6 +123,16 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
   Pakete" (alle offenen Lieferscheine — zugestellt/unterwegs/alt — in einer
   Tabelle) mit Durchlaufzeit-Analyse (Ø/Median Wartezeit der offenen Lieferscheine
   bis zur Abrechnung).
+- **Umsatzzahlen führen zu ihren Belegen:** Ist-Umsatz, „Jahresanfang bis heute"
+  und die drei Vorjahres-Zeiträume sind anklickbar und öffnen die gefilterte
+  Liste der Ausgangsrechnungen in ERPNext — gefiltert auf denselben Zeitraum und
+  dieselben Belege (`docstatus = 1`), aus denen die Zahl gebildet wird.
+  Prognosewerte bleiben bewusst ohne Link: dahinter steht keine Belegmenge.
+- **Spalte „Umsatz" in der Produktionsliste:** Auftragswert eines Fertigungs-
+  auftrags = Netto-Einzelpreis der verknüpften Kundenauftrags-Position mal der
+  Auftragsmenge. Bewusst nicht der Rechnungsumsatz — gefertigt wird, bevor
+  fakturiert wird. Ohne verknüpfte Position (Produktion auf Lager) bleibt die
+  Zelle leer statt 0, und beim Sortieren rutschen solche Aufträge ans Ende.
 - **Posteingang-Feinschliff:** kompaktere Zähl-Kacheln; feste Farbe je Postfach
   (Rand + Chip), sodass die Herkunft einer Mail auf einen Blick erkennbar ist;
   eine aufgeklappte Mail-Vorschau bleibt über Hintergrund-Refreshs hinweg offen,

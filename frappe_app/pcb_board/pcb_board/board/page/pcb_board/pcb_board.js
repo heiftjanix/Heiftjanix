@@ -1172,6 +1172,7 @@ PCBBoard.PROD_COLS = [
 	{ key: 'item', label: 'Artikel' },
 	{ key: 'qty', label: 'Gesamtmenge', cls: 'num' },
 	{ key: 'delivered', label: 'Bereits geliefert', cls: 'num' },
+	{ key: 'revenue', label: 'Umsatz', cls: 'num' },
 	{ key: 'status', label: 'Status' },
 	{ key: 'customer_due_date', label: 'Wunschtermin Kunde' },
 	{ key: 'hold', label: 'Bearbeitung' },
@@ -1189,6 +1190,8 @@ PCBBoard.prototype.prodSortValue = function (w, key) {
 		case 'item': return String(w.production_item || w.item_name || '').toLowerCase();
 		case 'qty': return Number(w.qty || 0);
 		case 'delivered': return Number(w.delivered_qty || 0);
+		// Aufträge ohne bekannten Wert nach hinten statt als 0 dazwischen.
+		case 'revenue': return w.revenue == null ? -1 : Number(w.revenue);
 		case 'material': return (w.missing_items || []).length ? 0 : (w.material_ok ? 2 : 1);
 		case 'hold': return w.on_hold ? 0 : 1;
 		case 'ready': return w.ready_pct == null ? -1 : w.ready_pct;
@@ -1229,6 +1232,24 @@ PCBBoard.prototype.deliveredCell = function (w) {
 		return '<span class="muted">noch nichts · offen ' + fmt(open) + '</span>';
 	}
 	return fmt(delivered) + ' <span class="muted">(offen ' + fmt(open) + ')</span>';
+};
+
+// Spalte „Umsatz": Auftragswert dieses Fertigungsauftrags — Netto-Einzelpreis
+// der verknüpften Kundenauftrags-Position mal der Auftragsmenge. Bewusst nicht
+// der Rechnungsumsatz: gefertigt wird, bevor fakturiert wird. Ohne verknüpfte
+// Position (Produktion auf Lager) ist der Wert unbekannt, nicht null.
+PCBBoard.prototype.revenueCell = function (w) {
+	if (w.revenue == null) {
+		return '<span class="muted" title="Keine Kundenauftrags-Position verknüpft — ' +
+			'z. B. Produktion auf Lager">—</span>';
+	}
+	var title = 'Auftragswert netto';
+	if (w.net_rate != null) {
+		title += ': ' + this.eur(w.net_rate) + ' je Stück × ' +
+			String(w.qty).replace('.', ',') + ' Stück';
+	}
+	title += ' — noch nicht fakturiert';
+	return '<span title="' + this.esc(title) + '">' + this.eur(w.revenue) + '</span>';
 };
 
 // Schalter „Bearbeitung gesperrt": markiert den Auftrag nur im Board (der
@@ -1394,6 +1415,7 @@ PCBBoard.prototype.prodTableHtml = function (m) {
 			self.esc(w.production_item || w.item_name || '') + '</td>' +
 			'<td class="num">' + (w.qty != null ? String(w.qty).replace('.', ',') : '—') + '</td>' +
 			'<td class="num">' + self.deliveredCell(w) + '</td>' +
+			'<td class="num">' + self.revenueCell(w) + '</td>' +
 			'<td>' + self.esc(w.status || '') + '</td>' +
 			'<td>' + (w.customer_due_date
 				? self.esc(frappe.datetime.str_to_user(w.customer_due_date))
@@ -2303,9 +2325,15 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 		return '<section class="card vcard"><figcaption>' + title + '</figcaption>' + body + '</section>';
 	}
 
+	var cur = self.monthRange(m);
+	var yr = self.yearRange(m);
+	var pyr = self.prevYearRanges(m);
+
 	var tiles =
 		'<div class="tiles rev-tiles">' +
-		'<div class="tile hero"><p class="k">Ist-Umsatz (Netto)</p><div class="v">' + self.eur(fc.mtd) + '</div>' +
+		'<div class="tile hero"><p class="k">Ist-Umsatz (Netto)</p><div class="v">' +
+		self.revLink(self.eur(fc.mtd), cur.start, cur.end,
+			'Ausgangsrechnungen ' + curMonthLbl) + '</div>' +
 		'<div class="m">' + fc.bd_elapsed + ' von ' + fc.bd_total + ' Werktagen</div></div>' +
 		'<div class="tile"><p class="k">Prognose Monatsende</p><div class="v">' + self.eur(fc.forecast) + '</div>' +
 		'<div class="m"><span class="badge" style="background:' + st[0] + '">' + st[2] + ' ' + st[1] + ' · ' + self.pct(fc.attainment_pct) + '</span></div></div>' +
@@ -2323,7 +2351,9 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 					self.eur(py.total) + ' (' + pyMonthLbl + ')')
 				: '')],
 		['Jahresanfang bis heute',
-			self.eur(ytd) + (py.ytd_same_day > 0
+			self.revLink(self.eur(ytd), yr.start, yr.end,
+				'Ausgangsrechnungen ' + year + ' bis heute') +
+			(py.ytd_same_day > 0
 				? deltaArrow(ytd - py.ytd_same_day, py.ytd_same_day,
 					'Vorjahr bis zum selben Kalendertag: ' + self.eur(py.ytd_same_day))
 				: '')],
@@ -2334,10 +2364,16 @@ PCBBoard.prototype.revenueTabHtml = function (m) {
 	var revPrevCard = '';
 	if (py.full_year_total || py.total) {
 		revPrevCard = vcard('Umsatz ' + self.esc(pyYear), [
-			[self.esc(pyMonthLbl), self.eur(py.total)],
+			[self.esc(pyMonthLbl),
+				self.revLink(self.eur(py.total), pyr.month.start, pyr.month.end,
+					'Ausgangsrechnungen ' + pyMonthLbl)],
 			['Jahresanfang bis heute <i class="vhint" title="Vorjahr bis zum selben Kalendertag — fairer Vergleich">' +
-				'(bis zum selben Tag)</i>', self.eur(py.ytd_same_day)],
-			['komplettes Jahr', self.eur(py.full_year_total)],
+				'(bis zum selben Tag)</i>',
+				self.revLink(self.eur(py.ytd_same_day), pyr.sameDay.start, pyr.sameDay.end,
+					'Ausgangsrechnungen ' + pyYear + ' bis zum selben Kalendertag')],
+			['komplettes Jahr',
+				self.revLink(self.eur(py.full_year_total), pyr.fullYear.start, pyr.fullYear.end,
+					'Ausgangsrechnungen ' + pyYear)],
 		]);
 	}
 
@@ -2596,6 +2632,42 @@ PCBBoard.prototype.queryReportUrl = function (reportName, filters) {
 PCBBoard.prototype.figLink = function (label, href) {
 	return '<a class="fig-link" href="' + href + '" target="_blank" ' +
 		'title="Zugrundeliegende Daten in ERPNext öffnen">' + label + '</a>';
+};
+
+// Liste der Ausgangsrechnungen hinter einer Umsatzzahl — gefiltert auf genau
+// den Zeitraum und dieselben Belege, aus denen die Zahl gebildet wird
+// (gebuchte Rechnungen, docstatus = 1; siehe refresh.py).
+PCBBoard.prototype.salesInvoiceUrl = function (start, end) {
+	return this.reportUrl('sales-invoice', {
+		docstatus: 1,
+		posting_date: ['between', [start, end]],
+	});
+};
+
+// Umsatzwert, der auf seine Belegliste führt. Nur für Zahlen verwenden, hinter
+// denen auch wirklich Rechnungen stehen — eine Prognose bekommt keinen Link,
+// sonst führt er ins Leere bzw. zeigt weniger, als die Zahl behauptet.
+PCBBoard.prototype.revLink = function (valueHtml, start, end, what) {
+	return '<a class="val-link" href="' + this.salesInvoiceUrl(start, end) + '" target="_blank" ' +
+		'title="' + this.esc(what) + ' in ERPNext öffnen">' + valueHtml + '</a>';
+};
+
+// Zeitraum-Grenzen fürs Vorjahr: gleicher Monat, gleicher Kalendertag und
+// komplettes Jahr — passend zu prev_year_month() in metrics.py.
+PCBBoard.prototype.prevYearRanges = function (m) {
+	var iso = m.as_of || '';
+	var py = ((m.prev_year || {}).year != null)
+		? String(m.prev_year.year) : String(Number(iso.slice(0, 4)) - 1);
+	var mm = iso.slice(5, 7);
+	// Letzter Tag des Vorjahresmonats — der 29.02. existiert nicht in jedem Jahr.
+	var lastDay = new Date(Number(py), Number(mm), 0).getDate();
+	var sameDay = Math.min(Number(iso.slice(8, 10)) || 1, lastDay);
+	var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+	return {
+		month: { start: py + '-' + mm + '-01', end: py + '-' + mm + '-' + pad(lastDay) },
+		sameDay: { start: py + '-01-01', end: py + '-' + mm + '-' + pad(sameDay) },
+		fullYear: { start: py + '-01-01', end: py + '-12-31' },
+	};
 };
 
 PCBBoard.prototype.topProductsHtml = function (m) {
@@ -2901,6 +2973,11 @@ var PCB_BOARD_CSS =
 	'.pcb-root .fig-link{color:inherit;text-decoration:none;border-bottom:1px dashed var(--muted)}' +
 	'.pcb-root .fig-link:hover{border-bottom-color:var(--brand-teal);color:var(--brand-teal)}' +
 	'.pcb-root h2 .fig-link{border-bottom-width:2px}' +
+	// Anklickbare Umsatzzahl: erbt Größe und Farbe des Werts, nur ein dezenter
+	// gestrichelter Unterstrich verrät den Link — die Zahl soll zuerst Zahl sein.
+	'.pcb-root .val-link{color:inherit;text-decoration:none;' +
+	'border-bottom:1px dashed var(--muted);cursor:pointer}' +
+	'.pcb-root .val-link:hover{border-bottom-color:var(--brand-teal);color:var(--brand-teal)}' +
 	'.meter-wrap{margin-top:10px}.meter{position:relative;height:26px;border-radius:8px;background:var(--grid);overflow:hidden}' +
 	'.meter .fill{height:100%;border-radius:8px 0 0 8px}.meter .proj{height:100%;opacity:.45}.meter-row{display:flex;height:100%}' +
 	'.meter .mk{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--text-primary)}' +

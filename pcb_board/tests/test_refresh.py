@@ -78,7 +78,8 @@ class TestFetchErpnext(unittest.TestCase):
                          "sales_order_item": "SOI-1", "planned_start_date": None,
                          "expected_delivery_date": None}]
             if doctype == "Sales Order Item":
-                return [{"name": "SOI-1", "delivered_qty": 8}]
+                return [{"name": "SOI-1", "delivered_qty": 8, "qty": 50,
+                         "base_net_rate": 12.5, "base_net_amount": 625}]
             return []
 
         frappe = _install_frappe_stub(get_all, has_field=has_field)
@@ -165,6 +166,60 @@ class TestFetchErpnext(unittest.TestCase):
         soi_calls = [c for c in calls if c["doctype"] == "Sales Order Item"]
         self.assertTrue(soi_calls)
         self.assertEqual(data["work_orders"][0]["delivered_qty"], 8.0)
+
+    def test_work_order_carries_revenue_from_sales_order_item(self):
+        """Spalte „Umsatz" der Produktionsliste: Netto-Einzelpreis der
+        Auftragsposition mal Menge des Fertigungsauftrags — nicht der volle
+        Positionswert, der Auftrag fertigt ja nur seinen Teil."""
+        data, calls, _ = self._run()
+        soi_fields = [c.get("fields") or [] for c in calls
+                      if c["doctype"] == "Sales Order Item"]
+        self.assertTrue(any("base_net_rate" in f for f in soi_fields))
+        wo = data["work_orders"][0]
+        # 12,50 EUR je Stück × 20 Stück Auftragsmenge (Position umfasst 50)
+        self.assertEqual(wo["net_rate"], 12.5)
+        self.assertEqual(wo["revenue"], 250.0)
+
+    def test_work_order_revenue_falls_back_to_amount_per_qty(self):
+        """Führt die Position keinen Einzelpreis, wird er aus Betrag/Menge
+        abgeleitet — sonst stünde die Zeile grundlos ohne Wert da."""
+        def get_all(doctype, **kwargs):
+            if doctype == "Work Order":
+                return [{"name": "P-1", "production_item": "ITEM-1", "item_name": "Item 1",
+                         "qty": 10, "status": "Not Started", "sales_order": "AB-1",
+                         "sales_order_item": "SOI-1", "planned_start_date": None,
+                         "expected_delivery_date": None}]
+            if doctype == "Sales Order Item":
+                return [{"name": "SOI-1", "delivered_qty": 0, "qty": 4,
+                         "base_net_rate": 0, "base_net_amount": 90}]
+            return []
+
+        _install_frappe_stub(get_all)
+        import importlib
+        from pcb_board import refresh
+        importlib.reload(refresh)
+        wo = refresh._fetch_erpnext(self.CONFIG)["work_orders"][0]
+        self.assertAlmostEqual(wo["net_rate"], 22.5, places=4)   # 90 / 4
+        self.assertAlmostEqual(wo["revenue"], 225.0, places=2)   # 22,50 × 10
+
+    def test_work_order_without_sales_order_item_has_no_revenue(self):
+        """Produktion auf Lager: Wert unbekannt, nicht 0 — sonst sähe der
+        Auftrag wertlos aus und stünde beim Sortieren ganz unten."""
+        def get_all(doctype, **kwargs):
+            if doctype == "Work Order":
+                return [{"name": "P-2", "production_item": "ITEM-2", "item_name": "Item 2",
+                         "qty": 5, "status": "Not Started", "sales_order": None,
+                         "sales_order_item": None, "planned_start_date": None,
+                         "expected_delivery_date": None}]
+            return []
+
+        _install_frappe_stub(get_all)
+        import importlib
+        from pcb_board import refresh
+        importlib.reload(refresh)
+        wo = refresh._fetch_erpnext(self.CONFIG)["work_orders"][0]
+        self.assertIsNone(wo["revenue"])
+        self.assertIsNone(wo["net_rate"])
 
     def test_failing_production_block_does_not_kill_refresh(self):
         """Fällt die Fertigungsabfrage aus, fehlt nur dieser Abschnitt."""

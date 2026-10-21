@@ -17,6 +17,13 @@ from . import auth, graph, metrics as m, triage, ups_track
 STATUS_KEY = "pcb_board_status"
 METRICS_KEY = "pcb_board_metrics"
 
+# Namensmuster des eingescannten Lieferscheins am Vorgang (unterschriebener
+# Ablieferbeleg). Bewusst ein Muster und nicht „irgendein Anhang": am
+# Lieferschein hängt auch das UPS-Versandlabel (UPS_Label_*), und das klebt
+# schon beim Verpacken dran — es würde jede Sendung sofort als zugestellt
+# ausweisen. Ändert sich die Ablage-Konvention, gehört diese Zeile angepasst.
+POD_SCAN_PREFIX = "Lieferschein-Scan"
+
 
 def _settings() -> dict:
     s = frappe.get_single("PCB Board Settings")
@@ -178,6 +185,31 @@ def _fetch_erpnext(config: dict) -> dict:
     for r in dns:
         r["tracking_number"] = r.pop("custom_tracking_numbers", None)
         r["shipment_date"] = r.pop("custom_ups_shipment_date", None)
+
+    # Eingescannter Lieferschein = unterschriebener Ablieferbeleg. Liegt er am
+    # Vorgang, ist die Zustellung belegt und muss nicht mehr geschätzt werden.
+    # WICHTIG: nicht jeder Anhang zählt — das UPS-Versandlabel hängt schon beim
+    # Verpacken dran und würde jede Sendung sofort als zugestellt ausweisen.
+    # Erkannt wird deshalb nur das Namensmuster der Scans (siehe POD_SCAN_PREFIX).
+    if dns:
+        for f in frappe.get_all(
+            "File",
+            filters=[["attached_to_doctype", "=", "Delivery Note"],
+                     ["attached_to_name", "in", [d["name"] for d in dns]],
+                     ["file_name", "like", POD_SCAN_PREFIX + "%"]],
+            fields=["attached_to_name", "file_name", "file_url", "creation"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        ):
+            scan_date = str(f.get("creation") or "")[:10]
+            for d in dns:
+                if d["name"] != f["attached_to_name"]:
+                    continue
+                # Mehrere Scans: der früheste belegt die Zustellung.
+                if not d.get("pod_scan_date") or scan_date < d["pod_scan_date"]:
+                    d["pod_scan_date"] = scan_date
+                    d["pod_scan_url"] = f.get("file_url")
+                d["pod_scan"] = True
 
     # per_delivered: von ERPNext aus den gebuchten Lieferscheinen gepflegt — daran
     # hängt, ob ein Auftrag noch in der Liefertermin-Liste steht oder schon bei den

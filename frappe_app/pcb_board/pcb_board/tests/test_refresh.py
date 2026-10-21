@@ -167,6 +167,66 @@ class TestFetchErpnext(unittest.TestCase):
         self.assertTrue(soi_calls)
         self.assertEqual(data["work_orders"][0]["delivered_qty"], 8.0)
 
+    def test_pod_scan_query_excludes_the_ups_label(self):
+        """Die wichtigste Abgrenzung der Scan-Erkennung: am Lieferschein hängt
+        auch das UPS-Versandlabel, und das klebt schon beim Verpacken dran. Ohne
+        Namensfilter wäre jede Sendung sofort „zugestellt"."""
+        calls = []
+
+        def get_all(doctype, **kwargs):
+            calls.append({"doctype": doctype, **kwargs})
+            if doctype == "Delivery Note":
+                return [{"name": "LS-1", "customer_name": "Kunde", "base_net_total": 500,
+                         "per_billed": 0, "posting_date": "2026-10-19",
+                         "custom_tracking_numbers": None, "custom_ups_shipment_date": None}]
+            return []
+
+        _install_frappe_stub(get_all)
+        import importlib
+        from pcb_board import refresh
+        importlib.reload(refresh)
+        refresh._fetch_erpnext(self.CONFIG)
+
+        file_calls = [c for c in calls if c["doctype"] == "File"]
+        self.assertTrue(file_calls, "Anhänge werden gar nicht abgefragt")
+        flat = [f for c in file_calls for f in (c.get("filters") or [])]
+        like = [f for f in flat if len(f) == 3 and f[1] == "like"]
+        self.assertTrue(like, "Abfrage filtert nicht auf das Namensmuster")
+        self.assertTrue(any(str(f[2]).startswith(refresh.POD_SCAN_PREFIX) for f in like))
+        # Gegenprobe: das Label trägt einen anderen Präfix und fällt heraus.
+        self.assertFalse("UPS_Label".startswith(refresh.POD_SCAN_PREFIX))
+
+    def test_pod_scan_attaches_date_and_url_to_the_delivery_note(self):
+        """Liegt ein Scan am Vorgang, wandern Kennzeichen, Datum und Link mit."""
+        def get_all(doctype, **kwargs):
+            if doctype == "Delivery Note":
+                return [{"name": "LS-1", "customer_name": "Kunde", "base_net_total": 500,
+                         "per_billed": 0, "posting_date": "2026-10-19",
+                         "custom_tracking_numbers": None, "custom_ups_shipment_date": None}]
+            if doctype == "File":
+                return [{"attached_to_name": "LS-1",
+                         "file_name": "Lieferschein-Scan_LS-1.pdf",
+                         "file_url": "/private/files/Lieferschein-Scan_LS-1.pdf",
+                         "creation": "2026-10-20 11:00:46"}]
+            return []
+
+        _install_frappe_stub(get_all)
+        import importlib
+        from pcb_board import refresh
+        importlib.reload(refresh)
+        dn = refresh._fetch_erpnext(self.CONFIG)["to_bill_delivery_notes"][0]
+        self.assertTrue(dn["pod_scan"])
+        self.assertEqual(dn["pod_scan_date"], "2026-10-20")
+        self.assertEqual(dn["pod_scan_url"], "/private/files/Lieferschein-Scan_LS-1.pdf")
+
+    def test_delivery_note_without_scan_has_no_pod_flag(self):
+        """Gegenprobe: ohne Scan bleibt das Kennzeichen weg, der Status wird
+        wie bisher geschätzt."""
+        _, _, _ = self._run()
+        data, _, _ = self._run()
+        for dn in data["to_bill_delivery_notes"]:
+            self.assertFalse(dn.get("pod_scan"))
+
     def test_work_order_carries_revenue_from_sales_order_item(self):
         """Spalte „Umsatz" der Produktionsliste: Netto-Einzelpreis der
         Auftragsposition mal Menge des Fertigungsauftrags — nicht der volle

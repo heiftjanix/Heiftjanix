@@ -139,6 +139,18 @@ def resolve_arrivals(items: list[dict], config: dict,
         if result is None:
             result = _fallback(item.get("shipment_date"), item.get("posting_date"),
                                 transit_days, region, extra)
+            # Liegt der unterschriebene Lieferschein eingescannt am Vorgang, ist
+            # die Zustellung belegt — dann wird nicht mehr geschätzt. Greift nur
+            # im Schätzpfad: eine Live-Auskunft von UPS ist die genauere Quelle
+            # und soll nicht von einem Dateianhang überstimmt werden.
+            if item.get("pod_scan"):
+                result = {
+                    "arrival_status": "delivered",
+                    # Scandatum = Tag, an dem der Beleg zurückkam. Fehlt es,
+                    # bleibt die geschätzte Ankunft als Näherung stehen.
+                    "delivered_date": item.get("pod_scan_date") or result.get("delivered_date"),
+                    "arrival_method": "scan",
+                }
         item.update(result)
         out.append(item)
     return out

@@ -2766,7 +2766,25 @@ PCBBoard.prototype.tipsHtml = function (m) {
 PCBBoard.prototype.outgoingPackagesHtml = function (m) {
 	var self = this;
 	var b = m.billing;
-	var methodLabel = { ups: 'UPS', fallback: 'geschätzt', none: '—' };
+	var methodLabel = { ups: 'UPS', fallback: 'geschätzt', scan: 'Lieferschein-Scan', none: '—' };
+	// Zustellquelle. Beim Scan führt die Zelle direkt auf den Beleg — wer die
+	// Abrechnung freigibt, will die Unterschrift sehen können, ohne erst den
+	// Lieferschein zu öffnen.
+	function methodCell(r) {
+		var label = methodLabel[r.arrival_method] || '—';
+		if (r.arrival_method !== 'scan') {
+			return label;
+		}
+		var title = 'Unterschriebener Lieferschein liegt am Vorgang' +
+			(r.pod_scan_date
+				? ' (eingescannt am ' + frappe.datetime.str_to_user(r.pod_scan_date) + ')'
+				: '') + ' — die Zustellung ist belegt, nicht geschätzt';
+		if (!r.pod_scan_url) {
+			return '<span title="' + self.esc(title) + '">📄 ' + label + '</span>';
+		}
+		return '<a href="' + self.esc(r.pod_scan_url) + '" target="_blank" title="' +
+			self.esc(title) + '">📄 ' + label + '</a>';
+	}
 	// Ausgehende Pakete (Lieferscheine) in EINER Tabelle, Status als Spalte.
 	var staleNames = {};
 	(b.stale || []).forEach(function (r) { staleNames[r.name] = true; });
@@ -2813,7 +2831,7 @@ PCBBoard.prototype.outgoingPackagesHtml = function (m) {
 			'<td class="num">' + self.eur(r.net_open) + '</td>' +
 			'<td>' + tag(r, o.group) + '</td>' +
 			'<td>' + shipped + '</td>' +
-			'<td>' + (methodLabel[r.arrival_method] || '—') + '</td></tr>';
+			'<td>' + methodCell(r) + '</td></tr>';
 	}).join('');
 	var table = rows.length
 		? '<table class="tbl"><thead><tr><th class="col-dn">Lieferschein</th>' +

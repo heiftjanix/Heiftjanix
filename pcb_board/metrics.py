@@ -1579,6 +1579,12 @@ def build_metrics(data: dict, config: dict, today: date | None = None) -> dict:
             "arrival_status": dn.get("arrival_status", "unknown"),
             "delivered_date": dn.get("delivered_date"),
             "arrival_method": dn.get("arrival_method"),
+            # Eingescannter Lieferschein am Vorgang — belegt die Zustellung und
+            # ersetzt damit die Schätzung. Muss hier ausdrücklich mitwandern:
+            # diese Zeile wird Feld für Feld neu gebaut.
+            "pod_scan": bool(dn.get("pod_scan")),
+            "pod_scan_date": dn.get("pod_scan_date"),
+            "pod_scan_url": dn.get("pod_scan_url"),
         }
         is_stale = age is not None and age > stale_days
         item["needs_review"] = is_stale

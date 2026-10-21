@@ -555,6 +555,40 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertEqual(by_name["LS-B"]["shipment_date"], "2026-07-14")
         self.assertEqual(by_name["LS-B"]["shipment_date_source"], "note")
 
+    def test_billing_scan_fields_reach_the_board_list(self):
+        """Der Scan-Nachweis muss bis in billing.ready durchkommen — genau das
+        liest die Tabelle „Ausgehende Pakete". Die Zeilen werden dort Feld für
+        Feld neu gebaut; was nicht genannt ist, fällt still weg."""
+        data = self._data()
+        dn = data["to_bill_delivery_notes"][1]          # LS-B, war „unterwegs"
+        dn.update({"arrival_status": "delivered", "arrival_method": "scan",
+                   "delivered_date": "2026-07-15", "pod_scan": True,
+                   "pod_scan_date": "2026-07-15",
+                   "pod_scan_url": "/private/files/Lieferschein-Scan_LS-B.pdf"})
+        b = m.build_metrics(data, CONFIG, date(2026, 7, 15))["billing"]
+        row = {r["name"]: r for r in b["ready"]}["LS-B"]
+        self.assertEqual(row["arrival_method"], "scan")
+        self.assertTrue(row["pod_scan"])
+        self.assertEqual(row["pod_scan_date"], "2026-07-15")
+        self.assertEqual(row["pod_scan_url"], "/private/files/Lieferschein-Scan_LS-B.pdf")
+
+    def test_billing_scan_moves_amount_into_ready_to_bill(self):
+        """Wirkung der Änderung: der Betrag wandert von „unterwegs" nach
+        „jetzt abrechnen" und zählt in die Sofort-abrechnen-Summe."""
+        data = self._data()
+        vorher = m.build_metrics(data, CONFIG, date(2026, 7, 15))
+        self.assertIn("LS-B", [r["name"] for r in vorher["billing"]["in_transit"]])
+        ready_vorher = vorher["pipeline"]["ready_net"]
+
+        data["to_bill_delivery_notes"][1].update(
+            {"arrival_status": "delivered", "arrival_method": "scan",
+             "pod_scan": True, "pod_scan_date": "2026-07-15"})
+        nachher = m.build_metrics(data, CONFIG, date(2026, 7, 15))
+
+        self.assertIn("LS-B", [r["name"] for r in nachher["billing"]["ready"]])
+        self.assertNotIn("LS-B", [r["name"] for r in nachher["billing"]["in_transit"]])
+        self.assertAlmostEqual(nachher["pipeline"]["ready_net"] - ready_vorher, 2000, delta=0.01)
+
     def test_billing_splits_clearable_from_review_amounts(self):
         """„Jetzt abrechenbar" und „zu klären" dürfen sich nicht überschneiden:
         ein zugestellter Lieferschein jenseits der Klärgrenze gehört zum Klärfall."""

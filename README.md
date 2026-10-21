@@ -123,6 +123,21 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
   Pakete" (alle offenen Lieferscheine — zugestellt/unterwegs/alt — in einer
   Tabelle) mit Durchlaufzeit-Analyse (Ø/Median Wartezeit der offenen Lieferscheine
   bis zur Abrechnung).
+- **Eingescannter Lieferschein ersetzt die Zustell-Schätzung:** Liegt am
+  Lieferschein ein Anhang, dessen Dateiname mit `Lieferschein-Scan` beginnt
+  (Konstante `POD_SCAN_PREFIX` in `refresh.py`), gilt die Zustellung als belegt —
+  der Beleg steht sofort auf „zugestellt – abrechnen" statt auf der Schätzung
+  „Versanddatum + Transittage". Die Zustellquelle heißt dann „Lieferschein-Scan"
+  und verlinkt auf das PDF.
+
+  Zwei Dinge sind dabei wichtig:
+  - **Nicht jeder Anhang zählt.** Am Lieferschein hängt auch das UPS-Versandlabel
+    (`UPS_Label_*`), und das klebt schon beim Verpacken dran — ohne Namensfilter
+    wäre jede Sendung sofort „zugestellt". Ändert sich die Ablage-Konvention,
+    muss `POD_SCAN_PREFIX` angepasst werden, sonst greift die Erkennung still
+    nicht mehr.
+  - **Nur im Schätzpfad.** Eine Live-Auskunft von UPS bleibt maßgeblich und wird
+    nicht von einem Dateianhang überstimmt.
 - **Umsatzzahlen führen zu ihren Belegen:** Ist-Umsatz, „Jahresanfang bis heute"
   und die drei Vorjahres-Zeiträume sind anklickbar und öffnen die gefilterte
   Liste der Ausgangsrechnungen in ERPNext — gefiltert auf denselben Zeitraum und

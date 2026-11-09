@@ -167,6 +167,56 @@ class TestFetchErpnext(unittest.TestCase):
         self.assertTrue(soi_calls)
         self.assertEqual(data["work_orders"][0]["delivered_qty"], 8.0)
 
+    def test_tracking_eta_field_only_queried_when_it_exists(self):
+        """„Voraussichtliche Lieferung" ist ein Custom Field. Auf einer Site
+        ohne das Feld würde die Bestellabfrage sonst komplett scheitern — und
+        damit der halbe Einkaufsteil des Boards."""
+        from pcb_board import refresh
+        _, calls, _ = self._run()
+        po_fields = [c.get("fields") or [] for c in calls
+                     if c["doctype"] == "Purchase Order"]
+        self.assertTrue(any(refresh.PO_TRACKING_ETA_FIELD in f for f in po_fields))
+
+        _, calls_without, _ = self._run(has_field=False)
+        po_fields = [c.get("fields") or [] for c in calls_without
+                     if c["doctype"] == "Purchase Order"]
+        self.assertTrue(po_fields, "Bestellungen werden gar nicht abgefragt")
+        self.assertFalse(any(refresh.PO_TRACKING_ETA_FIELD in f for f in po_fields))
+
+    def test_tracking_eta_reaches_the_open_purchase_order(self):
+        """Gemeldeter Termin wandert als tracking_eta mit — auf Tagesgenauigkeit
+        gekürzt, damit der Vergleich mit anderen Datumsfeldern aufgeht."""
+        def get_all(doctype, **kwargs):
+            if doctype == "Purchase Order":
+                return [{"name": "BE-1", "supplier": "LF-A", "supplier_name": "Lieferant A",
+                         "transaction_date": "2026-11-02", "schedule_date": "2026-11-20",
+                         "base_net_total": 500, "per_received": 0, "status": "To Receive",
+                         "custom_voraussichtliche_lieferung": "2026-11-12"}]
+            return []
+
+        _install_frappe_stub(get_all)
+        import importlib
+        from pcb_board import refresh
+        importlib.reload(refresh)
+        po = refresh._fetch_erpnext(self.CONFIG)["open_purchase_orders"][0]
+        self.assertEqual(po["tracking_eta"], "2026-11-12")
+
+    def test_purchase_order_without_tracking_eta_stays_none(self):
+        def get_all(doctype, **kwargs):
+            if doctype == "Purchase Order":
+                return [{"name": "BE-2", "supplier": "LF-A", "supplier_name": "Lieferant A",
+                         "transaction_date": "2026-11-02", "schedule_date": None,
+                         "base_net_total": 500, "per_received": 0, "status": "To Receive",
+                         "custom_voraussichtliche_lieferung": None}]
+            return []
+
+        _install_frappe_stub(get_all)
+        import importlib
+        from pcb_board import refresh
+        importlib.reload(refresh)
+        po = refresh._fetch_erpnext(self.CONFIG)["open_purchase_orders"][0]
+        self.assertIsNone(po["tracking_eta"])
+
     def test_pod_scan_query_excludes_the_ups_label(self):
         """Die wichtigste Abgrenzung der Scan-Erkennung: am Lieferschein hängt
         auch das UPS-Versandlabel, und das klebt schon beim Verpacken dran. Ohne

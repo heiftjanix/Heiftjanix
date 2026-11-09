@@ -24,6 +24,10 @@ METRICS_KEY = "pcb_board_metrics"
 # ausweisen. Ändert sich die Ablage-Konvention, gehört diese Zeile angepasst.
 POD_SCAN_PREFIX = "Lieferschein-Scan"
 
+# Custom Field an der Bestellung (Abschnitt „Versand & Sendungsverfolgung"):
+# voraussichtlicher Liefertermin aus der Sendungsverfolgung des Lieferanten.
+PO_TRACKING_ETA_FIELD = "custom_voraussichtliche_lieferung"
+
 
 def _settings() -> dict:
     s = frappe.get_single("PCB Board Settings")
@@ -262,13 +266,22 @@ def _fetch_erpnext(config: dict) -> dict:
 
     # Einkauf: offene Bestellungen (noch nicht vollständig eingegangen) — Basis für
     # den erwarteten Wareneingang und die „nachzuhaken"-Liste.
+    po_fields = ["name", "supplier", "supplier_name", "transaction_date", "schedule_date",
+                 "base_net_total", "per_received", "status"]
+    # „Voraussichtliche Lieferung" (Abschnitt Versand & Sendungsverfolgung) kommt
+    # aus der Sendungsverfolgung des Lieferanten und ist damit die belastbarste
+    # Terminauskunft — besser als jede Median-Schätzung. Custom Field: wie bei der
+    # Wiedervorlage vor dem Abfragen prüfen, sonst scheitert die ganze Abfrage auf
+    # einer Site ohne das Feld.
+    has_po_eta = frappe.get_meta("Purchase Order").has_field(PO_TRACKING_ETA_FIELD)
+    if has_po_eta:
+        po_fields.append(PO_TRACKING_ETA_FIELD)
     pos = frappe.get_all(
         "Purchase Order",
         filters=[["docstatus", "=", 1],
                  ["status", "not in", ["Closed", "Cancelled", "Completed", "Delivered"]],
                  ["per_received", "<", 100]],
-        fields=["name", "supplier", "supplier_name", "transaction_date", "schedule_date",
-                "base_net_total", "per_received", "status"],
+        fields=po_fields,
         limit_page_length=0,
         ignore_permissions=True,
     )
@@ -301,6 +314,10 @@ def _fetch_erpnext(config: dict) -> dict:
             "status": p.get("status"),
             "transaction_date": str(p["transaction_date"]) if p.get("transaction_date") else None,
             "schedule_date": str(p["schedule_date"]) if p.get("schedule_date") else None,
+            # Termin aus der Sendungsverfolgung; leer, solange der Lieferant
+            # nichts gemeldet hat — dann greift weiter die Schätzung.
+            "tracking_eta": (str(p[PO_TRACKING_ETA_FIELD])[:10]
+                             if p.get(PO_TRACKING_ETA_FIELD) else None),
             "net_total": round(float(p.get("base_net_total") or 0), 2),
             "net_open": round(net_open, 2),
             "per_received": float(p.get("per_received") or 0),

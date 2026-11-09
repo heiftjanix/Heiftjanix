@@ -928,6 +928,13 @@ PCBBoard.prototype.poStatusBadge = function (r) {
 
 // Woraus der erwartete Termin stammt — sonst bleibt die Zahl eine Behauptung.
 PCBBoard.prototype.leadCell = function (r) {
+	// Meldet der Lieferant einen Termin über die Sendungsverfolgung, ist das
+	// keine Schätzung mehr — dann steht dort die Quelle statt einer Lieferzeit.
+	if (r.expected_source === 'tracking') {
+		return '<span title="Voraussichtliche Lieferung laut Sendungsverfolgung ' +
+			'(Feld an der Bestellung) — keine Schätzung aus der Lieferzeit-Historie">' +
+			'📦 laut Tracking</span>';
+	}
 	if (r.expected_source === 'schedule') {
 		return '<span class="muted" title="Keine Lieferzeit-Historie — Wunschtermin der Bestellung">' +
 			'Wunschtermin</span>';
@@ -1131,9 +1138,12 @@ PCBBoard.prototype.purchaseOrdersHtml = function (m) {
 		'<span class="muted">Termin je Lieferant aus der eigenen Lieferzeit-Historie — ' +
 		'nächster Termin oben</span></div>' + incomingTiles +
 		self.poTableHtml(incoming, 'Keine Bestellung im Zulauf.') +
-		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Erwartet am = Bestelldatum + ' +
-		'Median-Lieferzeit dieses Lieferanten (Bestellung → erster Wareneingang). Ohne eigene ' +
-		'Historie greift der Median über alle Lieferanten, ohne jede Historie der Wunschtermin ' +
+		'<p class="muted" style="font-size:.82rem;margin:8px 0 0">Erwartet am = ' +
+		'<b>„Voraussichtliche Lieferung"</b> der Bestellung (Abschnitt Versand &amp; ' +
+		'Sendungsverfolgung), sobald der Lieferant einen Termin gemeldet hat — eine Auskunft ' +
+		'zur konkreten Sendung schlägt jede Statistik. Fehlt sie: Bestelldatum + Median-' +
+		'Lieferzeit dieses Lieferanten (Bestellung → erster Wareneingang), ohne eigene ' +
+		'Historie der Median über alle Lieferanten, ohne jede Historie der Wunschtermin ' +
 		'der Bestellung. Bewusst pausierte Bestellungen („On Hold") stehen hier mit, weil bei ' +
 		'ihnen nichts anzumahnen ist.</p></section>';
 
@@ -1175,6 +1185,7 @@ PCBBoard.PROD_COLS = [
 	{ key: 'revenue', label: 'Umsatz', cls: 'num' },
 	{ key: 'status', label: 'Status' },
 	{ key: 'customer_due_date', label: 'Wunschtermin Kunde' },
+	{ key: 'last_material_eta', label: 'Letzter bekannter Materialeingang' },
 	{ key: 'hold', label: 'Bearbeitung' },
 	{ key: 'sales_order', label: 'Kundenauftrag' },
 	{ key: 'material', label: 'Material' },
@@ -1199,6 +1210,8 @@ PCBBoard.prototype.prodSortValue = function (w, key) {
 		case 'assignee': return (w.assignee || '\uffff').toLowerCase();
 		case 'note': return String(w.note_date || w.note_remark || '').toLowerCase();
 		case 'customer_due_date': return w.customer_due_date || '9999-12-31';
+		// Ohne bekannten Termin ans Ende — dort ist am wenigsten planbar.
+		case 'last_material_eta': return w.last_material_eta || '9999-12-31';
 		default: return String(w[key] == null ? '' : w[key]).toLowerCase();
 	}
 };
@@ -1232,6 +1245,32 @@ PCBBoard.prototype.deliveredCell = function (w) {
 		return '<span class="muted">noch nichts · offen ' + fmt(open) + '</span>';
 	}
 	return fmt(delivered) + ' <span class="muted">(offen ' + fmt(open) + ')</span>';
+};
+
+// Spalte „Letzter bekannter Materialeingang": der späteste Termin, den wir zu
+// diesem Auftrag kennen — also der Tag, ab dem frühestens alles da sein kann.
+// Stammt er aus der Sendungsverfolgung der Bestellung, wird das ausgewiesen;
+// sonst ist es eine Schätzung aus der Lieferzeit-Historie. Fehlt noch Material
+// oder hat eine Lieferung keinen Termin, ist der Wert nur ein Zwischenstand und
+// wird entsprechend gekennzeichnet — sonst läse er sich wie eine Zusage.
+PCBBoard.prototype.lastMaterialCell = function (w) {
+	if (!w.last_material_eta) {
+		return '<span class="muted" title="Zu diesem Auftrag ist kein Liefertermin ' +
+			'bekannt — nichts bestellt oder Termine offen">—</span>';
+	}
+	var tracked = w.last_material_eta_source === 'tracking';
+	var title = tracked
+		? 'Voraussichtliche Lieferung laut Sendungsverfolgung der Bestellung'
+		: 'Geschätzt aus der Lieferzeit-Historie des Lieferanten';
+	var txt = (tracked ? '📦 ' : '') +
+		this.esc(frappe.datetime.str_to_user(w.last_material_eta));
+	if (w.last_material_eta_complete) {
+		return '<span title="' + this.esc(title) +
+			' — danach ist der Auftrag material-komplett">' + txt + '</span>';
+	}
+	return '<span title="' + this.esc(title) + ' — Zwischenstand: es fehlt noch Material ' +
+		'oder ein Termin, der tatsächliche Eingang kann später liegen">' + txt +
+		' <span class="muted" style="font-size:.76rem">(unvollständig)</span></span>';
 };
 
 // Spalte „Umsatz": Auftragswert dieses Fertigungsauftrags — Netto-Einzelpreis
@@ -1420,6 +1459,7 @@ PCBBoard.prototype.prodTableHtml = function (m) {
 			'<td>' + (w.customer_due_date
 				? self.esc(frappe.datetime.str_to_user(w.customer_due_date))
 				: '<span class="muted" title="Kein Liefertermin an der AB hinterlegt">—</span>') + '</td>' +
+			'<td>' + self.lastMaterialCell(w) + '</td>' +
 			'<td class="hold-cell">' + self.holdCell(w) + '</td>' +
 			'<td>' + (w.sales_order
 				? '<a href="/app/sales-order/' + encodeURIComponent(w.sales_order) + '" target="_blank">' +

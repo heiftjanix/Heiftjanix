@@ -449,6 +449,9 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
                 "po": row.get("name"),
                 "supplier": row.get("supplier"),
                 "expected_date": row.get("expected_date"),
+                # Woher der Termin stammt — die Fertigung soll sehen, ob ein
+                # Datum aus der Sendungsverfolgung kommt oder nur geschätzt ist.
+                "expected_source": row.get("expected_source"),
                 "item_name": it.get("item_name") or code,
                 "qty": float(it.get("open_qty") or 0),
             })
@@ -569,7 +572,8 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
                 links.append({"po": inc["po"], "item_code": code,
                               "supplier": inc.get("supplier"),
                               "item_name": inc.get("item_name") or code,
-                              "expected_date": inc["expected_date"]})
+                              "expected_date": inc["expected_date"],
+                              "expected_source": inc.get("expected_source")})
                 if need <= 1e-9:
                     break
             pos["state"] = "incoming"
@@ -591,6 +595,23 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
         dates = [l["expected_date"] for l in links]
         undated = any(d is None for d in dates)
         complete_on = max(dates) if (complete and dates and not undated) else None
+
+        # Letzter bekannter Materialeingang: der späteste Termin, den wir zu
+        # diesem Auftrag überhaupt kennen. Anders als complete_on auch dann
+        # gefüllt, wenn noch etwas fehlt oder ein Termin offen ist — dann ist es
+        # eben nur der Stand des Wissens und nicht der Tag der Vollständigkeit.
+        # last_material_eta_complete sagt, welcher der beiden Fälle vorliegt.
+        dated = [d for d in dates if d]
+        last_material_eta = max(dated) if dated else None
+        # Quelle des spätesten Termins — „laut Tracking" wiegt schwerer als eine
+        # Median-Schätzung, und genau das soll die Fertigung sehen.
+        last_material_eta_source = None
+        if last_material_eta is not None:
+            for l in links:
+                if l["expected_date"] == last_material_eta:
+                    last_material_eta_source = l.get("expected_source")
+                    break
+
         complete_po = None
         if complete_on is not None:
             # die späteste nötige Lieferung schließt den Auftrag ab
@@ -679,6 +700,12 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
             "from_stock_only": from_stock_only,
             "complete_on": complete_on,
             "complete_po": complete_po,
+            # Spalte „Letzter bekannter Materialeingang" in der Produktionsliste.
+            # Muss hier ausdrücklich stehen — die Zeile wird Feld für Feld neu
+            # gebaut, alles Ungenannte fiele still weg.
+            "last_material_eta": last_material_eta,
+            "last_material_eta_source": last_material_eta_source,
+            "last_material_eta_complete": bool(complete and dates and not undated),
             "awaiting": awaiting,
             "missing_items": missing,
             "positions": positions,
@@ -705,12 +732,17 @@ def work_order_material(data: dict, po_rows: list[dict]) -> dict:
 def purchase_orders(data: dict, today: date) -> dict:
     """Offene Bestellungen mit erwartetem Wareneingang.
 
-    Erwarteter Termin = Bestelldatum + Median-Lieferzeit des Lieferanten; ohne
-    Historie für diesen Lieferanten greift der Median über alle Lieferanten, ohne
-    jede Historie der Wunschtermin der Bestellung (schedule_date). Bestellungen,
-    deren erwarteter Termin überschritten ist, fallen aus dem Zeitplan und landen
-    zusätzlich in follow_up („nachzuhaken"). „On Hold" bleibt sichtbar, wird aber
-    nicht angemahnt — die Bestellung ist bewusst pausiert.
+    Rangfolge der Terminquellen, beste zuerst:
+
+    1. „Voraussichtliche Lieferung" aus der Sendungsverfolgung (tracking_eta) —
+       eine echte Auskunft zur konkreten Sendung schlägt jede Statistik.
+    2. Bestelldatum + Median-Lieferzeit DIESES Lieferanten.
+    3. Bestelldatum + Median über alle Lieferanten (ohne Historie zum Lieferanten).
+    4. Wunschtermin der Bestellung (schedule_date), wenn gar keine Historie da ist.
+
+    Bestellungen, deren erwarteter Termin überschritten ist, fallen aus dem
+    Zeitplan und landen zusätzlich in follow_up („nachzuhaken"). „On Hold" bleibt
+    sichtbar, wird aber nicht angemahnt — die Bestellung ist bewusst pausiert.
     """
     lead = supplier_lead_times(data)
     per_supplier = lead["per_supplier"]
@@ -720,11 +752,14 @@ def purchase_orders(data: dict, today: date) -> dict:
     for po in data.get("open_purchase_orders") or []:
         order_date = _to_date(po.get("transaction_date"))
         schedule = _to_date(po.get("schedule_date"))
+        tracking = _to_date(po.get("tracking_eta"))
         stat = per_supplier.get(po.get("supplier") or "")
         lead_days = stat["median_days"] if stat else overall
         source = "supplier" if stat else ("overall" if overall is not None else None)
 
-        if order_date is not None and lead_days is not None:
+        if tracking is not None:
+            expected, source = tracking, "tracking"
+        elif order_date is not None and lead_days is not None:
             expected = order_date + timedelta(days=int(round(lead_days)))
         else:
             expected, source = schedule, ("schedule" if schedule else None)
@@ -737,6 +772,7 @@ def purchase_orders(data: dict, today: date) -> dict:
             "on_hold": (po.get("status") or "") == "On Hold",
             "order_date": order_date.isoformat() if order_date else None,
             "schedule_date": schedule.isoformat() if schedule else None,
+            "tracking_eta": tracking.isoformat() if tracking else None,
             "expected_date": expected.isoformat() if expected else None,
             "expected_source": source,
             "lead_days": lead_days,

@@ -123,6 +123,25 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
   Pakete" (alle offenen Lieferscheine — zugestellt/unterwegs/alt — in einer
   Tabelle) mit Durchlaufzeit-Analyse (Ø/Median Wartezeit der offenen Lieferscheine
   bis zur Abrechnung).
+- **Erwarteter Wareneingang kommt zuerst aus der Sendungsverfolgung:** Das Feld
+  „Voraussichtliche Lieferung" an der Bestellung (`custom_voraussichtliche_lieferung`,
+  Abschnitt „Versand & Sendungsverfolgung") ist die erste Quelle für „Erwartet am" —
+  eine Auskunft zur konkreten Sendung schlägt jede Statistik. Rangfolge:
+  1. Voraussichtliche Lieferung laut Tracking (Quelle „laut Tracking")
+  2. Bestelldatum + Median-Lieferzeit dieses Lieferanten
+  3. Bestelldatum + Median über alle Lieferanten
+  4. Wunschtermin der Bestellung
+
+  Das Feld ist ein Custom Field und wird — wie die Wiedervorlage — vor dem
+  Abfragen geprüft; auf einer Site ohne das Feld bleibt es bei der Schätzung,
+  statt dass die ganze Bestellabfrage scheitert.
+- **Spalte „Letzter bekannter Materialeingang" in der Produktionsliste:**
+  spätester Liefertermin, den wir zu einem Fertigungsauftrag kennen — der Tag,
+  ab dem frühestens alles da sein kann. Stammt er aus der Sendungsverfolgung,
+  steht ein 📦 davor. Fehlt noch Material oder hat eine Lieferung keinen Termin,
+  ist der Wert nur ein Zwischenstand und wird als „(unvollständig)" markiert;
+  der tatsächliche Eingang kann dann später liegen. Anders als `complete_on`
+  („komplett ab") ist die Spalte auch in diesem Fall gefüllt.
 - **Eingescannter Lieferschein ersetzt die Zustell-Schätzung:** Liegt am
   Lieferschein ein Anhang, dessen Dateiname mit `Lieferschein-Scan` beginnt
   (Konstante `POD_SCAN_PREFIX` in `refresh.py`), gilt die Zustellung als belegt —

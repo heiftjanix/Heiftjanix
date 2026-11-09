@@ -719,6 +719,45 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertTrue(by_name["BE-HOLD"]["on_hold"])
         self.assertGreater(by_name["BE-HOLD"]["days_late"], 0)   # überfällig, aber kein Nachhaken
 
+    def test_tracking_eta_beats_the_lead_time_estimate(self):
+        """„Voraussichtliche Lieferung" aus der Sendungsverfolgung ist eine
+        Auskunft zur konkreten Sendung und schlägt deshalb den Median."""
+        data = self._purchasing_data()
+        # BE-SPAET stünde laut Median auf 2026-07-10 (5 Tage überfällig).
+        data["open_purchase_orders"][0]["tracking_eta"] = "2026-07-22"
+        p = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]
+        row = {r["name"]: r for r in p["open"]}["BE-SPAET"]
+        self.assertEqual(row["expected_date"], "2026-07-22")
+        self.assertEqual(row["expected_source"], "tracking")
+        self.assertEqual(row["tracking_eta"], "2026-07-22")
+        # Nicht mehr überfällig, sondern künftig — und damit raus aus „nachzuhaken".
+        self.assertEqual(row["days_late"], 0)
+        self.assertEqual(row["days_until"], 7)
+        self.assertNotIn("BE-SPAET", [r["name"] for r in p["follow_up"]])
+
+    def test_tracking_eta_also_reports_a_delay(self):
+        """Gegenrichtung: meldet der Lieferant Verzug, wird der Termin später —
+        die Bestellung gehört dann erst recht ins Nachfassen."""
+        data = self._purchasing_data()
+        data["open_purchase_orders"][2]["tracking_eta"] = "2026-07-06"   # BE-KUENFTIG
+        p = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]
+        row = {r["name"]: r for r in p["open"]}["BE-KUENFTIG"]
+        self.assertEqual(row["expected_date"], "2026-07-06")
+        self.assertEqual(row["expected_source"], "tracking")
+        self.assertEqual(row["days_late"], 9)
+        self.assertIn("BE-KUENFTIG", [r["name"] for r in p["follow_up"]])
+
+    def test_without_tracking_eta_the_estimate_is_unchanged(self):
+        """Gegenprobe: ohne gemeldeten Termin bleibt alles wie bisher."""
+        data = self._purchasing_data()
+        for po in data["open_purchase_orders"]:
+            po["tracking_eta"] = None
+        p = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]
+        by_name = {r["name"]: r for r in p["open"]}
+        self.assertEqual(by_name["BE-SPAET"]["expected_date"], "2026-07-10")
+        self.assertEqual(by_name["BE-SPAET"]["expected_source"], "supplier")
+        self.assertIsNone(by_name["BE-SPAET"]["tracking_eta"])
+
     def test_purchase_orders_expected_today_tile(self):
         et = m.build_metrics(self._purchasing_data(), CONFIG,
                              date(2026, 7, 15))["purchasing"]["expected_today"]
@@ -1443,6 +1482,79 @@ class TestBuildMetrics(unittest.TestCase):
         self.assertEqual(wo["beistellung_count"], 2)
         self.assertTrue(wo["material_ok"])
         self.assertEqual(wo["missing_items"], [])
+
+    def test_last_material_eta_reaches_the_board_list(self):
+        """Spalte „Letzter bekannter Materialeingang": spätester bekannter
+        Termin des Auftrags, samt Quelle. Geprüft bis purchasing.work_orders —
+        genau das liest die Produktionsliste."""
+        data = self._wo_data()
+        data["work_orders"] = [{
+            "name": "FA-M", "item_name": "Baugruppe M", "production_item": "BG.0010",
+            "qty": 5, "status": "Not Started", "sales_order": "AB-9",
+            "planned_start_date": "2026-07-20",
+            "required_items": [
+                {"item_code": "A", "item_name": "Artikel A",
+                 "required_qty": 10, "transferred_qty": 0, "available_qty": 0},
+                {"item_code": "B", "item_name": "Artikel B",
+                 "required_qty": 4, "transferred_qty": 0, "available_qty": 0},
+            ],
+        }]
+        data["open_purchase_orders"] = [
+            {"name": "BE-FRUEH", "supplier": "LF-A", "supplier_name": "Lieferant A",
+             "status": "To Receive", "transaction_date": "2026-07-01",
+             "tracking_eta": "2026-07-18",
+             "base_net_total": 100, "net_open": 100, "per_received": 0, "positions": 1,
+             "items": [{"item_code": "A", "item_name": "Artikel A", "open_qty": 10}]},
+            {"name": "BE-SPAET", "supplier": "LF-A", "supplier_name": "Lieferant A",
+             "status": "To Receive", "transaction_date": "2026-07-01",
+             "tracking_eta": "2026-07-28",
+             "base_net_total": 100, "net_open": 100, "per_received": 0, "positions": 1,
+             "items": [{"item_code": "B", "item_name": "Artikel B", "open_qty": 4}]},
+        ]
+        wo = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"][0]
+        # Die spätere der beiden Lieferungen bestimmt den Termin.
+        self.assertEqual(wo["last_material_eta"], "2026-07-28")
+        self.assertEqual(wo["last_material_eta_source"], "tracking")
+        # Nichts fehlt und beide Termine stehen -> vollständiges Bild.
+        self.assertTrue(wo["last_material_eta_complete"])
+        self.assertEqual(wo["complete_on"], "2026-07-28")
+
+    def test_last_material_eta_is_marked_incomplete_when_material_is_missing(self):
+        """Fehlt noch Material, ist der Termin nur ein Zwischenstand — er darf
+        sich nicht wie eine Zusage lesen. complete_on bleibt dann leer."""
+        data = self._wo_data()
+        data["work_orders"] = [{
+            "name": "FA-L", "item_name": "Baugruppe L", "production_item": "BG.0011",
+            "qty": 5, "status": "Not Started", "sales_order": "AB-9",
+            "planned_start_date": "2026-07-20",
+            "required_items": [
+                {"item_code": "A", "item_name": "Artikel A",
+                 "required_qty": 10, "transferred_qty": 0, "available_qty": 0},
+                {"item_code": "Z", "item_name": "Artikel Z",
+                 "required_qty": 3, "transferred_qty": 0, "available_qty": 0},
+            ],
+        }]
+        data["open_purchase_orders"] = [
+            {"name": "BE-A", "supplier": "LF-A", "supplier_name": "Lieferant A",
+             "status": "To Receive", "transaction_date": "2026-07-01",
+             "tracking_eta": "2026-07-18",
+             "base_net_total": 100, "net_open": 100, "per_received": 0, "positions": 1,
+             "items": [{"item_code": "A", "item_name": "Artikel A", "open_qty": 10}]},
+        ]
+        wo = m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"][0]
+        self.assertEqual(wo["last_material_eta"], "2026-07-18")
+        self.assertFalse(wo["last_material_eta_complete"])
+        self.assertIsNone(wo["complete_on"])
+        self.assertTrue(wo["missing_items"])
+
+    def test_last_material_eta_is_none_without_any_incoming(self):
+        """Ohne jede Bestellung gibt es keinen bekannten Termin."""
+        data = self._wo_data()
+        data["open_purchase_orders"] = []
+        for wo in m.build_metrics(data, CONFIG, date(2026, 7, 15))["purchasing"]["work_orders"]:
+            self.assertIsNone(wo["last_material_eta"])
+            self.assertIsNone(wo["last_material_eta_source"])
+            self.assertFalse(wo["last_material_eta_complete"])
 
     def test_work_orders_revenue_reaches_the_board_list(self):
         """Der Auftragswert muss bis in purchasing.work_orders durchkommen —

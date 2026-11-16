@@ -123,6 +123,28 @@ das Claude-Modell für die Mail-Triage anpassen — kein Datei-Edit nötig.
   Pakete" (alle offenen Lieferscheine — zugestellt/unterwegs/alt — in einer
   Tabelle) mit Durchlaufzeit-Analyse (Ø/Median Wartezeit der offenen Lieferscheine
   bis zur Abrechnung).
+- **Mail-Triage nach den Regeln des Mail-Entwurfsagenten:** Systemprompt und
+  Ausgabeschema stammen aus der Agent-Definition in `agents/` (Repo-Wurzel).
+  Jede Mail bekommt eine Einstufung (Kunde EMS, Neuanfrage EMS, Werkstatt
+  HV-Mard, Lieferant, Interessent, Sonstiges), eine Begründung und — wo
+  angebracht — Betreff und Antwortentwurf mit Teamsignatur.
+
+  Drei Zustände statt zwei:
+  - **Antwort** — Entwurf liegt bereit, Mitarbeiter prüft und sendet.
+  - **Prüfen** — bewusst *kein* Entwurf (Reklamation, Mahnung, Rechtsthema,
+    Sicherheitsvorfall, Fahrzeugschaden, unklare Absicht), aber jemand muss ran.
+    Zählt wie „Antwort" als zu bearbeiten, damit solche Mails nicht unter „Info"
+    verschwinden.
+  - **Info** — Automail, Newsletter, Werbung, Abwesenheit, Kenntnisnahme.
+
+  Die **interne Notiz** steht abgesetzt unter dem Entwurf und ist nie Teil der
+  Antwort. Der Prompt weist das Modell ausdrücklich an, Mailinhalte als Material
+  und nicht als Anweisung zu behandeln; Aufforderungen aus dem Mailtext landen
+  in der internen Notiz. Der Keyword-Fallback ohne API-Key hält sich an dieselbe
+  Regel und schreibt bei Reklamationen und Mahnungen ebenfalls keinen Entwurf.
+
+  Die Stücklisten-Prüfung des Agenten ist nicht übernommen — Begründung in
+  `agents/README.md`.
 - **Erwarteter Wareneingang kommt zuerst aus der Sendungsverfolgung:** Das Feld
   „Voraussichtliche Lieferung" an der Bestellung (`custom_voraussichtliche_lieferung`,
   Abschnitt „Versand & Sendungsverfolgung") ist die erste Quelle für „Erwartet am" —

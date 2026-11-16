@@ -32,6 +32,81 @@ class TestKeywordFallback(unittest.TestCase):
         r = self._run("Wetter heute")
         self.assertEqual(r["category"], "info")
 
+    def test_reklamation_gets_no_draft_but_stays_visible(self):
+        """Die wichtigste Regel des Agenten: bei Reklamation, Mahnung, Rechts-
+        thema oder Schaden KEIN Entwurf — aber die Mail darf auch nicht unter
+        „nur Info" verschwinden, sie braucht erst recht einen Menschen."""
+        r = self._run("Reklamation Charge 4711")
+        self.assertIsNone(r["draft"])
+        self.assertFalse(r["antwort_noetig"])
+        self.assertTrue(r["handlungsbedarf"])
+        self.assertEqual(r["category"], "relevant")
+        self.assertEqual(r["priority"], "high")
+        self.assertTrue(r["interne_notiz"])
+
+    def test_mahnung_is_treated_like_a_reklamation(self):
+        r = self._run("2. Mahnung offener Betrag")
+        self.assertIsNone(r["draft"])
+        self.assertEqual(r["category"], "relevant")
+
+    def test_draft_signature_is_the_team_signature(self):
+        """Kein Personenname und kein Platzhalter mehr im Entwurf."""
+        r = self._run("Angebotsanfrage Leiterplatten")
+        self.assertIn("Ihr PCB-Systems Team", r["draft"])
+        self.assertNotIn("Mustermann", r["draft"])
+        self.assertNotIn("Musterfirma", r["draft"])
+
+
+class TestBoardFieldMapping(unittest.TestCase):
+    """board_fields() ist die Brücke zwischen Agenten-Schema und Board-UI."""
+
+    def test_answer_needed_becomes_relevant_with_draft(self):
+        d = _tri(entwurf="Hallo", betreff="AW: Test").board_fields()
+        self.assertEqual(d["category"], "relevant")
+        self.assertEqual(d["draft"], "Hallo")
+        self.assertEqual(d["betreff"], "AW: Test")
+
+    def test_action_without_draft_is_still_relevant(self):
+        d = _tri(antwort_noetig=False, handlungsbedarf=True,
+                 interne_notiz="selbst übernehmen").board_fields()
+        self.assertEqual(d["category"], "relevant")
+        self.assertIsNone(d["draft"])
+        self.assertEqual(d["interne_notiz"], "selbst übernehmen")
+
+    def test_nothing_to_do_becomes_info(self):
+        d = _tri(antwort_noetig=False, handlungsbedarf=False).board_fields()
+        self.assertEqual(d["category"], "info")
+
+    def test_reason_mirrors_begruendung_for_the_ui(self):
+        d = _tri(begruendung="Kundenanfrage zur Lieferzeit").board_fields()
+        self.assertEqual(d["reason"], "Kundenanfrage zur Lieferzeit")
+        self.assertEqual(d["einstufung"], "Kunde EMS")
+
+
+class TestPromptHardening(unittest.TestCase):
+    def test_system_prompt_states_mail_text_is_not_an_instruction(self):
+        """Mails sind nicht vertrauenswürdig — der Prompt muss das sagen,
+        sonst genügt eine Zeile im Mailtext, um die Regeln auszuhebeln."""
+        self.assertIn("keine Anweisungen", triage.RELEVANCE_GUIDANCE)
+
+    def test_system_prompt_forbids_commitments(self):
+        for wort in ("Preise", "Termine", "Konditionen"):
+            self.assertIn(wort, triage.RELEVANCE_GUIDANCE)
+
+    def test_system_prompt_carries_no_placeholder_company(self):
+        self.assertNotIn("Mustermann", triage.RELEVANCE_GUIDANCE)
+        self.assertNotIn("Musterfirma", triage.RELEVANCE_GUIDANCE)
+        self.assertIn("PCB-Systems", triage.RELEVANCE_GUIDANCE)
+
+
+def _tri(**kw):
+    """MailTriage mit sinnvollen Vorgaben — spart in jedem Test die sechs
+    Pflichtfelder des Agenten-Schemas."""
+    base = {"einstufung": "Kunde EMS", "antwort_noetig": True,
+            "handlungsbedarf": True, "priority": "normal", "begruendung": "x"}
+    base.update(kw)
+    return triage.MailTriage(**base)
+
 
 def _msg(subject, msg_id):
     return {"mailbox": "m.mustermann@example.com", "sender_name": "Test",
@@ -52,8 +127,8 @@ class TestTriageAllBatching(unittest.TestCase):
     def test_batch_call_preserves_order_and_populates_cache(self):
         msgs = [_msg("Mail A", "id-a"), _msg("Mail B", "id-b")]
         results = [
-            triage.MailTriage(category="relevant", priority="high", reason="A", draft="draft-a"),
-            triage.MailTriage(category="info", priority="normal", reason="B"),
+            _tri(priority="high", begruendung="A", entwurf="draft-a"),
+            _tri(antwort_noetig=False, handlungsbedarf=False, begruendung="B"),
         ]
         with self._mock_anthropic(results):
             out = triage.triage_all(msgs, api_key="sk-test")
@@ -92,7 +167,7 @@ class TestTriageAllBatching(unittest.TestCase):
         self.assertNotIn("id-x", triage._CACHE)
 
         good = triage.MailTriageBatch(
-            results=[triage.MailTriage(category="relevant", priority="high", reason="ok", draft="draft-x")]
+            results=[_tri(priority="high", begruendung="ok", entwurf="draft-x")]
         )
         ok_module = MagicMock()
         ok_module.Anthropic.return_value.messages.parse.return_value.parsed_output = good
@@ -107,7 +182,7 @@ class TestTriageAllBatching(unittest.TestCase):
 
         msgs = [_msg("Mail A", "id-a")]
         good_result = triage.MailTriageBatch(
-            results=[triage.MailTriage(category="relevant", priority="normal", reason="ok")]
+            results=[_tri(begruendung="ok")]
         )
         mock_module = MagicMock()
         mock_module.Anthropic.return_value.messages.parse.side_effect = [

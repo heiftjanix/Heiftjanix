@@ -2107,10 +2107,29 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 		var reason = i.reason || '';
 		var draft = (i.draft || '').trim();
 		var preview = (i.body_preview || '').trim();
-		var searchTxt = (sender + ' ' + subj + ' ' + reason).toLowerCase();
+		var notiz = (i.interne_notiz || '').trim();
+		var searchTxt = (sender + ' ' + subj + ' ' + reason + ' ' +
+			(i.einstufung || '') + ' ' + notiz).toLowerCase();
 		var dot = prio === 'high' ? '<span class="mc-dot hi" title="dringend"></span>' : '<span class="mc-dot"></span>';
-		var pill = rel ? '<span class="pill rel">Antwort</span>' : '<span class="pill info">Info</span>';
-		var can = !!(draft || preview);
+		// Drei Zustände statt zwei: „Prüfen" sind Mails, zu denen es bewusst
+		// keinen Entwurf gibt (Reklamation, Mahnung, Rechtsthema, Schaden), die
+		// aber jemand selbst anfassen muss. Ohne eigenen Zustand lägen sie
+		// entweder unter „Info" begraben oder täuschten einen Entwurf vor.
+		var pill;
+		if (i.antwort_noetig === false && rel) {
+			pill = '<span class="pill pruefen" title="Bewusst kein Entwurf — ' +
+				'bitte selbst übernehmen">Prüfen</span>';
+		} else if (rel) {
+			pill = '<span class="pill rel">Antwort</span>';
+		} else {
+			pill = '<span class="pill info">Info</span>';
+		}
+		// Einstufung des Agenten als kleines Schild — sagt auf einen Blick, aus
+		// welcher Ecke die Mail kommt (Kunde, Lieferant, Werkstatt, …).
+		var kindTag = i.einstufung
+			? '<span class="mc-kind" title="Einstufung">' + self.esc(i.einstufung) + '</span>'
+			: '';
+		var can = !!(draft || preview || notiz);
 		var chev = can ? '<span class="mc-chev">▾</span>' : '';
 		var mid = i.internet_message_id || '';
 		if (mid) {
@@ -2134,7 +2153,10 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 			(mid ? '<button class="mc-assign-btn" type="button">+ Zuweisen</button>' : '') +
 			'</span>';
 		var col = mbColor(i.mailbox);
-		var head = '<div class="mc-head' + (can ? '' : ' nodraft') + '">' + dot + pill +
+		// Pill und Einstufung teilen sich EINE Rasterzelle — sonst verschöbe
+		// eine fehlende Einstufung die ganze Kopfzeile um eine Spalte.
+		var head = '<div class="mc-head' + (can ? '' : ' nodraft') + '">' + dot +
+			'<span class="mc-tags">' + pill + kindTag + '</span>' +
 			'<span class="mc-box" style="color:' + col + ';background:color-mix(in srgb,' + col + ' 14%,transparent)">' +
 			self.esc(self.shortBox(i.mailbox)) + '</span>' +
 			'<span class="mc-sender">' + self.esc(sender) + '</span>' +
@@ -2150,9 +2172,17 @@ PCBBoard.prototype.mailTabHtml = function (m) {
 			}
 			if (draft) {
 				inner += '<div class="mc-draft-lbl">Antwortvorschlag ' +
-					'(zum Kopieren – wird nicht automatisch gesendet):</div>' +
+					'(zum Kopieren – wird nicht automatisch gesendet)' +
+					(i.betreff ? ' · Betreff: ' + self.esc(i.betreff) : '') + ':</div>' +
 					'<pre class="draft-text">' + self.esc(draft) + '</pre>' +
 					'<button class="copybtn" type="button">📋 Kopieren</button>';
+			}
+			// Interne Notiz zuletzt und deutlich abgesetzt: sie ist NICHT Teil
+			// der Antwort und darf beim Kopieren nicht mitrutschen.
+			if (notiz) {
+				inner += '<div class="mc-note"><div class="mc-draft-lbl">Interne Notiz ' +
+					'(nur fürs Team – nicht Teil der Antwort):</div>' +
+					'<p class="mc-note-txt">' + self.esc(notiz) + '</p></div>';
 			}
 			draftBlock = '<div class="mc-draft"' + (isOpen ? '' : ' hidden') + '>' + inner + '</div>';
 		}
@@ -2989,6 +3019,14 @@ var PCB_BOARD_CSS =
 	'.mc-dot.hi{background:var(--critical);box-shadow:0 0 0 3px color-mix(in srgb,var(--critical) 25%,transparent)}' +
 	'.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:.72rem;font-weight:700;white-space:nowrap}' +
 	'.pill.rel{background:var(--series-1);color:#fff}.pill.info{background:var(--grid);color:var(--text-secondary)}' +
+	// „Prüfen" = bewusst kein Entwurf, aber jemand muss ran. Warnfarbe, damit
+	// es sich weder wie ein fertiger Entwurf noch wie bloße Info liest.
+	'.pill.pruefen{background:var(--warning);color:#1a1a19}' +
+	'.mc-tags{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}' +
+	'.mc-kind{font-size:.7rem;font-weight:600;color:var(--text-secondary);' +
+	'border:1px solid var(--border);border-radius:999px;padding:1px 7px}' +
+	'.mc-note{margin-top:10px;border-top:1px dashed var(--border);padding-top:8px}' +
+	'.mc-note-txt{margin:0;font-size:.85rem;color:var(--text-secondary);white-space:pre-wrap}' +
 	'.mc-box{font-size:.72rem;font-weight:700;color:var(--brand-teal);background:color-mix(in srgb,var(--brand-teal) 12%,transparent);' +
 	'padding:2px 8px;border-radius:6px;white-space:nowrap}' +
 	'.mc-sender{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px}' +

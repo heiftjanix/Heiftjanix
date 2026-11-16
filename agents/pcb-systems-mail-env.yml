@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://platform.claude.com/schemas/ant/beta/environment.json
+name: pcb-systems-mail-env
+metadata: {}
+scope: organization
+config:
+  type: cloud
+  packages:
+    pip: []
+    npm: []
+    apt: []
+    cargo: []
+    gem: []
+    go: []
+  networking:
+    type: unrestricted
